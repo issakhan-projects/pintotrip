@@ -1,0 +1,28 @@
+# Settings for Backend (on Cloud Run).
+# See https://firebase.google.com/docs/app-hosting/configure
+
+runConfig:
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+
+env:
+  # Public client values can be provided here or via the App Hosting console.
+  # Server secrets (OPENAI_API_KEY, etc.) must come from Secret Manager —
+  # never inline them in this file.
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_POSTHOG_KEY
+    value: phc_kj69metXdJnTWFoijWdCBfjRbCfDyNzFozBySasfETxj
+    availability:
+      - BUILD
+      - RUNTIME
+  - variable: NEXT_PUBLIC_POSTHOG_HOST
+    value: https://us.i.posthog.com
+    availability:
+      - BUILD
+      - RUNTIME

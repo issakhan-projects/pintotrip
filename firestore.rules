@@ -1,0 +1,207 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasUserRequiredFields() {
+      return request.resource.data.keys().hasAll([
+        'name',
+        'lastname',
+        'email',
+        'country',
+        'city',
+        'aiCreditsBalance',
+        'preferences',
+        'subscription',
+        'createdAt',
+        'updatedAt'
+      ]);
+    }
+
+    // Travel Intelligence contribution metadata is Admin SDK only.
+    function preservesIntelligenceMetadata() {
+      return request.resource.data.get('intelligenceContribution', null)
+          == resource.data.get('intelligenceContribution', null)
+        && request.resource.data.get('aggregatedAt', null)
+          == resource.data.get('aggregatedAt', null);
+    }
+
+    // users/{userId}
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      // Create or first merge-write of the profile document.
+      allow create: if isOwner(userId)
+        && request.resource.data.email is string
+        && request.resource.data.name is string
+        && request.resource.data.lastname is string
+        && request.resource.data.aiCreditsBalance == 100
+        && hasUserRequiredFields();
+
+      // merge:true on a missing doc is create; on an existing doc is update.
+      // Allow owners to complete an incomplete first write.
+      allow update: if isOwner(userId)
+        && request.resource.data.email == resource.data.email
+        // Credits are mutated only by Cloud Functions (Admin SDK).
+        && request.resource.data.aiCreditsBalance == resource.data.aiCreditsBalance
+        // Review reward flag is mutated only by Cloud Functions.
+        && request.resource.data.get('hasLeftReview', false)
+          == resource.data.get('hasLeftReview', false);
+
+      allow delete: if isOwner(userId);
+
+      // users/{userId}/locations/{locationId}
+      match /locations/{locationId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasAll([
+            'title',
+            'description',
+            'lat',
+            'lon',
+            'country',
+            'city',
+            'status',
+            'images',
+            'confidence',
+            'ai',
+            'source',
+            'createdAt',
+            'updatedAt'
+          ])
+          && !('intelligenceContribution' in request.resource.data)
+          && !('aggregatedAt' in request.resource.data)
+          && request.resource.data.get('aggregated', false) == false;
+        allow update: if isOwner(userId)
+          && preservesIntelligenceMetadata();
+        allow delete: if isOwner(userId);
+      }
+
+      // users/{userId}/favoriteCities/{cityId}
+      match /favoriteCities/{cityId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.keys().hasAll([
+            'cityId',
+            'cityName',
+            'country',
+            'lat',
+            'lon',
+            'status',
+            'createdAt'
+          ])
+          && !('intelligenceContribution' in request.resource.data)
+          && !('aggregatedAt' in request.resource.data)
+          && request.resource.data.get('aggregated', false) == false;
+        allow update: if isOwner(userId)
+          && preservesIntelligenceMetadata()
+          && request.resource.data.keys().hasAll([
+            'cityId',
+            'cityName',
+            'country',
+            'lat',
+            'lon',
+            'status',
+            'createdAt'
+          ]);
+        allow delete: if isOwner(userId);
+      }
+
+      // users/{userId}/tripPlanner/{tripId}
+      match /tripPlanner/{tripId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.data.userId == userId
+          && request.resource.data.keys().hasAll([
+            'userId',
+            'name',
+            'from',
+            'destination',
+            'startDate',
+            'endDate',
+            'status',
+            'currency',
+            'cityIntelligence',
+            'preparation',
+            'savedPlaceIds',
+            'itinerary',
+            'createdAt',
+            'updatedAt'
+          ]);
+
+        allow update: if isOwner(userId)
+          && request.resource.data.userId == resource.data.userId
+          && request.resource.data.userId == userId;
+
+        allow delete: if isOwner(userId);
+      }
+
+      // users/{userId}/notifications — inbox (owner read/mark-read; Admin create)
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow update: if isOwner(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+        allow create, delete: if false;
+      }
+    }
+
+    // aiUsage/{yyyy-MM} — global AI cost totals (Cloud Functions / Admin only)
+    match /aiUsage/{monthId} {
+      allow read, write: if false;
+    }
+
+    // reviews/{userId} — in-app reviews (Cloud Functions / Admin write only)
+    match /reviews/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
+    }
+
+    // referrals/{referralId} — invite / referral ledger (Admin write only)
+    match /referrals/{referralId} {
+      allow read: if isSignedIn()
+        && (resource.data.referrerId == request.auth.uid
+          || resource.data.referredUserId == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    // referralClaims/{userId} — one invitee completion per user (Admin only)
+    match /referralClaims/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
+    }
+
+    // promoCodes/{code} — read-only for signed-in checkout validation UI.
+    // Writes are Admin / Cloud Functions only.
+    match /promoCodes/{codeId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Internal AI result cache — Admin SDK only (never client-readable).
+    match /aiCache/{fingerprint} {
+      allow read, write: if false;
+    }
+
+    // Travel Intelligence — published aggregates (signed-in read, Admin write).
+    // Nested as travelIntelligence/{bucket}/items/{docId}.
+    match /travelIntelligence/{bucket}/items/{docId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if false;
+    }
+
+    // Internal unique-user link docs — Admin only (never client-readable).
+    match /travelIntelligence/_meta/{document=**} {
+      allow read, write: if false;
+    }
+
+    // Deny everything else by default (no allow read, write: if true).
+  }
+}

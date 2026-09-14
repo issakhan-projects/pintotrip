@@ -1,0 +1,44 @@
+---
+description: Machine IDs (cityId, countryId, placeId, …) must be English/ASCII
+alwaysApply: true
+---
+
+# English/ASCII machine IDs
+
+Display names (`cityName`, `countryName`, titles, descriptions) **may be localized**.
+
+Machine IDs must **always** be English/ASCII lowercase slugs (or ISO codes). Never store localized script in id fields.
+
+## Fields this applies to
+
+- `cityId` / `city.id`
+- `countryId` / `country.id`
+- `placeId` and any other `*Id` used as a Firestore key or stable slug
+- Trip `from` / `destination` ids, location docs, AI payloads, Cloud Functions responses
+
+## Conventions
+
+- `countryId`: prefer ISO 3166-1 alpha-2 **lowercase** (`sa`, `uz`, `tr`)
+- `countryCode`: ISO alpha-2 **uppercase** when present (`SA`)
+- `cityId` / `placeId`: lowercase ASCII slug (`makkah`, `prophets-mosque`)
+- Reject or re-resolve the sentinel `"unknown"` from `slugifyId` — never persist it when a real place is known
+
+## How to produce ids
+
+- Prefer `resolveEnglishPlaceIds(lat, lon)` or `resolveEnglishPlaceIdsFromAddress(...)` (`language=en`) when the display name may be non-Latin
+- Use `countryIdFromParts(name, countryCode)`, `slugifyId(englishName)`, `isAsciiId(value)`
+- `isAsciiId` is false for empty values and `"unknown"`
+
+```ts
+// ❌ BAD — slugifying Arabic/Cyrillic → "unknown"
+cityId: slugifyId(destination.cityName)
+
+// ✅ GOOD — English reverse-geocode (or ISO code) then slug
+const ids = await resolveEnglishPlaceIds(lat, lon);
+cityId: ids.cityId
+countryId: ids.countryId // e.g. "sa"
+```
+
+## Cloud Functions / AI
+
+Model prompts must require: localized display strings OK; `placeId` / `cityId` / `countryId` / `countryCode` English/ASCII only. Validate before writing to Firestore.

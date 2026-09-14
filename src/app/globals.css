@@ -1,26 +1,169 @@
 @import "tailwindcss";
 
+/* =============================================================================
+   PinToTrip — Design tokens (light theme)
+   Semantic color system for travel discovery UI.
+   Dark mode intentionally deferred; tokens are structured for later extension.
+   ============================================================================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* 1. Brand / Primary */
+  --color-primary: #6d28d9;
+  --color-primary-hover: #5b21b6;
+  --color-primary-light: #8b5cf6;
+  --color-primary-tint: #f5f3ff;
+
+  /* 2. Backgrounds */
+  --color-background: #ffffff;
+  --color-surface: #f8f8fa;
+  --color-surface-elevated: #ffffff;
+
+  /* 3. Typography */
+  --color-text: #111827;
+  --color-text-secondary: #6b7280;
+  --color-text-muted: #9ca3af;
+
+  /* 4. Borders */
+  --color-border: #e5e7eb;
+  --color-divider: #f0f0f2;
+
+  /* 5. Status */
+  --color-success: #16a34a;
+  --color-success-background: #f0fdf4;
+  --color-warning: #d97706;
+  --color-warning-background: #fffbeb;
+  --color-error: #dc2626;
+  --color-error-background: #fef2f2;
+
+  /* 6. Travel statuses */
+  --color-planned: #d97706;
+  --color-visited: #16a34a;
+  --color-cancelled: #dc2626;
+
+  /* 7. Semantic aliases */
+  --color-bg: var(--color-background);
+  --color-surface-default: var(--color-surface);
+  --color-text-primary: var(--color-text);
+  --color-accent: var(--color-primary);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-light: var(--color-primary-light);
+  --color-primary-tint: var(--color-primary-tint);
+  --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-surface-elevated: var(--color-surface-elevated);
+  --color-bg: var(--color-bg);
+  --color-surface-default: var(--color-surface-default);
+  --color-text: var(--color-text);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-border: var(--color-border);
+  --color-divider: var(--color-divider);
+  --color-success: var(--color-success);
+  --color-success-background: var(--color-success-background);
+  --color-warning: var(--color-warning);
+  --color-warning-background: var(--color-warning-background);
+  --color-error: var(--color-error);
+  --color-error-background: var(--color-error-background);
+  --color-planned: var(--color-planned);
+  --color-visited: var(--color-visited);
+  --color-cancelled: var(--color-cancelled);
+  --color-accent: var(--color-accent);
+  --font-sans: var(--font-montserrat);
+  --font-display: var(--font-lobster);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-montserrat), Arial, Helvetica, sans-serif;
+}
+
+/* Primary action button — sheets, forms, CTAs */
+@utility btn-primary {
+  @apply inline-flex items-center justify-center gap-2
+    h-11 px-4 text-[13px] font-medium
+    rounded-lg border border-transparent
+    bg-primary text-white shadow-sm
+    transition-all duration-200
+    hover:bg-primary-hover
+    active:scale-[0.98]
+    focus:outline-none focus:ring-2 focus:ring-primary-light/30
+    disabled:pointer-events-none disabled:opacity-50;
+}
+
+/* Secondary action button — outline / surface */
+@utility btn-secondary {
+  @apply inline-flex items-center justify-center gap-2
+    h-11 px-4 text-[13px] font-medium
+    rounded-lg border border-border
+    bg-surface text-text shadow-sm
+    transition-all duration-200
+    hover:bg-primary-tint hover:text-primary
+    active:scale-[0.98]
+    focus:outline-none focus:ring-2 focus:ring-primary/30
+    disabled:pointer-events-none disabled:opacity-50;
+}
+
+/* Landing page motion */
+@keyframes landing-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-pin-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-28px) scale(0.7);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(4px) scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes landing-pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@utility landing-fade-up {
+  animation: landing-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility landing-pin-drop {
+  animation: landing-pin-drop 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@utility landing-pulse-soft {
+  animation: landing-pulse-soft 1.4s ease-in-out infinite;
 }

@@ -1,0 +1,15 @@
+---
+description: Do not use Tremor — PinToTrip uses plain HTML + Tailwind
+alwaysApply: true
+---
+
+# UI system
+
+Tremor has been **removed** from this project. Do not reinstall or import `@tremor/react`.
+
+## What to use
+
+- Plain HTML + Tailwind with design tokens from `src/app/globals.css`
+- Shared primitives in `src/components/ui` (`Button`, `TextInput`, `Switch`, `Sheet`, `DateRangePicker`, `SearchableSelect`, …)
+- Product-specific libraries when they fit (e.g. country pickers)
+- Keep components small and focused; match surrounding styles
