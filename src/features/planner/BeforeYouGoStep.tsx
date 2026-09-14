@@ -312,19 +312,21 @@ export function BeforeYouGoStep({
         <Button
           type="button"
           variant="secondary"
-          className="flex-1 h-11 sm:flex-none sm:min-w-[10rem]"
+          size="lg"
+          icon={ArrowLeft}
+          className="w-full shrink-0 sm:w-auto sm:min-w-[10rem]"
           onClick={onGoToDetails}
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
           Trip details
         </Button>
         <Button
           type="button"
-          className="flex-1 h-11 sm:ml-auto sm:min-w-[14rem]"
+          size="lg"
+          iconRight={ArrowRight}
+          className="w-full shrink-0 sm:ml-auto sm:w-auto sm:min-w-[14rem]"
           onClick={onGoToPlaces}
         >
           Continue to Places
-          <ArrowRight className="h-4 w-4" aria-hidden />
         </Button>
       </div>
     </div>

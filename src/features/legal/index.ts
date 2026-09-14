@@ -1,4 +1,5 @@
 export { PrivacyPolicyContent } from "./PrivacyPolicyContent";
+export { RefundPolicyContent } from "./RefundPolicyContent";
 export { TermsOfServiceContent } from "./TermsOfServiceContent";
 export {
   APP_NAME,

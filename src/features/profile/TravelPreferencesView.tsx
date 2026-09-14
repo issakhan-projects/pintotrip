@@ -12,6 +12,7 @@ import { CURRENCY_OPTIONS, resolveCurrencyCode } from "@/lib/currencies";
 import { LANGUAGE_OPTIONS, resolveLanguageCode } from "@/lib/languages";
 import { updateUserProfile } from "@/services/users";
 import type { UserProfile } from "@/types/user";
+import { Save } from "lucide-react";
 
 const COUNTRY_SELECT_OPTIONS = COUNTRY_OPTIONS.map((c) => ({
   value: c.code,
@@ -164,9 +165,11 @@ export function TravelPreferencesView({
       ) : null}
 
       <Button
+        color="primary"
+        icon={Save}
         loading={saving}
         onClick={() => void handleSave()}
-        className="btn-primary w-full"
+        className="w-full"
       >
         Save
       </Button>

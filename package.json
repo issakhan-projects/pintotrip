@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.1.1",
+    "@paddle/paddle-js": "^1.6.5",
     "country-flag-select": "^1.2.1",
     "currency-codes": "^2.2.0",
     "firebase": "^12.19.0",

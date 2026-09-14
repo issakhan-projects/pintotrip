@@ -118,6 +118,14 @@ export function LandingFooter() {
               </Link>
             </li>
             <li>
+              <Link
+                href="/refund"
+                className="text-xs text-text-muted transition-colors hover:text-text-secondary"
+              >
+                Refund Policy
+              </Link>
+            </li>
+            <li>
               <button
                 type="button"
                 onClick={() => openCookieSettings()}

@@ -163,6 +163,7 @@ export function MyDocumentsView({ userId }: MyDocumentsViewProps) {
           </p>
           <Button
             icon={Plus}
+            color="primary"
             onClick={() => setMode({ name: "form" })}
             className="mt-5"
           >
@@ -205,6 +206,7 @@ export function MyDocumentsView({ userId }: MyDocumentsViewProps) {
 
           <Button
             icon={Plus}
+            color="primary"
             variant="secondary"
             onClick={() => setMode({ name: "form" })}
             className="w-full"

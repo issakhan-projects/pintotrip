@@ -18,8 +18,7 @@ interface BottomNavProps {
 }
 
 /**
- * Floating dock — white pill + black add circle.
- * Same layout on mobile and desktop.
+ * Bottom navigation — fixed full-width bar on mobile; floating pill dock on desktop.
  */
 export function BottomNav({
   active,
@@ -33,10 +32,10 @@ export function BottomNav({
   return (
     <nav
       aria-label="Main"
-      className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 sm:absolute sm:flex sm:justify-center sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
-      <div className="pointer-events-auto flex items-center gap-3">
-        <div className="flex h-14 items-center rounded-full bg-white px-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
+      <div className="pointer-events-auto flex w-full items-stretch border-t border-border bg-white pb-[env(safe-area-inset-bottom)] sm:w-auto sm:items-center sm:gap-3 sm:border-0 sm:bg-transparent sm:pb-0">
+        <div className="flex h-14 min-w-0 flex-1 items-center sm:flex-none sm:rounded-full sm:bg-white sm:px-1.5 sm:shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
           <NavSlot
             label="Map"
             active={active === "map"}
@@ -68,7 +67,7 @@ export function BottomNav({
           type="button"
           aria-label="Add place"
           onClick={onAdd}
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-green-600 text-white shadow-[0_8px_30px_rgba(0,0,0,0.18)] transition-transform active:scale-95"
+          className="flex h-14 w-14 shrink-0 items-center justify-center bg-green-600 text-white transition-transform active:scale-95 sm:rounded-full sm:shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
         >
           <Plus className="h-6 w-6" strokeWidth={2.5} />
         </button>
@@ -97,7 +96,7 @@ function NavSlot({
       aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={cx(
-        "relative flex h-11 min-w-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-full px-4 transition-colors",
+        "relative flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-2 transition-colors sm:h-11 sm:min-w-[4.75rem] sm:flex-none sm:rounded-full sm:px-4",
         active
           ? "bg-neutral-200/90 text-text"
           : "bg-transparent text-text-secondary hover:bg-neutral-100/80 hover:text-text"

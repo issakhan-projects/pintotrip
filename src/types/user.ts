@@ -2,7 +2,17 @@ import type { Timestamp } from "firebase/firestore";
 import type { TravelProfile } from "@/types/travel-profile";
 
 export type SubscriptionPlan = "free" | "plus" | "pro";
-export type SubscriptionStatus = "active" | "inactive";
+
+/**
+ * Subscription lifecycle from Paddle webhooks (source of truth).
+ * `inactive` is legacy — treat as no paid access.
+ */
+export type SubscriptionStatus =
+  | "active"
+  | "inactive"
+  | "canceled"
+  | "past_due"
+  | "paused";
 
 export interface UserPreferences {
   emailSubscription: boolean;
@@ -11,9 +21,21 @@ export interface UserPreferences {
   timezone: string;
 }
 
+/**
+ * Mirrored from Paddle via Cloud Function `paddleWebhook`.
+ * Clients must never treat checkout success alone as Plus/Pro access.
+ */
 export interface UserSubscription {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
+  paddleCustomerId?: string;
+  paddleSubscriptionId?: string;
+  /** Which Paddle account owns this subscription (sandbox vs live). */
+  paddleEnvironment?: "sandbox" | "production";
+  productId?: string;
+  priceId?: string;
+  currentPeriodEnd?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 /**

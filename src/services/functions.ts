@@ -204,5 +204,18 @@ export async function completeReferral(
   return result.data;
 }
 
+/**
+ * Open Paddle Customer Portal for the signed-in Plus/Pro user.
+ * Portal URL is one-time; never cache.
+ */
+export async function createPaddlePortalSession(): Promise<{ url: string }> {
+  const callable = httpsCallable<Record<string, never>, { url: string }>(
+    getCloudFunctions(),
+    "createPaddlePortalSession"
+  );
+  const result = await callable({});
+  return result.data;
+}
+
 export { isInsufficientAICreditsError };
 export type { InsufficientAICreditsError };

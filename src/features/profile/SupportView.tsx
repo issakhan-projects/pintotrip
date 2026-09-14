@@ -7,6 +7,7 @@ import {
   HelpCircle,
   MapPin,
   Route,
+  Send,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -150,6 +151,8 @@ export function SupportView({ userEmail }: SupportViewProps) {
       {error ? <p className="text-sm text-error">{error}</p> : null}
 
       <Button
+        color="primary"
+        icon={Send}
         disabled={!canSubmit}
         onClick={handleSubmit}
         className="w-full"

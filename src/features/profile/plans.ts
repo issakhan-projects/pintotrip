@@ -160,6 +160,34 @@ export function isProPlan(
   return plan === "pro";
 }
 
+/**
+ * Paid access from mirrored Paddle state (webhook source of truth).
+ * Grants during active + past_due; denies canceled / paused / inactive / free.
+ */
+export function isSubscriptionEntitled(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): boolean {
+  const plan = subscription?.plan ?? "free";
+  if (plan === "free") return false;
+  const status = (subscription?.status ?? "inactive").toLowerCase();
+  return status === "active" || status === "past_due";
+}
+
+/** Pro features require entitled Pro subscription (not checkout alone). */
+export function isProEntitled(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): boolean {
+  return (
+    isSubscriptionEntitled(subscription) && subscription?.plan === "pro"
+  );
+}
+
 export function getPlanPrice(
   plan: PlanDefinition,
   interval: BillingInterval

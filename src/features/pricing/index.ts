@@ -11,3 +11,16 @@ export {
   formatCheckoutDate,
 } from "./checkoutTotals";
 export type { CheckoutCurrency, CheckoutTotals } from "./checkoutTotals";
+export { PricingView } from "./PricingView";
+export type { PricingViewProps } from "./PricingView";
+export {
+  TIERS,
+  getPaidTiers,
+  getTier,
+  getTierPriceId,
+  isPaidTier,
+  listConfiguredPriceIds,
+  peekTierPriceId,
+  tiersHavePriceIds,
+} from "./tiers";
+export type { Tier, TierName, BillingInterval as PricingBillingInterval } from "./tiers";

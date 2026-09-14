@@ -405,9 +405,10 @@ export function ProfilePanel({
             </div>
 
             <Button
+              color="error"
               icon={LogOut}
               onClick={() => void handleLogout()}
-              className="mt-8 w-full btn-primary !bg-error !text-white"
+              className="mt-8 w-full"
             >
               Log out
             </Button>

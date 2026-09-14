@@ -43,7 +43,9 @@ service cloud.firestore {
         && request.resource.data.name is string
         && request.resource.data.lastname is string
         && request.resource.data.aiCreditsBalance == 100
-        && hasUserRequiredFields();
+        && hasUserRequiredFields()
+        && request.resource.data.subscription.plan == 'free'
+        && request.resource.data.subscription.status == 'active';
 
       // merge:true on a missing doc is create; on an existing doc is update.
       // Allow owners to complete an incomplete first write.
@@ -53,7 +55,9 @@ service cloud.firestore {
         && request.resource.data.aiCreditsBalance == resource.data.aiCreditsBalance
         // Review reward flag is mutated only by Cloud Functions.
         && request.resource.data.get('hasLeftReview', false)
-          == resource.data.get('hasLeftReview', false);
+          == resource.data.get('hasLeftReview', false)
+        // Subscription / Paddle fields — Cloud Functions (webhooks) only.
+        && request.resource.data.subscription == resource.data.subscription;
 
       allow delete: if isOwner(userId);
 
@@ -188,6 +192,17 @@ service cloud.firestore {
     // Internal AI result cache — Admin SDK only (never client-readable).
     match /aiCache/{fingerprint} {
       allow read, write: if false;
+    }
+
+    // Paddle webhook idempotency ledger — Admin SDK only.
+    match /paddleWebhookEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Billing transactions — owner read; Admin / Cloud Functions write only.
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create, update, delete: if false;
     }
 
     // Travel Intelligence — published aggregates (signed-in read, Admin write).

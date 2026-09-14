@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button, Switch, TextInput } from "@/components/ui";
 import { updateUserProfile } from "@/services/users";
 import type { UserProfile } from "@/types/user";
+import { Save } from "lucide-react";
 
 interface SettingsViewProps {
   userId: string;
@@ -85,9 +86,11 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
       {saved ? <p className="text-sm text-success">Settings saved.</p> : null}
 
       <Button
+        color="primary"
+        icon={Save}
         loading={saving}
         onClick={() => void handleSave()}
-        className="w-full !bg-primary hover:!bg-primary-hover !border-primary !text-white"
+        className="w-full"
       >
         Save
       </Button>

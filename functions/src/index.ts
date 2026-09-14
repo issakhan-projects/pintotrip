@@ -6,6 +6,8 @@
  * submitReview, createReferral, completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend).
+ * HTTP: paddleWebhook (Paddle Billing notifications).
+ * Callables: createPaddlePortalSession.
  */
 import { setGlobalOptions } from "firebase-functions";
 import { DEFAULT_FUNCTIONS_REGION } from "./shared/config";
@@ -17,6 +19,10 @@ import { submitReview } from "./review/submitReview";
 import { createReferral, completeReferral } from "./referral";
 import { aggregateTravelIntelligence } from "./travelIntelligence/aggregateTravelIntelligence";
 import { welcomeEmailOnUserCreated } from "./welcomeEmail";
+import {
+  paddleWebhook,
+  createPaddlePortalSession,
+} from "./paddle";
 
 setGlobalOptions({
   region: DEFAULT_FUNCTIONS_REGION,
@@ -33,4 +39,6 @@ export {
   completeReferral,
   aggregateTravelIntelligence,
   welcomeEmailOnUserCreated,
+  paddleWebhook,
+  createPaddlePortalSession,
 };

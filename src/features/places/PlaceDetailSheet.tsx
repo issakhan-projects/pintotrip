@@ -8,6 +8,7 @@ import {
   MapPinned,
   MoreHorizontal,
   NotebookPen,
+  Save,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -392,14 +393,16 @@ export function PlaceDetailSheet({
 
         {current.status === "planned" ? (
           <Button
+            color="primary"
+            icon={Check}
             disabled={statusBusy}
             onClick={() => void handleStatus("visited")}
-            className="btn-primary w-full"
+            className="w-full"
           >
             Mark as visited
           </Button>
         ) : current.status === "visited" ? (
-          <Button disabled className="btn-primary w-full">
+          <Button color="primary" icon={Check} disabled className="w-full">
             Visited ✓
           </Button>
         ) : null}
@@ -417,6 +420,8 @@ export function PlaceDetailSheet({
             />
             <div className="mt-3 flex gap-2">
               <Button
+                color="primary"
+                icon={Save}
                 onClick={() => {
                   setNote(current.note ?? "");
                   setNoteOpen(false);
@@ -426,9 +431,11 @@ export function PlaceDetailSheet({
                 Cancel
               </Button>
               <Button
+                color="primary"
+                icon={Save}
                 loading={saving}
                 onClick={() => void handleNote()}
-                className="btn-primary flex-1"
+                className="flex-1"
               >
                 Save note
               </Button>

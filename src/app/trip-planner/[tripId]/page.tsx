@@ -6,7 +6,7 @@ import { Button } from "@/components/ui";
 import { Lock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile } from "@/hooks/useUserProfile";
-import { isProPlan } from "@/features/profile/plans";
+import { isProEntitled } from "@/features/profile/plans";
 import { TripPlannerDetail } from "@/features/planner/TripPlannerDetail";
 
 function TripPlannerDetailGate() {
@@ -15,7 +15,7 @@ function TripPlannerDetailGate() {
   const tripId = params.tripId;
   const { user, loading } = useAuth();
   const { profile, loading: profileLoading } = useUserProfile(user);
-  const isPro = isProPlan(profile?.subscription?.plan);
+  const isPro = isProEntitled(profile?.subscription);
 
   useEffect(() => {
     if (!loading && !user) {

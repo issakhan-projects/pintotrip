@@ -20,7 +20,7 @@ import { ProfilePanel } from "@/features/profile/ProfilePanel";
 import { TripPlannerPanel } from "@/features/planner/TripPlannerPanel";
 import { ReviewSheet } from "@/features/review/ReviewSheet";
 import { TravelProfileSheet } from "@/features/onboarding";
-import { isProPlan } from "@/features/profile/plans";
+import { isProEntitled } from "@/features/profile/plans";
 import { NotificationBanner } from "@/features/referral";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
 import { useFavoriteCities } from "@/hooks/useFavoriteCities";
@@ -60,7 +60,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   } = useFavoriteCities(user.uid);
   const { profile } = useUserProfile(user);
   const aiCreditsBalance = profile?.aiCreditsBalance ?? null;
-  const isPro = isProPlan(profile?.subscription?.plan);
+  const isPro = isProEntitled(profile?.subscription);
   const needsTravelProfile = Boolean(profile) && !profile?.travelProfile;
 
   const [tab, setTab] = useState<AppTab>(initialTab ?? "map");

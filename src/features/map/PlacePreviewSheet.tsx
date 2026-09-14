@@ -5,6 +5,7 @@ import {
   MapPinned,
   MoreHorizontal,
   NotebookPen,
+  ArrowRight,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -286,8 +287,10 @@ export function PlacePreviewSheet({
         ) : null}
 
         <Button
+          color="primary"
+          icon={ArrowRight}
           onClick={() => onOpenDetails(current)}
-          className="btn-primary w-full"
+          className="w-full"
         >
           Open details
         </Button>

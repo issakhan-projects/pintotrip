@@ -9,7 +9,7 @@ import type { User } from "firebase/auth";
 import { useTrips } from "@/hooks/useTrips";
 import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
-import { isProPlan } from "@/features/profile/plans";
+import { isProEntitled } from "@/features/profile/plans";
 import { deleteTrip } from "@/services/trip-planner";
 import type { TripPlannerDoc } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
@@ -80,7 +80,7 @@ export function TripPlannerPanel({ user }: TripPlannerPanelProps) {
   const { trips, loading, error } = useTrips(user.uid);
   const { locations } = useLocations(user.uid);
   const { profile } = useUserProfile(user);
-  const isPro = isProPlan(profile?.subscription?.plan);
+  const isPro = isProEntitled(profile?.subscription);
   const [createOpen, setCreateOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tab, setTab] = useState<TripFilterTab>("all");

@@ -111,6 +111,9 @@ export const FirestorePaths = {
   /** Global promo codes: promoCodes/{CODE} */
   promoCodes: "promoCodes",
   promoCode: (code: string) => `promoCodes/${code}`,
+  /** Billing ledger: transactions/{paddleTransactionId} — Admin write */
+  transactions: "transactions",
+  transaction: (transactionId: string) => `transactions/${transactionId}`,
   /**
    * Global Travel Intelligence (Admin write / signed-in read).
    * Nested as travelIntelligence/{bucket}/items/{id} for valid Firestore paths.
