@@ -8,19 +8,22 @@ runConfig:
   cpu: 1
   memoryMiB: 512
 
+# Every env entry must include either `value` or `secret`.
+# Set remaining NEXT_PUBLIC_FIREBASE_* / Maps keys in the Firebase console
+# (console values override this file), or add them here with `value:`.
 env:
-  # Public client values can be provided here or via the App Hosting console.
-  # Server secrets (OPENAI_API_KEY, etc.) must come from Secret Manager —
-  # never inline them in this file.
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: pintotrip
     availability:
       - BUILD
       - RUNTIME
+
   - variable: NEXT_PUBLIC_POSTHOG_KEY
     value: phc_kj69metXdJnTWFoijWdCBfjRbCfDyNzFozBySasfETxj
     availability:
       - BUILD
       - RUNTIME
+
   - variable: NEXT_PUBLIC_POSTHOG_HOST
     value: https://us.i.posthog.com
     availability:
