@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { PrivacyPolicyContent } from "@/features/legal";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — PinToTrip",
+  title: "Privacy Policy",
   description:
     "How PinToTrip collects, uses, stores, and protects your information.",
 };

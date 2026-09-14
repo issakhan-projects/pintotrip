@@ -172,20 +172,33 @@ export async function executeCachedAI<T>(
 }
 
 /**
- * Hash remote image bytes for stable findPlace fingerprints.
- * Falls back to hashing the URL if the body cannot be fetched.
+ * Hash image bytes for stable findPlace fingerprints.
+ * Supports https URLs and JPEG data URLs from the client compressor.
+ * Falls back to hashing the URL string if the body cannot be read.
  */
 export async function hashImageInput(imageUrl: string): Promise<string> {
   try {
-    const response = await fetch(imageUrl, {
-      method: "GET",
-      redirect: "follow",
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) {
-      throw new Error(`image fetch ${response.status}`);
+    let buffer: Buffer;
+    const trimmed = imageUrl.trim();
+    if (trimmed.startsWith("data:")) {
+      const comma = trimmed.indexOf(",");
+      if (comma < 0) throw new Error("invalid data url");
+      const meta = trimmed.slice(0, comma);
+      const data = trimmed.slice(comma + 1);
+      buffer = meta.includes(";base64")
+        ? Buffer.from(data, "base64")
+        : Buffer.from(decodeURIComponent(data), "utf8");
+    } else {
+      const response = await fetch(trimmed, {
+        method: "GET",
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) {
+        throw new Error(`image fetch ${response.status}`);
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
     const slice =
       buffer.byteLength > 2_000_000 ? buffer.subarray(0, 2_000_000) : buffer;
     return createHash("sha256").update(slice).digest("hex");

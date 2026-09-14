@@ -8,6 +8,7 @@ import { cx } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "#explore", label: "Explore" },
+  { href: "#trip-planner", label: "Trip Planner" },
   { href: "#how-it-works", label: "How it works" },
   { href: "#pricing", label: "Pricing" },
 ] as const;

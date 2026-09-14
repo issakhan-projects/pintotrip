@@ -7,6 +7,11 @@ import { updateProfile } from "firebase/auth";
 import type { User } from "firebase/auth";
 import { updateUserProfile } from "@/services/users";
 import { uploadProfileAvatar } from "@/services/storage";
+import {
+  IMAGE_FILE_ACCEPT,
+  imageUploadErrorMessage,
+  prepareClientImage,
+} from "@/lib/images";
 import type { UserProfile } from "@/types/user";
 
 interface AccountViewProps {
@@ -38,21 +43,24 @@ export function AccountView({ user, profile, onSaved }: AccountViewProps) {
   }, [profile, user.photoURL]);
 
   async function handlePhotoChange(file: File | undefined) {
-    if (!file || !file.type.startsWith("image/")) return;
+    if (!file) return;
     setUploading(true);
     setError(null);
     try {
-      const url = await uploadProfileAvatar(user.uid, file, {
-        contentType: file.type,
+      const prepared = await prepareClientImage(file, {
+        maxSides: [512, 384],
+        qualities: [0.82, 0.68, 0.52, 0.4],
+        maxDataUrlChars: 600_000,
+      });
+      const url = await uploadProfileAvatar(user.uid, prepared.blob, {
+        contentType: "image/jpeg",
       });
       await updateUserProfile(user.uid, { photoUrl: url });
       await updateProfile(user, { photoURL: url });
       setPhotoUrl(url);
       onSaved();
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not upload photo."
-      );
+      setError(imageUploadErrorMessage(err));
     } finally {
       setUploading(false);
     }
@@ -114,9 +122,12 @@ export function AccountView({ user, profile, onSaved }: AccountViewProps) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept={IMAGE_FILE_ACCEPT}
           className="hidden"
-          onChange={(e) => void handlePhotoChange(e.target.files?.[0])}
+          onChange={(e) => {
+            void handlePhotoChange(e.target.files?.[0]);
+            e.target.value = "";
+          }}
         />
         <p className="mt-2 text-xs text-text-secondary">
           {uploading ? "Uploading…" : "Tap to change photo"}

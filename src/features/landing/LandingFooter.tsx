@@ -7,6 +7,7 @@ import { openCookieSettings } from "@/lib/cookies";
 
 const PRODUCT_LINKS = [
   { href: "#pricing", label: "Pricing" },
+  { href: "#trip-planner", label: "Trip Planner" },
   { href: "#how-it-works", label: "How it works" },
   { href: "#explore", label: "Explore" },
   { href: "/login", label: "Start for free" },

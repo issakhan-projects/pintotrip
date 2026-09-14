@@ -11,6 +11,7 @@ import {
   Link2,
   Loader2,
   Lock,
+  Save,
   Search,
 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
@@ -29,6 +30,11 @@ import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { slugifyId, countryIdFromParts, isAsciiId, formatConfidenceCopy, cx } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
 import { withCityGooglePlaceId, resolveEnglishPlaceIds } from "@/lib/maps";
+import {
+  IMAGE_FILE_ACCEPT,
+  imageUploadErrorMessage,
+  prepareClientImage,
+} from "@/lib/images";
 import type { UserLocationCreateInput } from "@/types/location";
 import {
   fetchPlacePhotoUrl,
@@ -71,8 +77,10 @@ export function AddPlaceSheet({
 }: AddPlaceSheetProps) {
   const router = useRouter();
   const [step, setStep] = useState<AddStep>("menu");
-  const [file, setFile] = useState<File | null>(null);
+  const [jpegDataUrl, setJpegDataUrl] = useState<string | null>(null);
+  const [jpegBlob, setJpegBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [link, setLink] = useState("");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeLocationResult | null>(null);
@@ -93,8 +101,10 @@ export function AddPlaceSheet({
   useEffect(() => {
     if (!open) {
       setStep("menu");
-      setFile(null);
+      setJpegDataUrl(null);
+      setJpegBlob(null);
       setPreviewUrl(null);
+      setPreparingPhoto(false);
       setLink("");
       setImageUrl(null);
       setResult(null);
@@ -151,14 +161,29 @@ export function AddPlaceSheet({
   }, [step]);
 
   function handleClose() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
     onClose();
   }
 
-  function onPickFile(next: File | null) {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(next);
-    setPreviewUrl(next ? URL.createObjectURL(next) : null);
+  async function onPickFile(next: File | null) {
+    setJpegDataUrl(null);
+    setJpegBlob(null);
+    setPreviewUrl(null);
+    setImageUrl(null);
+    setError(null);
+    if (!next) return;
+
+    setPreparingPhoto(true);
+    try {
+      // Decode HEIC + compress to JPEG before preview / AI — never send raw originals.
+      const prepared = await prepareClientImage(next);
+      setJpegDataUrl(prepared.dataUrl);
+      setJpegBlob(prepared.blob);
+      setPreviewUrl(prepared.dataUrl);
+    } catch (err) {
+      setError(imageUploadErrorMessage(err));
+    } finally {
+      setPreparingPhoto(false);
+    }
   }
 
   async function runAnalyze(
@@ -182,19 +207,9 @@ export function AddPlaceSheet({
   }
 
   async function analyzePhoto() {
-    if (!file) return;
-    try {
-      setStep("analyzing");
-      const draftId = crypto.randomUUID();
-      const url = await uploadLocationDraftImage(userId, draftId, file);
-      setImageUrl(url);
-      await runAnalyze({ type: "image", imageUrl: url });
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Image upload failed."
-      );
-      setStep("error");
-    }
+    if (!jpegDataUrl) return;
+    setImageUrl(jpegDataUrl);
+    await runAnalyze({ type: "image", imageUrl: jpegDataUrl });
   }
 
   async function analyzeLink() {
@@ -208,6 +223,18 @@ export function AddPlaceSheet({
     if (!result?.identified) return;
     setSaving(true);
     try {
+      let storedImageUrl = imageUrl;
+      // Persist compressed JPEG to Storage (not the AI data URL / raw HEIC).
+      if (jpegBlob) {
+        const draftId = crypto.randomUUID();
+        storedImageUrl = await uploadLocationDraftImage(
+          userId,
+          draftId,
+          jpegBlob
+        );
+        setImageUrl(storedImageUrl);
+      }
+
       const countryName = result.country.trim();
       const cityName = result.city.trim();
       const hasAsciiIds =
@@ -260,8 +287,8 @@ export function AddPlaceSheet({
         city,
         status: "planned",
         ...(result.category ? { category: result.category } : {}),
-        images: imageUrl
-          ? [{ url: imageUrl, source: "user" }]
+        images: storedImageUrl
+          ? [{ url: storedImageUrl, source: "user" }]
           : [],
         confidence: result.confidence,
         locationConfidence: result.locationConfidence,
@@ -271,8 +298,8 @@ export function AddPlaceSheet({
           model: "findPlace",
           processedAt: Timestamp.now(),
         },
-        source: imageUrl
-          ? { type: "image", url: imageUrl }
+        source: storedImageUrl
+          ? { type: "image", url: storedImageUrl }
           : { type: "link", url: link.trim() },
       };
       await createUserLocation(userId, input);
@@ -496,9 +523,13 @@ export function AddPlaceSheet({
           >
             <input
               type="file"
-              accept="image/*"
+              accept={IMAGE_FILE_ACCEPT}
               className="sr-only"
-              onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+              disabled={preparingPhoto}
+              onChange={(e) => {
+                void onPickFile(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
             />
             {previewUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -507,16 +538,25 @@ export function AddPlaceSheet({
                 alt="Selected"
                 className="mb-3 max-h-56 rounded-xl object-cover"
               />
+            ) : preparingPhoto ? (
+              <Loader2 className="mb-3 h-8 w-8 animate-spin text-primary" />
             ) : (
               <ImageIcon className="mb-3 h-8 w-8 text-primary" />
             )}
             <span className="text-sm font-medium text-text">
-              {previewUrl ? "Change photo" : "Upload photo"}
+              {preparingPhoto
+                ? "Preparing photo…"
+                : previewUrl
+                  ? "Change photo"
+                  : "Upload photo"}
             </span>
             <span className="mt-1 text-xs text-text-muted">
-              or drag and drop on desktop
+              JPEG, PNG, WebP, or HEIC
             </span>
           </label>
+          {error && step === "photo" ? (
+            <p className="text-sm text-error">{error}</p>
+          ) : null}
           <div className="rounded-xl bg-surface px-3 py-3 text-xs text-text-secondary">
             <p className="font-medium text-text">
               Choose a clear photo of the place
@@ -533,7 +573,7 @@ export function AddPlaceSheet({
           </div>
           <Button
             icon={Search}
-            disabled={!file}
+            disabled={!jpegDataUrl || preparingPhoto}
             color="neutral"
             onClick={() => void analyzePhoto()}
             className="w-full disabled:!opacity-40"
@@ -722,9 +762,10 @@ export function AddPlaceSheet({
           {error ? <p className="text-sm text-error">{error}</p> : null}
           <Button
             loading={saving}
+            icon={Save}
+            color="primary"
             onClick={() => void saveSearchedPlace()}
             className="w-full"
-            color="neutral"
           >
             Save place
           </Button>
@@ -1013,9 +1054,11 @@ function AiResultView({
       <Button
         loading={saving}
         onClick={onSave}
+        icon={Save}
+        color="primary"
         className="btn-primary w-full"
       >
-        Save place
+        Save
       </Button>
       <Button
         variant="secondary"

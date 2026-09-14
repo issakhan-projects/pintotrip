@@ -42,6 +42,7 @@ npm run build
 | `NEXT_PUBLIC_FIREBASE_*` | `.env.local` / App Hosting | Public web config |
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | `.env.local` / App Hosting | Restrict by HTTP referrer |
 | `NEXT_PUBLIC_POSTHOG_*` | `.env.local` / App Hosting | Public analytics key |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` | `.env.local` / App Hosting | Search Console HTML-tag token |
 | `OPENAI_API_KEY` | Secret Manager / Functions secrets | **Never** `NEXT_PUBLIC_*` |
 | `GOOGLE_PRIVATE_API_KEY` | Secret Manager / Functions secrets | Server verification only |
 
@@ -60,3 +61,4 @@ npm run build
 5. Set Functions secrets: `firebase functions:secrets:set OPENAI_API_KEY`
 6. Update `.firebaserc` with your real project ID.
 7. Deploy rules: `firebase deploy --only firestore:rules,storage`
+8. Google Search Console: add `https://pintototrip.app` → HTML tag verification → set `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` → redeploy → submit `https://pintototrip.app/sitemap.xml`

@@ -156,6 +156,16 @@ body {
   }
 }
 
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
 @utility landing-fade-up {
   animation: landing-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -166,4 +176,14 @@ body {
 
 @utility landing-pulse-soft {
   animation: landing-pulse-soft 1.4s ease-in-out infinite;
+}
+
+@utility landing-float {
+  animation: landing-float 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-float {
+    animation: none;
+  }
 }

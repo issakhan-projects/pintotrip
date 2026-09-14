@@ -6,13 +6,14 @@ import { HeroSection } from "./sections/HeroSection";
 import { MagicSection } from "./sections/MagicSection";
 import { MapSection } from "./sections/MapSection";
 import { ExploreSection } from "./sections/ExploreSection";
+import { TripPlannerSection } from "./sections/TripPlannerSection";
 import { PricingSection } from "./sections/PricingSection";
 import { FinalCtaSection } from "./sections/FinalCtaSection";
 import { CookieSettings } from "@/features/cookies";
 
 /**
  * Public marketing landing — visual-first travel product story.
- * Six sections max: Hero → Magic → Map → Explore → Pricing → Final CTA.
+ * Hero → Magic → Map → Explore → Trip Planner → Pricing → Final CTA.
  */
 export function LandingPage() {
   return (
@@ -23,6 +24,7 @@ export function LandingPage() {
         <MagicSection />
         <MapSection />
         <ExploreSection />
+        <TripPlannerSection />
         <PricingSection />
         <FinalCtaSection />
       </main>

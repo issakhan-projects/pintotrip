@@ -327,12 +327,13 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
 
       {/* Top chrome */}
       {tab !== "profile" ? (
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 px-4 pt-4">
-        <div className="pointer-events-auto flex items-center gap-2">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex max-w-full items-start justify-between gap-2 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:gap-3 sm:px-4 sm:pt-4">
+        <div className="pointer-events-auto flex min-w-0 shrink items-center gap-1.5 sm:gap-2">
           <button
             type="button"
             onClick={() => goToTab("map")}
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-elevated/95 py-1.5 pl-1.5 pr-3.5 shadow-sm backdrop-blur"
+            aria-label="PinToTrip"
+            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-surface-elevated/95 p-1.5 shadow-sm backdrop-blur sm:py-1.5 sm:pl-1.5 sm:pr-3.5"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -342,7 +343,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               height={24}
               className="h-6 w-6 shrink-0"
             />
-            <p className="font-[family-name:var(--font-manrope)] text-accent font-semibold tracking-wide text-sm">
+            <p className="hidden font-[family-name:var(--font-manrope)] text-sm font-semibold tracking-wide text-accent sm:block">
               PinToTrip
             </p>
           </button>
@@ -351,7 +352,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             <button
               type="button"
               onClick={() => router.push("/pricing")}
-              className="flex items-center gap-1.5 rounded-full border border-border bg-surface-elevated/95 px-3 py-2 shadow-sm backdrop-blur transition-colors hover:bg-surface"
+              className="flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-elevated/95 px-2.5 py-2 shadow-sm backdrop-blur transition-colors hover:bg-surface sm:gap-1.5 sm:px-3"
               title="AI credits available"
             >
               <Coins className="h-3.5 w-3.5 text-primary" aria-hidden />
@@ -364,22 +365,23 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         </div>
 
         {tab === "map" ? (
-          <div className="pointer-events-auto flex items-center gap-2">
+          <div className="pointer-events-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             {viewMode === "map" ? (
               <Button
                 icon={Sparkles}
                 variant="secondary"
+                aria-label="City info"
                 onClick={() => {
                   setPickMode(false);
                   setCityPickMode((v) => !v);
                 }}
                 className={
                   cityPickMode
-                    ? "!bg-primary !text-white !border-primary rounded-full"
-                    : "!bg-surface-elevated/95 !text-text !border-border rounded-full"
+                    ? "!h-10 !w-10 !gap-0 !rounded-full !px-0 !bg-primary !text-white !border-primary sm:!h-11 sm:!w-auto sm:!gap-2 sm:!px-4"
+                    : "!h-10 !w-10 !gap-0 !rounded-full !px-0 !bg-surface-elevated/95 !text-text !border-border sm:!h-11 sm:!w-auto sm:!gap-2 sm:!px-4"
                 }
               >
-                City info
+                <span className="hidden sm:inline">City info</span>
               </Button>
             ) : null}
             <MapListToggle mode={viewMode} onChange={setViewMode} />

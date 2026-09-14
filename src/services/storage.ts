@@ -6,48 +6,52 @@ import {
   type UploadMetadata,
 } from "firebase/storage";
 import { getFirebaseStorage, StoragePaths } from "@/lib/firebase/storage";
+import {
+  prepareClientImage,
+  type CompressImageOptions,
+} from "@/lib/images";
 
-/** OpenAI high-detail vision tiles around this size — larger uploads waste tokens. */
-const AI_IMAGE_MAX_EDGE = 2048;
-const AI_IMAGE_JPEG_QUALITY = 0.85;
+const AVATAR_COMPRESS: CompressImageOptions = {
+  maxSides: [512, 384],
+  qualities: [0.82, 0.68, 0.52, 0.4],
+  maxDataUrlChars: 600_000,
+};
 
-/**
- * Downscale oversized photos for findPlace without harming recognition quality.
- * Phones often shoot 4000px+; OpenAI already tiles ~2048-class inputs.
- */
-async function prepareImageForAI(file: Blob): Promise<Blob> {
-  if (typeof createImageBitmap !== "function") return file;
-
-  try {
-    const bitmap = await createImageBitmap(file);
-    const { width, height } = bitmap;
-    const maxEdge = Math.max(width, height);
-    if (maxEdge <= AI_IMAGE_MAX_EDGE) {
-      bitmap.close();
-      return file;
-    }
-
-    const scale = AI_IMAGE_MAX_EDGE / maxEdge;
-    const targetW = Math.max(1, Math.round(width * scale));
-    const targetH = Math.max(1, Math.round(height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      bitmap.close();
-      return file;
-    }
-    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-    bitmap.close();
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((b) => resolve(b), "image/jpeg", AI_IMAGE_JPEG_QUALITY);
-    });
-    return blob ?? file;
-  } catch {
-    return file;
+async function toUploadBlob(
+  file: Blob,
+  options?: CompressImageOptions
+): Promise<{ blob: Blob; contentType: string }> {
+  // Already-compressed JPEG from prepareClientImage / dataUrlToBlob.
+  if (file.type === "image/jpeg" && !(file instanceof File)) {
+    return { blob: file, contentType: "image/jpeg" };
   }
+
+  if (file instanceof File) {
+    const prepared = await prepareClientImage(file, options);
+    return { blob: prepared.blob, contentType: "image/jpeg" };
+  }
+
+  // Generic Blob — wrap as File for the same HEIC + compress pipeline.
+  const asFile = new File([file], "upload.jpg", {
+    type: file.type?.startsWith("image/") ? file.type : "image/jpeg",
+  });
+  const prepared = await prepareClientImage(asFile, options);
+  return { blob: prepared.blob, contentType: "image/jpeg" };
+}
+
+async function uploadImageBytes(
+  path: string,
+  file: Blob,
+  options?: CompressImageOptions,
+  metadata?: UploadMetadata
+): Promise<string> {
+  const { blob, contentType } = await toUploadBlob(file, options);
+  const storageRef = ref(getFirebaseStorage(), path);
+  await uploadBytes(storageRef, blob, {
+    ...metadata,
+    contentType,
+  });
+  return getDownloadURL(storageRef);
 }
 
 export async function uploadProfileAvatar(
@@ -55,12 +59,12 @@ export async function uploadProfileAvatar(
   file: Blob,
   metadata?: UploadMetadata
 ): Promise<string> {
-  const storageRef = ref(
-    getFirebaseStorage(),
-    StoragePaths.profileAvatar(userId)
+  return uploadImageBytes(
+    StoragePaths.profileAvatar(userId),
+    file,
+    AVATAR_COMPRESS,
+    metadata
   );
-  await uploadBytes(storageRef, file, metadata);
-  return getDownloadURL(storageRef);
 }
 
 export async function uploadLocationOriginalImage(
@@ -69,12 +73,12 @@ export async function uploadLocationOriginalImage(
   file: Blob,
   metadata?: UploadMetadata
 ): Promise<string> {
-  const storageRef = ref(
-    getFirebaseStorage(),
-    StoragePaths.locationOriginal(userId, locationId)
+  return uploadImageBytes(
+    StoragePaths.locationOriginal(userId, locationId),
+    file,
+    undefined,
+    metadata
   );
-  await uploadBytes(storageRef, file, metadata);
-  return getDownloadURL(storageRef);
 }
 
 /** Upload an image for AI analysis before the location doc is created. */
@@ -84,21 +88,12 @@ export async function uploadLocationDraftImage(
   file: Blob,
   metadata?: UploadMetadata
 ): Promise<string> {
-  const prepared = await prepareImageForAI(file);
-  const storageRef = ref(
-    getFirebaseStorage(),
-    StoragePaths.locationDraftOriginal(userId, draftId)
+  return uploadImageBytes(
+    StoragePaths.locationDraftOriginal(userId, draftId),
+    file,
+    undefined,
+    metadata
   );
-  const contentType =
-    prepared.type && prepared.type.startsWith("image/")
-      ? prepared.type
-      : "image/jpeg";
-
-  await uploadBytes(storageRef, prepared, {
-    contentType,
-    ...metadata,
-  });
-  return getDownloadURL(storageRef);
 }
 
 export async function uploadLocationImage(
@@ -108,12 +103,12 @@ export async function uploadLocationImage(
   file: Blob,
   metadata?: UploadMetadata
 ): Promise<string> {
-  const storageRef = ref(
-    getFirebaseStorage(),
-    StoragePaths.locationImage(userId, locationId, imageKey)
+  return uploadImageBytes(
+    StoragePaths.locationImage(userId, locationId, imageKey),
+    file,
+    undefined,
+    metadata
   );
-  await uploadBytes(storageRef, file, metadata);
-  return getDownloadURL(storageRef);
 }
 
 export async function deleteStorageObject(path: string): Promise<void> {

@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { TermsOfServiceContent } from "@/features/legal";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — PinToTrip",
+  title: "Terms of Service",
   description:
     "Terms governing your access to and use of PinToTrip and related services.",
 };

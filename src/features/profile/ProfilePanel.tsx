@@ -340,6 +340,30 @@ export function ProfilePanel({
               </div>
             </section>
 
+            <button
+              type="button"
+              onClick={() => {
+                trackEvent(AnalyticsEvents.INVITE_OPENED);
+                setInviteOpen(true);
+              }}
+              className="mt-4 flex w-full items-center gap-3.5 rounded-2xl border border-primary/20 bg-primary-tint px-4 py-4 text-left transition-colors hover:bg-primary-tint/80"
+            >
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-white shadow-sm">
+                <Users className="h-5 w-5" strokeWidth={2} aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-text">
+                  Invite friends
+                </span>
+                <span className="mt-0.5 block text-xs text-text-secondary">
+                  Get {REFERRAL_REWARD_AI_CREDITS} AI credits when they join
+                </span>
+              </span>
+              <span className="shrink-0 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-white">
+                Invite
+              </span>
+            </button>
+
             <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-surface-elevated">
               <ProfileMenuRow
                 icon={<Globe2 className="h-4 w-4" />}
@@ -365,15 +389,6 @@ export function ProfilePanel({
                 onClick={() =>
                   openMenu("subscription", AnalyticsEvents.SUBSCRIPTION_OPENED)
                 }
-              />
-              <ProfileMenuRow
-                icon={<Users className="h-4 w-4" />}
-                title="Invite friends"
-                description={`Get ${REFERRAL_REWARD_AI_CREDITS} credits when they join`}
-                onClick={() => {
-                  trackEvent(AnalyticsEvents.INVITE_OPENED);
-                  setInviteOpen(true);
-                }}
               />
               <ProfileMenuRow
                 icon={<Settings className="h-4 w-4" />}
