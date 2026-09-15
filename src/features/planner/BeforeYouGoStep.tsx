@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
   FileText,
   Info,
   ListChecks,
+  Loader2,
   Luggage,
   Map,
   Plane,
@@ -23,12 +24,18 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
+import { fetchFrankfurterRate } from "@/lib/currency";
+import { resolveCurrencyCode } from "@/lib/currencies";
 import type {
   PreparationCategory,
   PreparationItem,
+  TripAccommodation,
+  TripDocumentDetails,
   TripPlannerDoc,
+  TripVisaDetails,
 } from "@/types/trip-planner";
 import { preparationProgress } from "./tripUtils";
+import { TripEssentialsSection } from "./TripEssentialsSection";
 import { cx } from "@/lib/utils";
 
 const KERBEZ_URL = "https://kerbez.app";
@@ -45,8 +52,14 @@ const CATEGORY_ICON: Record<PreparationCategory, LucideIcon> = {
 
 interface BeforeYouGoStepProps {
   trip: TripPlannerDoc;
+  userId: string;
+  /** User's preferred home currency (ISO 4217). */
+  homeCurrency?: string;
   onToggleItem: (itemId: string, completed: boolean) => void;
   onAddItem: (title: string) => void;
+  onUpdateAccommodation: (value: TripAccommodation | null) => Promise<void>;
+  onUpdateDocuments: (value: TripDocumentDetails | null) => Promise<void>;
+  onUpdateVisa: (value: TripVisaDetails | null) => Promise<void>;
   onGoToDetails: () => void;
   onGoToPlaces: () => void;
   onViewGuide?: () => void;
@@ -54,8 +67,13 @@ interface BeforeYouGoStepProps {
 
 export function BeforeYouGoStep({
   trip,
+  userId,
+  homeCurrency,
   onToggleItem,
   onAddItem,
+  onUpdateAccommodation,
+  onUpdateDocuments,
+  onUpdateVisa,
   onGoToDetails,
   onGoToPlaces,
   onViewGuide,
@@ -67,18 +85,77 @@ export function BeforeYouGoStep({
   const addInputId = useId();
 
   const intel = trip.cityIntelligence.result;
-  const exchange = intel?.exchangeRate ?? intel?.details?.currency?.exchangeRate;
-  const destCurrency =
-    intel?.details?.currency?.code ||
-    trip.currency.code ||
-    intel?.currency ||
+  const destCurrency = resolveCurrencyCode(
+    trip.currency?.code ||
+      trip.currency?.name ||
+      intel?.details?.currency?.code ||
+      intel?.currency ||
+      ""
+  );
+  // Prefer profile currency; fall back to city-intel "from", then USD so rates still load.
+  const fromCurrency = resolveCurrencyCode(
+    homeCurrency ||
+      intel?.exchangeRate?.from ||
+      intel?.details?.currency?.exchangeRate?.from ||
+      "USD"
+  );
+  const destLabel =
+    trip.currency?.name?.trim() ||
+    intel?.details?.currency?.name ||
+    destCurrency;
+  const destSymbol =
+    trip.currency?.symbol?.trim() ||
+    intel?.details?.currency?.symbol ||
     "";
-  const rateFrom = exchange?.from;
-  const rateTo = exchange?.to;
-  const rateValue =
-    typeof exchange?.rate === "number" && Number.isFinite(exchange.rate)
-      ? exchange.rate
-      : null;
+
+  const [fxRate, setFxRate] = useState<number | null>(null);
+  const [fxDate, setFxDate] = useState<string | null>(null);
+  const [fxLoading, setFxLoading] = useState(false);
+  const [fxError, setFxError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!destCurrency) {
+      setFxRate(null);
+      setFxDate(null);
+      setFxError(null);
+      setFxLoading(false);
+      return;
+    }
+
+    if (fromCurrency === destCurrency) {
+      setFxRate(1);
+      setFxDate(null);
+      setFxError(null);
+      setFxLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFxLoading(true);
+    setFxError(null);
+
+    void fetchFrankfurterRate(fromCurrency, destCurrency)
+      .then((result) => {
+        if (cancelled) return;
+        setFxRate(result.rate);
+        setFxDate(result.date);
+        setFxError(null);
+        setFxLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFxRate(null);
+        setFxDate(null);
+        setFxError(
+          err instanceof Error ? err.message : "Could not load exchange rate."
+        );
+        setFxLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fromCurrency, destCurrency]);
 
   const currencyTip =
     intel?.details?.practicalInfo?.payment ||
@@ -126,6 +203,14 @@ export function BeforeYouGoStep({
           </div>
         ) : null}
       </div>
+
+      <TripEssentialsSection
+        trip={trip}
+        userId={userId}
+        onUpdateAccommodation={onUpdateAccommodation}
+        onUpdateDocuments={onUpdateDocuments}
+        onUpdateVisa={onUpdateVisa}
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
         <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm sm:p-5 lg:col-span-2">
@@ -246,32 +331,62 @@ export function BeforeYouGoStep({
               <h3 className="text-sm font-semibold text-text">Currency</h3>
             </div>
 
-            {rateFrom && rateTo && rateValue != null ? (
-              <p className="mt-3 flex items-center justify-between gap-2 text-sm font-medium text-text">
-                <span>
-                  1 {rateFrom} ≈ {formatRate(rateValue)} {rateTo}
-                </span>
-                <ChevronRight
-                  className="h-4 w-4 shrink-0 text-text-muted"
-                  aria-hidden
-                />
-              </p>
-            ) : destCurrency ? (
-              <p className="mt-3 flex items-center justify-between gap-2 text-sm font-medium text-text">
-                <span>
-                  Local currency: {destCurrency}
-                  {trip.currency.symbol ? ` (${trip.currency.symbol})` : ""}
-                </span>
-                <ChevronRight
-                  className="h-4 w-4 shrink-0 text-text-muted"
-                  aria-hidden
-                />
+            {destCurrency ? (
+              <p className="mt-3 text-sm font-medium text-text">
+                {destCurrency}
+                {destLabel && destLabel !== destCurrency
+                  ? ` · ${destLabel}`
+                  : ""}
+                {destSymbol ? ` (${destSymbol})` : ""}
               </p>
             ) : (
               <p className="mt-3 text-sm text-text-secondary">
-                Exchange rate unavailable yet.
+                Set a trip currency in trip details to see rates.
               </p>
             )}
+
+            {fxLoading ? (
+              <p className="mt-2 inline-flex items-center gap-2 text-sm text-text-secondary">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                Loading exchange rate…
+              </p>
+            ) : fromCurrency && destCurrency && fromCurrency === destCurrency ? (
+              <p className="mt-2 text-xs text-text-secondary">
+                Same as your home currency ({fromCurrency})
+              </p>
+            ) : fromCurrency && destCurrency && fxRate != null ? (
+              <p className="mt-2 flex items-center justify-between gap-2 text-sm text-text">
+                <span className="font-medium tabular-nums">
+                  1 {fromCurrency} ≈ {formatRate(fxRate)} {destCurrency}
+                </span>
+                <ChevronRight
+                  className="h-4 w-4 shrink-0 text-text-muted"
+                  aria-hidden
+                />
+              </p>
+            ) : null}
+
+            {fxError ? (
+              <p className="mt-2 text-xs text-text-muted">{fxError}</p>
+            ) : null}
+
+            {fxDate &&
+            fromCurrency &&
+            destCurrency &&
+            fromCurrency !== destCurrency &&
+            fxRate != null ? (
+              <p className="mt-1.5 text-[11px] text-text-muted">
+                Mid-market rate as of {fxDate} via{" "}
+                <a
+                  href="https://frankfurter.dev/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2 hover:text-text-secondary"
+                >
+                  Frankfurter
+                </a>
+              </p>
+            ) : null}
 
             <div className="mt-3 flex gap-2 rounded-xl bg-primary-tint px-3 py-2.5 text-xs leading-relaxed text-primary">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

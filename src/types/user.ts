@@ -14,11 +14,21 @@ export type SubscriptionStatus =
   | "past_due"
   | "paused";
 
+export type TemperatureUnit = "celsius" | "fahrenheit";
+export type DistanceUnit = "km" | "mi";
+export type TimeFormat = "24h" | "12h";
+
 export interface UserPreferences {
   emailSubscription: boolean;
   /** BCP 47 language from the user's device (e.g. "en", "ru", "uz"). */
   language: string;
   timezone: string;
+  /** Display temperature as °C or °F. Defaults to celsius when unset. */
+  temperatureUnit?: TemperatureUnit;
+  /** Display distances as km or mi. Defaults to km when unset. */
+  distanceUnit?: DistanceUnit;
+  /** Clock display: 24-hour or 12-hour. Defaults to 24h when unset. */
+  timeFormat?: TimeFormat;
 }
 
 /**

@@ -28,22 +28,40 @@ const STATUS_META: Record<
 interface StatusBadgeProps {
   status: LocationStatus;
   className?: string;
+  /** Icon only — pass `"mobile"` to hide the label below the `sm` breakpoint. */
+  iconOnly?: boolean | "mobile";
 }
 
-export function StatusBadge({ status, className }: StatusBadgeProps) {
+export function StatusBadge({
+  status,
+  className,
+  iconOnly = false,
+}: StatusBadgeProps) {
   const { Icon, className: tone } = STATUS_META[status];
+  const label = statusLabel(status);
+  const alwaysIconOnly = iconOnly === true;
+  const mobileIconOnly = iconOnly === "mobile";
 
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+        "inline-flex items-center rounded-full border text-xs font-medium",
+        alwaysIconOnly || mobileIconOnly
+          ? "gap-0 px-1.5 py-1"
+          : "gap-1.5 px-2.5 py-1",
+        mobileIconOnly && "sm:gap-1.5 sm:px-2.5",
         tone,
         className
       )}
-      aria-label={`Status: ${statusLabel(status)}`}
+      aria-label={`Status: ${label}`}
+      title={label}
     >
       <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      {statusLabel(status)}
+      {alwaysIconOnly ? null : mobileIconOnly ? (
+        <span className="hidden sm:inline">{label}</span>
+      ) : (
+        label
+      )}
     </span>
   );
 }

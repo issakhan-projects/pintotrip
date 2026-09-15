@@ -171,6 +171,9 @@ export async function createUserProfile(
       timezone:
         input.preferences?.timezone ??
         Intl.DateTimeFormat().resolvedOptions().timeZone,
+      temperatureUnit: input.preferences?.temperatureUnit ?? "celsius",
+      distanceUnit: input.preferences?.distanceUnit ?? "km",
+      timeFormat: input.preferences?.timeFormat ?? "24h",
     },
     subscription: {
       plan: input.subscription?.plan ?? "free",
@@ -208,6 +211,9 @@ export async function createUserProfile(
       timezone:
         input.preferences?.timezone ??
         Intl.DateTimeFormat().resolvedOptions().timeZone,
+      temperatureUnit: input.preferences?.temperatureUnit ?? "celsius",
+      distanceUnit: input.preferences?.distanceUnit ?? "km",
+      timeFormat: input.preferences?.timeFormat ?? "24h",
     },
     subscription: {
       plan: input.subscription?.plan ?? "free",
@@ -276,6 +282,9 @@ export async function ensureUserProfile(params: {
         timezone:
           existing.preferences?.timezone ??
           Intl.DateTimeFormat().resolvedOptions().timeZone,
+        temperatureUnit: existing.preferences?.temperatureUnit ?? "celsius",
+        distanceUnit: existing.preferences?.distanceUnit ?? "km",
+        timeFormat: existing.preferences?.timeFormat ?? "24h",
       };
     }
 

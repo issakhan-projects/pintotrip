@@ -107,6 +107,9 @@ export function TravelPreferencesView({
           timezone:
             profile.preferences?.timezone ??
             Intl.DateTimeFormat().resolvedOptions().timeZone,
+          temperatureUnit: profile.preferences?.temperatureUnit ?? "celsius",
+          distanceUnit: profile.preferences?.distanceUnit ?? "km",
+          timeFormat: profile.preferences?.timeFormat ?? "24h",
         },
       });
       setSaved(true);

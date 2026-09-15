@@ -23,25 +23,18 @@ import {
   setAICache,
 } from "../shared/ai";
 import type { ModelCityIntelligence } from "./parseModelResponse";
+import { attachFrankfurterExchangeRate } from "./attachFrankfurterExchangeRate";
 import {
   CITY_INTELLIGENCE_DISCLAIMER,
   type GetCityIntelligenceRequest,
   type CityIntelligenceResult,
-  type ExchangeRateProvider,
   type VisaInfoProvider,
 } from "./types";
 
 /**
  * Provider stubs — wire authoritative APIs later.
- * Do NOT rely solely on an LLM for visas or live FX rates.
+ * Exchange rates use Frankfurter (see attachFrankfurterExchangeRate).
  */
-const exchangeRateProviderStub: ExchangeRateProvider = {
-  name: "stub-exchange-rate",
-  async getRate() {
-    throw new Error("Exchange rate provider not configured");
-  },
-};
-
 const visaInfoProviderStub: VisaInfoProvider = {
   name: "stub-visa-info",
   async getRequirements() {
@@ -133,7 +126,7 @@ export type GetCityIntelligenceResponse =
  * 3. Slow-cache hit → slim time-sensitive OpenAI call + merge
  * 4. Else full OpenAI synthesis
  * 5. Credits only when billable AI ran
- * 6. Preserve exchange/visa provider stubs for future authoritative wiring
+ * 6. Attach Frankfurter mid-market FX (never from the model)
  */
 export const getCityIntelligence = onCall(
   {
@@ -171,7 +164,6 @@ export const getCityIntelligence = onCall(
       language,
     });
 
-    void exchangeRateProviderStub;
     void visaInfoProviderStub;
 
     try {
@@ -278,13 +270,19 @@ export const getCityIntelligence = onCall(
         });
       }
 
+      // Always refresh FX from Frankfurter (even on AI cache hits).
+      const result = await attachFrankfurterExchangeRate(
+        cachedOrLive.result,
+        userCurrency
+      );
+
       logger.info("getCityIntelligence completed", {
         uid,
         city: input.city,
         country: input.country,
-        currency: cachedOrLive.result.currency,
-        hasFx: Boolean(cachedOrLive.result.exchangeRate),
-        hasVisa: Boolean(cachedOrLive.result.visaRequirements),
+        currency: result.currency,
+        hasFx: Boolean(result.exchangeRate),
+        hasVisa: Boolean(result.visaRequirements),
         outcome: cachedOrLive.outcome,
         billable: cachedOrLive.billable,
         tokens: cachedOrLive.usage?.totalTokens ?? 0,
@@ -292,7 +290,7 @@ export const getCityIntelligence = onCall(
         durationMs: Date.now() - started,
       });
 
-      return cachedOrLive.result;
+      return result;
     } catch (err) {
       if (
         err &&

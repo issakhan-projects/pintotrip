@@ -506,6 +506,7 @@ function CreateTripForm({
           symbol: currencySymbolForCode(currencyCode),
         },
         preparation: { items: preparationItems },
+        tripEssentials: { flights: [], accommodation: [], documents: [] },
         savedPlaceIds: matchingPlaceIds,
         cityIntelligence: { status: "pending" },
         itinerary: { status: "empty", days: [] },

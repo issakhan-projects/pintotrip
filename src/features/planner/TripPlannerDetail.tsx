@@ -23,7 +23,10 @@ import {
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import type {
+  TripAccommodation,
+  TripEssentials,
   TripItinerary,
+  TripPlannerDoc,
   TripPlannerStep,
 } from "@/types/trip-planner";
 import type { LocationStatus } from "@/types/location";
@@ -256,9 +259,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     );
     setTrip({
       ...trip,
-      preparation: { items },
+      preparation: { ...trip.preparation, items },
     });
-    await patchTrip({ preparation: { items } });
+    await patchTrip({ preparation: { ...trip.preparation, items } });
   }
 
   async function addPrepItem(title: string) {
@@ -283,9 +286,44 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     ];
     setTrip({
       ...trip,
-      preparation: { items },
+      preparation: { ...trip.preparation, items },
     });
-    await patchTrip({ preparation: { items } });
+    await patchTrip({ preparation: { ...trip.preparation, items } });
+  }
+
+  async function updatePreparationField<
+    K extends "documents" | "visa",
+  >(
+    field: K,
+    value: NonNullable<TripPlannerDoc["preparation"][K]> | null
+  ) {
+    if (!trip) return;
+    const preparation = {
+      ...trip.preparation,
+      [field]: value,
+    };
+    setTrip({ ...trip, preparation });
+    await patchTrip({ preparation });
+  }
+
+  async function updateAccommodation(value: TripAccommodation | null) {
+    if (!trip) return;
+    const previous = trip.tripEssentials ?? emptyTripEssentials();
+    const accommodation = value
+      ? upsertAccommodation(previous.accommodation ?? [], value)
+      : [];
+    const tripEssentials: TripEssentials = {
+      flights: previous.flights ?? [],
+      accommodation,
+      documents: previous.documents ?? [],
+    };
+    // Prefer tripEssentials going forward; clear legacy single stay field.
+    const preparation = {
+      ...trip.preparation,
+      accommodation: null,
+    };
+    setTrip({ ...trip, tripEssentials, preparation });
+    await patchTrip({ tripEssentials, preparation });
   }
 
   async function handleDelete() {
@@ -499,8 +537,18 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
           {step === "preparation" ? (
             <BeforeYouGoStep
               trip={trip}
+              userId={user.uid}
+              homeCurrency={
+                profile?.currency ||
+                trip.cityIntelligence.result?.exchangeRate?.from
+              }
               onToggleItem={(id, value) => void togglePrepItem(id, value)}
               onAddItem={(title) => void addPrepItem(title)}
+              onUpdateAccommodation={(value) => updateAccommodation(value)}
+              onUpdateDocuments={(value) =>
+                updatePreparationField("documents", value)
+              }
+              onUpdateVisa={(value) => updatePreparationField("visa", value)}
               onGoToDetails={() => setStep("details")}
               onGoToPlaces={() => setStep("places")}
               onViewGuide={() => setStep("details")}
@@ -576,4 +624,32 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       />
     </main>
   );
+}
+
+function emptyTripEssentials(): TripEssentials {
+  return {
+    flights: [],
+    accommodation: [],
+    documents: [],
+  };
+}
+
+function upsertAccommodation(
+  list: TripAccommodation[],
+  value: TripAccommodation
+): TripAccommodation[] {
+  const id = value.id?.trim() || crypto.randomUUID();
+  const next: TripAccommodation = { ...value, id };
+  const index = list.findIndex((item) => item.id && item.id === id);
+  if (index >= 0) {
+    const copy = [...list];
+    copy[index] = next;
+    return copy;
+  }
+  // Single-stay UI: replace the only entry when it had no id (legacy).
+  if (list.length === 1 && !list[0]?.id) {
+    return [next];
+  }
+  if (list.length === 0) return [next];
+  return [...list, next];
 }

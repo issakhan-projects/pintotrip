@@ -254,19 +254,7 @@ export function parseModelCityIntelligence(
   }
   const currency = currencyObj as Record<string, unknown>;
 
-  let exchangeRate: ModelCityIntelligence["currency"]["exchangeRate"];
-  const fx = currency.exchangeRate;
-  if (fx && typeof fx === "object") {
-    const fxObj = fx as Record<string, unknown>;
-    const rate = optionalNumber(fxObj.rate);
-    exchangeRate = {
-      from: asString(fxObj.from, "currency.exchangeRate.from"),
-      to: asString(fxObj.to, "currency.exchangeRate.to"),
-      rate: rate === undefined ? null : rate,
-      approximate: fxObj.approximate !== false,
-    };
-  }
-
+  // Ignore any model-supplied FX — Frankfurter is the sole rate source.
   const bestRaw = body.bestTimeToVisit;
   const bestTimeToVisit =
     bestRaw && typeof bestRaw === "object"
@@ -311,7 +299,8 @@ export function parseModelCityIntelligence(
       const obj = t as Record<string, unknown>;
       return {
         local: optionalNumber(obj.local) ?? null,
-        userCurrency: optionalNumber(obj.userCurrency) ?? null,
+        // Ignore model userCurrency — Frankfurter converts server-side.
+        userCurrency: null,
       };
     };
     dailyBudget = {
@@ -383,7 +372,7 @@ export function parseModelCityIntelligence(
       name: asString(currency.name, "currency.name"),
       code: asString(currency.code, "currency.code").toUpperCase(),
       symbol: asString(currency.symbol, "currency.symbol"),
-      exchangeRate,
+      exchangeRate: null,
     },
     bestTimeToVisit,
     visa,
@@ -455,11 +444,8 @@ function pickBudgetAmount(
   };
 }
 
-/** Slim time-sensitive model payload (visa / FX / budget conversion). */
+/** Slim time-sensitive model payload (visa / local budget — FX from Frankfurter). */
 export interface ModelCityTimeSensitive {
-  currency?: {
-    exchangeRate?: ModelCityIntelligence["currency"]["exchangeRate"];
-  };
   visa?: ModelCityIntelligence["visa"];
   dailyBudget?: ModelCityIntelligence["dailyBudget"];
   lastCheckedAt?: string;
@@ -476,26 +462,6 @@ export function parseModelCityTimeSensitive(
     throw new Error("Time-sensitive response is not an object.");
   }
   const body = raw as Record<string, unknown>;
-
-  let exchangeRate: ModelCityIntelligence["currency"]["exchangeRate"];
-  const currencyObj = body.currency;
-  if (currencyObj && typeof currencyObj === "object") {
-    const fx = (currencyObj as Record<string, unknown>).exchangeRate;
-    if (fx && typeof fx === "object") {
-      const fxObj = fx as Record<string, unknown>;
-      const rate = optionalNumber(fxObj.rate);
-      const from = optionalString(fxObj.from);
-      const to = optionalString(fxObj.to);
-      if (from && to) {
-        exchangeRate = {
-          from,
-          to,
-          rate: rate === undefined ? null : rate,
-          approximate: fxObj.approximate !== false,
-        };
-      }
-    }
-  }
 
   let visa: ModelCityIntelligence["visa"];
   const visaRaw = body.visa;
@@ -531,7 +497,8 @@ export function parseModelCityTimeSensitive(
       const obj = t as Record<string, unknown>;
       return {
         local: optionalNumber(obj.local) ?? null,
-        userCurrency: optionalNumber(obj.userCurrency) ?? null,
+        // Ignore model userCurrency — Frankfurter converts server-side.
+        userCurrency: null,
       };
     };
     const currency = optionalString(b.currency);
@@ -547,7 +514,6 @@ export function parseModelCityTimeSensitive(
   }
 
   return {
-    currency: exchangeRate ? { exchangeRate } : undefined,
     visa,
     dailyBudget,
     lastCheckedAt: optionalString(body.lastCheckedAt),
@@ -566,10 +532,8 @@ export function mergeSlowWithTimeSensitive(
     ...slow,
     currency: {
       ...slow.currency,
-      exchangeRate:
-        patch.currency?.exchangeRate !== undefined
-          ? patch.currency.exchangeRate
-          : slow.currency.exchangeRate,
+      // FX is never taken from the model.
+      exchangeRate: null,
     },
     visa: patch.visa ?? slow.visa,
     dailyBudget: patch.dailyBudget ?? slow.dailyBudget,
@@ -651,20 +615,7 @@ export function toCityIntelligenceResult(
   analysis: ModelCityIntelligence,
   context: { userCountry: string; generatedAt: string }
 ): CityIntelligenceResult {
-  const fx = analysis.currency.exchangeRate;
-  const exchangeRate =
-    fx && fx.rate != null && Number.isFinite(fx.rate)
-      ? {
-          from: fx.from,
-          to: fx.to,
-          rate: fx.rate,
-          asOf: context.generatedAt,
-          source: fx.approximate
-            ? "Approximate rate from model synthesis — verify with a financial provider"
-            : "Model-synthesized rate — verify with a financial provider",
-        }
-      : undefined;
-
+  // exchangeRate is attached later via Frankfurter — never from the model.
   const best = analysis.bestTimeToVisit;
   const bestTimeToVisit = best
     ? {
@@ -732,7 +683,6 @@ export function toCityIntelligenceResult(
 
   return {
     currency: currencyLabel,
-    exchangeRate,
     safeRate,
     bestTimeToVisit,
     visaRequirements,
@@ -742,7 +692,12 @@ export function toCityIntelligenceResult(
     generatedAt: context.generatedAt,
     details: {
       city: analysis.city,
-      currency: analysis.currency,
+      currency: {
+        name: analysis.currency.name,
+        code: analysis.currency.code,
+        symbol: analysis.currency.symbol,
+        exchangeRate: null,
+      },
       bestTimeToVisit: analysis.bestTimeToVisit,
       visa: analysis.visa,
       dailyBudget: analysis.dailyBudget,

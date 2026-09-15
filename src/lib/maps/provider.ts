@@ -14,8 +14,8 @@ export interface MapMarkerInput {
   lon: number;
   title?: string;
   status?: LocationStatus;
-  /** Place pins use status colors; city pins use brand primary. */
-  kind?: "place" | "city";
+  /** Place pins use status colors; city/stay pins use fixed brand accents. */
+  kind?: "place" | "city" | "stay";
 }
 
 export interface CreateMapOptions {
@@ -75,6 +75,8 @@ const STATUS_HEX: Record<LocationStatus, string> = {
 };
 
 const CITY_PIN_HEX = "#6D28D9";
+/** Accommodation / trip-essentials stay pin — distinct from place + city. */
+const STAY_PIN_HEX = "#0F766E";
 
 export { DEMO_MAP_ID };
 
@@ -114,16 +116,42 @@ function cityPinSvg(color: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+/** Rounded “bed” badge pin for trip-essentials accommodation. */
+function stayPinSvg(color: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="40" viewBox="0 0 34 40">
+    <path fill="${color}" stroke="#fff" stroke-width="2" d="M17 1C9.3 1 3 7.3 3 15c0 10 12 22.5 13.1 23.6a1.3 1.3 0 0 0 1.8 0C19 37.5 31 25 31 15 31 7.3 24.7 1 17 1z"/>
+    <rect x="9" y="11" width="16" height="11" rx="2.5" fill="#fff"/>
+    <rect x="10.5" y="12.5" width="5" height="4" rx="1" fill="${color}"/>
+    <path fill="${color}" d="M10.5 18.5h13v2.2c0 .7-.6 1.3-1.3 1.3h-10.4c-.7 0-1.3-.6-1.3-1.3v-2.2z"/>
+  </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+type MarkerKind = NonNullable<MapMarkerInput["kind"]>;
+
+function pinColorFor(kind: MarkerKind, status?: LocationStatus): string {
+  if (kind === "city") return CITY_PIN_HEX;
+  if (kind === "stay") return STAY_PIN_HEX;
+  return STATUS_HEX[status ?? "planned"];
+}
+
 function createPinContent(
   color: string,
   title?: string,
-  kind: "place" | "city" = "place"
+  kind: MarkerKind = "place"
 ): HTMLElement {
   const img = document.createElement("img");
-  img.src = kind === "city" ? cityPinSvg(color) : pinSvg(color);
-  img.width = kind === "city" ? 32 : 28;
-  img.height = kind === "city" ? 40 : 36;
-  img.alt = title ?? (kind === "city" ? "City" : "Place");
+  img.src =
+    kind === "city"
+      ? cityPinSvg(color)
+      : kind === "stay"
+        ? stayPinSvg(color)
+        : pinSvg(color);
+  img.width = kind === "place" ? 28 : kind === "city" ? 32 : 34;
+  img.height = kind === "place" ? 36 : 40;
+  img.alt =
+    title ??
+    (kind === "city" ? "City" : kind === "stay" ? "Accommodation" : "Place");
   img.draggable = false;
   img.style.display = "block";
   // AdvancedMarkerElement anchors custom HTML at the bottom center (pin tip).
@@ -203,8 +231,7 @@ export const googleMapsProvider: MapProvider = {
         prev.handle.map = map;
         if (prev.visualKey !== visualKey) {
           const kind = m.kind ?? "place";
-          const color =
-            kind === "city" ? CITY_PIN_HEX : STATUS_HEX[m.status ?? "planned"];
+          const color = pinColorFor(kind, m.status);
           prev.handle.content = createPinContent(color, m.title, kind);
           prev.visualKey = visualKey;
         }
@@ -214,8 +241,7 @@ export const googleMapsProvider: MapProvider = {
       }
 
       const kind = m.kind ?? "place";
-      const color =
-        kind === "city" ? CITY_PIN_HEX : STATUS_HEX[m.status ?? "planned"];
+      const color = pinColorFor(kind, m.status);
       const marker = new AdvancedMarkerElement({
         map,
         position: { lat: m.lat, lng: m.lon },

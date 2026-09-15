@@ -11,9 +11,11 @@ import { Button } from "@/components/ui";
 import {
   Check,
   ChevronDown,
+  CloudSun,
   ExternalLink,
   GripVertical,
   ListOrdered,
+  Loader2,
   Map as MapIcon,
   MapPin,
   MoreHorizontal,
@@ -27,11 +29,15 @@ import { Sheet } from "@/components/ui/Sheet";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type {
   ItineraryDay,
+  ItineraryDayWeather,
   TripItinerary,
   TripPlannerDoc,
 } from "@/types/trip-planner";
 import type { LocationPrice, LocationStatus } from "@/types/location";
+import type { TripWeatherDay } from "@/types/weather";
 import { getBrowserCoords, type MapMarkerInput } from "@/lib/maps";
+import { getTripWeather } from "@/services/functions";
+import { startOfUtcDay } from "@/services/trip-planner";
 import { AI_CREDIT_COSTS } from "@/types/credits";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { cx } from "@/lib/utils";
@@ -39,6 +45,52 @@ import { distanceKm } from "./clusterPlaces";
 import { PlanTripSheet } from "./PlanTripSheet";
 
 type Coords = { lat: number; lon: number };
+
+/** Re-fetch OpenWeather if cached forecast is older than this. */
+const WEATHER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+function toIsoDate(date: Date): string {
+  const d = startOfUtcDay(date);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function weatherIconUrl(icon: string): string {
+  return `https://openweathermap.org/img/wn/${icon}@2x.png`;
+}
+
+function isWeatherFresh(weather: ItineraryDayWeather | undefined): boolean {
+  if (!weather?.fetchedAt) return false;
+  const age = Date.now() - Date.parse(weather.fetchedAt);
+  return Number.isFinite(age) && age >= 0 && age < WEATHER_CACHE_TTL_MS;
+}
+
+function itineraryNeedsWeatherFetch(days: ItineraryDay[]): boolean {
+  if (days.length === 0) return false;
+  return days.some((day) => !isWeatherFresh(day.weather));
+}
+
+function toDayWeather(
+  day: TripWeatherDay,
+  fetchedAt: string,
+  units: "metric" | "imperial"
+): ItineraryDayWeather {
+  return {
+    available: day.available,
+    tempMin: day.tempMin,
+    tempMax: day.tempMax,
+    temp: day.temp,
+    description: day.description,
+    icon: day.icon,
+    humidity: day.humidity,
+    windSpeed: day.windSpeed,
+    precipitationChance: day.precipitationChance,
+    units,
+    fetchedAt,
+  };
+}
 
 function formatDistanceFrom(from: Coords, to: Coords): string {
   const km = distanceKm(from, to);
@@ -111,7 +163,7 @@ export function PlacesStep({
   );
 
   const markers: MapMarkerInput[] = useMemo(() => {
-    const placeMarkers = tripPlaces.map((place) => ({
+    const placeMarkers: MapMarkerInput[] = tripPlaces.map((place) => ({
       id: place.id,
       lat: place.lat,
       lon: place.lon,
@@ -119,7 +171,27 @@ export function PlacesStep({
       status: place.status,
       kind: "place" as const,
     }));
-    if (placeMarkers.length > 0) return placeMarkers;
+
+    const stayMarkers: MapMarkerInput[] = (
+      trip.tripEssentials?.accommodation ?? []
+    )
+      .filter(
+        (stay) =>
+          typeof stay.lat === "number" &&
+          Number.isFinite(stay.lat) &&
+          typeof stay.lon === "number" &&
+          Number.isFinite(stay.lon)
+      )
+      .map((stay, index) => ({
+        id: `__stay__${stay.id ?? index}`,
+        lat: stay.lat as number,
+        lon: stay.lon as number,
+        title: stay.name?.trim() || stay.address?.trim() || "Accommodation",
+        kind: "stay" as const,
+      }));
+
+    const combined = [...placeMarkers, ...stayMarkers];
+    if (combined.length > 0) return combined;
 
     if (trip.destination.lat != null && trip.destination.lon != null) {
       return [
@@ -133,7 +205,19 @@ export function PlacesStep({
       ];
     }
     return [];
-  }, [tripPlaces, trip.destination]);
+  }, [tripPlaces, trip.destination, trip.tripEssentials?.accommodation]);
+
+  const hasStayPins = useMemo(
+    () =>
+      (trip.tripEssentials?.accommodation ?? []).some(
+        (stay) =>
+          typeof stay.lat === "number" &&
+          Number.isFinite(stay.lat) &&
+          typeof stay.lon === "number" &&
+          Number.isFinite(stay.lon)
+      ),
+    [trip.tripEssentials?.accommodation]
+  );
 
   const availableToAdd = useMemo(() => {
     const taken = new Set(trip.savedPlaceIds);
@@ -313,12 +397,12 @@ export function PlacesStep({
             fitToMarkers
             centerOnCurrentLocation={false}
             onMarkerSelect={(id) => {
-              if (id === "__destination__") return;
+              if (id === "__destination__" || id.startsWith("__stay__")) return;
               const place = byId.get(id) ?? null;
               setDetail(place);
             }}
           />
-          {tripPlaces.length === 0 ? (
+          {tripPlaces.length === 0 && !hasStayPins ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/55 to-transparent px-4 pb-4 pt-10">
               <div className="pointer-events-auto rounded-xl bg-surface-elevated/95 px-3 py-3 shadow-sm ring-1 ring-border backdrop-blur-sm">
                 <p className="text-sm font-medium text-text">No places yet</p>
@@ -349,6 +433,7 @@ export function PlacesStep({
           onPlan={openPlanSheet}
           onAddPlace={(dayIndex) => openAddSheet(dayIndex)}
           onAddPlaces={() => openAddSheet()}
+          onUpdateItinerary={onUpdateItinerary}
         />
       )}
 
@@ -468,6 +553,7 @@ function ItineraryList({
   onPlan,
   onAddPlace,
   onAddPlaces,
+  onUpdateItinerary,
 }: {
   trip: TripPlannerDoc;
   byId: Map<string, SavedLocation>;
@@ -481,9 +567,20 @@ function ItineraryList({
   onPlan: () => void;
   onAddPlace: (dayIndex: number) => void;
   onAddPlaces: () => void;
+  onUpdateItinerary: (itinerary: TripItinerary) => Promise<void>;
 }) {
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
   const [userCoords, setUserCoords] = useState<Coords | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  /** Optimistic weather keyed by day number until trip doc catches up. */
+  const [weatherByDay, setWeatherByDay] = useState<
+    Map<number, ItineraryDayWeather>
+  >(() => new Map());
+
+  const lat = trip.destination.lat;
+  const lon = trip.destination.lon;
+  const hasCoords = lat != null && lon != null;
+  const needsFetch = itineraryNeedsWeatherFetch(trip.itinerary.days);
 
   useEffect(() => {
     let cancelled = false;
@@ -496,6 +593,92 @@ function ItineraryList({
       cancelled = true;
     };
   }, []);
+
+  // Sync local override from persisted trip weather when cache is warm.
+  useEffect(() => {
+    if (needsFetch) return;
+    const next = new Map<number, ItineraryDayWeather>();
+    for (const day of trip.itinerary.days) {
+      if (day.weather) next.set(day.day, day.weather);
+    }
+    setWeatherByDay(next);
+  }, [needsFetch, trip.itinerary.days]);
+
+  useEffect(() => {
+    if (
+      !hasCoords ||
+      lat == null ||
+      lon == null ||
+      trip.itinerary.days.length === 0 ||
+      !needsFetch
+    ) {
+      setWeatherLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWeatherLoading(true);
+
+    void getTripWeather({
+      lat,
+      lon,
+      startDate: toIsoDate(trip.startDate.toDate()),
+      endDate: toIsoDate(trip.endDate.toDate()),
+      units: "metric",
+      cityName: trip.destination.cityName,
+    })
+      .then(async (result) => {
+        if (cancelled) return;
+
+        const byDate = new Map(result.days.map((d) => [d.date, d]));
+        const fetchedAt = result.fetchedAt || new Date().toISOString();
+        const localWeather = new Map<number, ItineraryDayWeather>();
+        const days = trip.itinerary.days.map((day, index) => {
+          const forecast =
+            byDate.get(toIsoDate(day.date.toDate())) ?? result.days[index];
+          const weather = forecast
+            ? toDayWeather(forecast, fetchedAt, result.units)
+            : ({
+                available: false,
+                units: result.units,
+                fetchedAt,
+              } satisfies ItineraryDayWeather);
+          localWeather.set(day.day, weather);
+          return { ...day, weather };
+        });
+
+        setWeatherByDay(localWeather);
+        setWeatherLoading(false);
+
+        try {
+          await onUpdateItinerary({
+            status: trip.itinerary.status,
+            days,
+          });
+        } catch {
+          // UI already shows localWeather; persist can retry on next visit.
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWeatherLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // Fetch only when cache is missing/stale or destination/dates change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional trip field deps
+  }, [
+    hasCoords,
+    lat,
+    lon,
+    needsFetch,
+    trip.startDate?.toMillis?.(),
+    trip.endDate?.toMillis?.(),
+    trip.destination.cityName,
+    trip.itinerary.days.length,
+  ]);
 
   if (trip.itinerary.status === "empty" || trip.itinerary.days.length === 0) {
     return (
@@ -536,6 +719,7 @@ function ItineraryList({
           day: "numeric",
           month: "short",
         });
+        const weather = weatherByDay.get(day.day) ?? day.weather;
 
         return (
           <section
@@ -576,6 +760,12 @@ function ItineraryList({
                     <p className="mt-0.5 text-sm text-text-secondary">
                       {day.description}
                     </p>
+                  ) : null}
+                  {hasCoords ? (
+                    <DayWeatherBadge
+                      weather={weather}
+                      loading={weatherLoading && !weather}
+                    />
                   ) : null}
                 </div>
               </button>
@@ -718,6 +908,74 @@ function ItineraryList({
         );
       })}
     </div>
+  );
+}
+
+function DayWeatherBadge({
+  weather,
+  loading,
+}: {
+  weather?: ItineraryDayWeather;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-text-muted">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        Loading weather…
+      </p>
+    );
+  }
+
+  if (!weather?.available) {
+    return (
+      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-text-muted">
+        <CloudSun className="h-3.5 w-3.5" />
+        Forecast not available yet
+      </p>
+    );
+  }
+
+  const tempUnit = weather.units === "imperial" ? "°F" : "°C";
+  const temp =
+    weather.temp != null
+      ? `${Math.round(weather.temp)}${tempUnit}`
+      : weather.tempMin != null && weather.tempMax != null
+        ? `${Math.round(weather.tempMin)}° / ${Math.round(weather.tempMax)}°`
+        : null;
+
+  return (
+    <p className="mt-2 inline-flex max-w-full items-center gap-1.5 text-xs text-text-secondary">
+      {weather.icon ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={weatherIconUrl(weather.icon)}
+          alt=""
+          className="h-6 w-6 -ml-0.5 shrink-0"
+        />
+      ) : (
+        <CloudSun className="h-3.5 w-3.5 shrink-0 text-sky-600" />
+      )}
+      {temp ? (
+        <span className="font-medium tabular-nums text-text">{temp}</span>
+      ) : null}
+      {weather.tempMin != null &&
+      weather.tempMax != null &&
+      weather.temp != null ? (
+        <span className="tabular-nums text-text-muted">
+          {Math.round(weather.tempMin)}° / {Math.round(weather.tempMax)}°
+        </span>
+      ) : null}
+      {weather.description ? (
+        <span className="min-w-0 truncate capitalize">{weather.description}</span>
+      ) : null}
+      {weather.precipitationChance != null &&
+      weather.precipitationChance > 0 ? (
+        <span className="shrink-0 text-text-muted">
+          · {weather.precipitationChance}% rain
+        </span>
+      ) : null}
+    </p>
   );
 }
 

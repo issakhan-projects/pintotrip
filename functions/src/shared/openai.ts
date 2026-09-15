@@ -125,7 +125,8 @@ export interface OpenAICityIntelligenceAnalyzer {
     metrics: Omit<OpenAICallMetrics, "verificationPerformed">;
   }>;
   /**
-   * Refresh visa / FX / budget conversion only, merging into cached slow facts.
+   * Refresh visa / local budget only, merging into cached slow facts.
+   * Exchange rates are attached separately via Frankfurter.
    */
   analyzeTimeSensitive(
     input: GetCityIntelligenceRequest & {
@@ -431,7 +432,7 @@ export function createOpenAILocationAnalyzer(): OpenAILocationAnalyzer {
 
 /**
  * OpenAI-backed city travel intelligence analyzer.
- * Visa / FX should eventually be cross-checked with authoritative providers.
+ * FX rates come from Frankfurter — never from the model.
  */
 export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAnalyzer {
   const client = createOpenAIClient();

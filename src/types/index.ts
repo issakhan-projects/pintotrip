@@ -1,4 +1,4 @@
-export type { UserProfile, UserPreferences, UserSubscription, SubscriptionPlan, SubscriptionStatus, UserProfileCreateInput, UserProfileUpdateInput } from "./user";
+export type { UserProfile, UserPreferences, UserSubscription, SubscriptionPlan, SubscriptionStatus, TemperatureUnit, DistanceUnit, TimeFormat, UserProfileCreateInput, UserProfileUpdateInput } from "./user";
 export type {
   TravelProfile,
   TravelProfileInput,
@@ -129,9 +129,18 @@ export type {
   TripCityIntelligence,
   PreparationCategory,
   PreparationItem,
+  TripAccommodation,
+  TripFlightEssential,
+  TripDocumentEssential,
+  TripEssentials,
+  TripVisaStatus,
+  TripVisaDetails,
+  TripDocumentDetails,
+  TripPreparation,
   TripItineraryStatus,
   ItineraryPlaceStatus,
   ItineraryPlace,
+  ItineraryDayWeather,
   ItineraryDay,
   TripItinerary,
   TripPlanner,

@@ -54,6 +54,31 @@ function mapDoc(d: QueryDocumentSnapshot): TripPlannerDoc {
   };
 }
 
+/** Firestore rejects `undefined` anywhere in update payloads. */
+function omitUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => omitUndefinedDeep(item)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    // Keep Firestore FieldValue / Timestamp / Date instances as-is.
+    if (
+      typeof (value as { toMillis?: unknown }).toMillis === "function" ||
+      value instanceof Date
+    ) {
+      return value;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(
+      value as Record<string, unknown>
+    )) {
+      if (entry === undefined) continue;
+      out[key] = omitUndefinedDeep(entry);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 function createdAtMillis(trip: TripPlannerDoc): number {
   const ts = trip.createdAt;
   if (ts && typeof ts.toMillis === "function") return ts.toMillis();
@@ -250,6 +275,7 @@ export async function createTrip(
     status: "planning",
     cityIntelligence: { status: "pending" },
     preparation: { items: [] },
+    tripEssentials: { flights: [], accommodation: [], documents: [] },
     savedPlaceIds: [],
     itinerary: { status: "empty", days: [] },
     ...input,
@@ -263,6 +289,7 @@ export async function createTrip(
     status: "planning",
     cityIntelligence: { status: "pending" },
     preparation: { items: [] },
+    tripEssentials: { flights: [], accommodation: [], documents: [] },
     savedPlaceIds: [],
     itinerary: { status: "empty", days: [] },
     ...input,
@@ -287,13 +314,14 @@ export async function updateTrip(
   tripId: string,
   input: TripPlannerUpdateInput
 ): Promise<void> {
+  const cleaned = omitUndefinedDeep(input) as TripPlannerUpdateInput;
   await updateDoc(tripRef(userId, tripId), {
-    ...input,
+    ...cleaned,
     updatedAt: serverTimestamp(),
   });
 
   patchTripInCache(userId, tripId, {
-    ...input,
+    ...cleaned,
     updatedAt: approxNowTimestamp(),
   } as Partial<TripPlannerDoc>);
 }

@@ -328,7 +328,10 @@ export function PlacesList({
                                         {place.title}
                                       </p>
                                       <div className="flex shrink-0 items-center gap-1.5">
-                                        <StatusBadge status={place.status} />
+                                        <StatusBadge
+                                          status={place.status}
+                                          iconOnly="mobile"
+                                        />
                                         <span
                                           className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface text-text-muted"
                                           aria-hidden
