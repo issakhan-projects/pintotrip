@@ -25,6 +25,10 @@ import type {
 } from "@/types/referral";
 import type { PlanTripRequest, PlanTripResult } from "@/types/trip-plan";
 import type {
+  ChargeCreateTripRequest,
+  ChargeCreateTripResult,
+} from "@/types/credits";
+import type {
   GetTripWeatherRequest,
   GetTripWeatherResult,
 } from "@/types/weather";
@@ -49,6 +53,9 @@ export type GetCityIntelligenceResponse =
   | InsufficientAICreditsError;
 
 export type PlanTripResponse = PlanTripResult | InsufficientAICreditsError;
+export type ChargeCreateTripResponse =
+  | ChargeCreateTripResult
+  | InsufficientAICreditsError;
 
 function normalizeFindPlaceResult(
   data: AnalyzeLocationResult
@@ -108,8 +115,9 @@ export async function getCityIntelligence(
 }
 
 /**
- * AI-fill empty itinerary days for a leisure type.
- * generate = 20 credits, regenerate = 10 credits (enforced server-side).
+ * AI itinerary for empty days, shaped by leisure type (purpose and intensity).
+ * First generate is included. Recreate charges ordinary 10 / advanced 30
+ * (enforced server-side from the trip's createMode).
  */
 export async function planTrip(
   request: PlanTripRequest
@@ -118,6 +126,24 @@ export async function planTrip(
     getCloudFunctions(),
     "planTrip"
   );
+  const result = await callable(request);
+  if (isInsufficientAICreditsError(result.data)) {
+    throw Object.assign(new Error(result.data.message), result.data);
+  }
+  return result.data;
+}
+
+/**
+ * Deduct Create Trip credits (ordinary 20 / advanced 75).
+ * Enforced on the server; never write aiCreditsBalance from the client.
+ */
+export async function chargeCreateTrip(
+  request: ChargeCreateTripRequest
+): Promise<ChargeCreateTripResult> {
+  const callable = httpsCallable<
+    ChargeCreateTripRequest,
+    ChargeCreateTripResponse
+  >(getCloudFunctions(), "chargeCreateTrip");
   const result = await callable(request);
   if (isInsufficientAICreditsError(result.data)) {
     throw Object.assign(new Error(result.data.message), result.data);

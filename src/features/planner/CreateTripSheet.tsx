@@ -2,34 +2,59 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { getFlagEmoji } from "country-flag-select";
 import {
   Button,
+  DateRangePicker,
   TextInput,
   type DateRangeValue,
 } from "@/components/ui";
 import {
   CircleDollarSign,
+  Compass,
   MapPin,
   Plane,
-  Search,
-  Sparkles,
+  Plus,
   Tag,
+  Wallet,
   X,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
-import { TravelMap } from "@/features/map/TravelMap";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type { UserProfile } from "@/types/user";
+import {
+  SPEND_MONEY_OPTIONS,
+  type SpendMoneyLevel,
+  type TripCreateMode,
+  type TripDestination,
+  type TripDestinationStop,
+} from "@/types/trip-planner";
+import {
+  LEISURE_TYPES,
+  LEISURE_TYPE_OPTIONS,
+  type LeisureType,
+} from "@/types/trip-plan";
 import { CURRENCY_OPTIONS, resolveCurrencyCode } from "@/lib/currencies";
 import { slugifyId, countryIdFromParts, cx, isAsciiId } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
-import { reverseGeocode, resolveEnglishPlaceIds, resolveEnglishPlaceIdsFromAddress } from "@/lib/maps";
+import {
+  reverseGeocode,
+  resolveEnglishPlaceIds,
+  resolveEnglishPlaceIdsFromAddress,
+} from "@/lib/maps";
 import type { EnglishPlaceIds } from "@/lib/maps";
 import {
   createTrip,
+  deleteTrip,
   timestampFromDate,
 } from "@/services/trip-planner";
+import { chargeCreateTrip } from "@/services/functions";
+import {
+  AI_CREDIT_COSTS,
+  formatInsufficientCreditsMessage,
+  isInsufficientAICreditsError,
+} from "@/types/credits";
 import { buildDefaultPreparationItems } from "./buildPreparation";
 import {
   autocompleteDestinations,
@@ -42,6 +67,11 @@ import {
   TripDateRangeField,
   defaultTripDateRange,
 } from "./TripDateRangeField";
+import {
+  CreateTripDestinationPicker,
+  type CityGroupOption,
+  type DestinationMode,
+} from "./CreateTripDestinationPicker";
 
 interface CreateTripSheetProps {
   open: boolean;
@@ -52,19 +82,92 @@ interface CreateTripSheetProps {
   onCreated?: (tripId: string) => void;
 }
 
-type DestinationMode = "places" | "search" | "map";
-
-type CityGroupOption = {
-  key: string;
-  cityName: string;
-  countryName: string;
-  countryId: string;
-  cityId: string;
-  count: number;
-  lat?: number;
-  lon?: number;
-  imageUrl?: string;
+type DestDraft = {
+  id: string;
+  place: GeocodedPlace;
+  savedKey: string | null;
+  dateRange: DateRangeValue;
 };
+
+const CREATE_MODE_TABS: Array<{ id: TripCreateMode; label: string }> = [
+  { id: "ordinary", label: "Ordinary" },
+  { id: "advanced", label: "Advanced" },
+];
+
+function newDestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `d-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function placeFingerprint(place: GeocodedPlace): string {
+  return `${place.countryName.trim().toLowerCase()}::${place.cityName.trim().toLowerCase()}`;
+}
+
+function countryGroupKey(place: GeocodedPlace): string {
+  const code =
+    place.countryCode?.trim().toUpperCase() ||
+    resolveCountryCode(place.countryName);
+  if (code) return code.toLowerCase();
+  return place.countryName.trim().toLowerCase();
+}
+
+function formatCityDates(range: DateRangeValue): string {
+  if (!range.from || !range.to) return "Dates not set";
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  return `${fmt.format(range.from)} – ${fmt.format(range.to)}`;
+}
+
+function suggestTripName(places: GeocodedPlace[]): string {
+  if (places.length === 0) return "";
+  if (places.length === 1) return `${places[0]!.cityName} Trip`;
+  const countries = new Set(places.map((p) => countryGroupKey(p)));
+  if (countries.size === 1) {
+    return `${places[0]!.countryName} Trip`;
+  }
+  return `${places[0]!.cityName} Trip`;
+}
+
+function groupDestinationsByCountry(items: DestDraft[]): Array<{
+  countryKey: string;
+  countryName: string;
+  countryCode: string;
+  cities: DestDraft[];
+}> {
+  const groups: Array<{
+    countryKey: string;
+    countryName: string;
+    countryCode: string;
+    cities: DestDraft[];
+  }> = [];
+  const index = new Map<string, number>();
+
+  for (const item of items) {
+    const code =
+      item.place.countryCode?.trim().toUpperCase() ||
+      resolveCountryCode(item.place.countryName);
+    const key = countryGroupKey(item.place);
+    let i = index.get(key);
+    if (i === undefined) {
+      i = groups.length;
+      index.set(key, i);
+      groups.push({
+        countryKey: key,
+        countryName: item.place.countryName,
+        countryCode: code || "",
+        cities: [],
+      });
+    }
+    groups[i]!.cities.push(item);
+  }
+
+  return groups;
+}
 
 export function CreateTripSheet({
   open,
@@ -132,6 +235,7 @@ function CreateTripForm({
     );
   }, [locations]);
 
+  const [createMode, setCreateMode] = useState<TripCreateMode>("ordinary");
   const [destinationMode, setDestinationMode] = useState<DestinationMode>(
     cityGroups.length > 0 ? "places" : "search"
   );
@@ -140,6 +244,9 @@ function CreateTripForm({
   const [searchResults, setSearchResults] = useState<GeocodedPlace[]>([]);
   const [searching, setSearching] = useState(false);
   const [destination, setDestination] = useState<GeocodedPlace | null>(null);
+  const [destinations, setDestinations] = useState<DestDraft[]>([]);
+  const [addingDestination, setAddingDestination] = useState(true);
+  const [openCityDateId, setOpenCityDateId] = useState<string | null>(null);
   const [fromValue, setFromValue] = useState(() => {
     const city = profile?.city?.trim() ?? "";
     const country = profile?.country?.trim() ?? "";
@@ -149,14 +256,27 @@ function CreateTripForm({
   const [currencyCode, setCurrencyCode] = useState(
     () => resolveCurrencyCode(profile?.currency) || "USD"
   );
+  const [leisureType, setLeisureType] = useState<LeisureType>("mixed");
+  const [spendMoney, setSpendMoney] = useState<SpendMoneyLevel>("medium");
   const [tripName, setTripName] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameTouched, setNameTouched] = useState(false);
   const [mapResolving, setMapResolving] = useState(false);
 
+  const showAdvancedPicker =
+    createMode === "advanced" &&
+    (addingDestination || destinations.length === 0);
+  const createCost =
+    createMode === "advanced"
+      ? AI_CREDIT_COSTS.createTripAdvanced
+      : AI_CREDIT_COSTS.createTripOrdinary;
+  const aiCreditsBalance = profile?.aiCreditsBalance ?? 0;
+
   useEffect(() => {
-    if (destinationMode !== "search") return;
+    const pickerOpen =
+      createMode === "ordinary" || showAdvancedPicker;
+    if (!pickerOpen || destinationMode !== "search") return;
     const q = searchQuery.trim();
     if (q.length < 2) return;
 
@@ -176,10 +296,7 @@ function CreateTripForm({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [searchQuery, destinationMode]);
-
-  const visibleSearchResults =
-    searchQuery.trim().length < 2 ? [] : searchResults;
+  }, [searchQuery, destinationMode, createMode, showAdvancedPicker]);
 
   const currencyOptions = useMemo(
     () =>
@@ -194,7 +311,22 @@ function CreateTripForm({
     []
   );
 
-  function applyDestination(place: GeocodedPlace, savedKey?: string | null) {
+  const leisureOptions = useMemo(
+    () =>
+      LEISURE_TYPE_OPTIONS.map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description,
+      })),
+    []
+  );
+
+  const destinationGroups = useMemo(
+    () => groupDestinationsByCountry(destinations),
+    [destinations]
+  );
+
+  function applyOrdinaryDestination(place: GeocodedPlace, savedKey?: string | null) {
     setDestination(place);
     setSelectedSavedKey(savedKey ?? null);
     setSearchQuery(place.label);
@@ -203,11 +335,11 @@ function CreateTripForm({
     }
   }
 
-  async function applyDestinationWithPhotos(
+  async function applyOrdinaryDestinationWithPhotos(
     place: GeocodedPlace,
     savedKey?: string | null
   ) {
-    applyDestination(place, savedKey);
+    applyOrdinaryDestination(place, savedKey);
     const photos = await fetchDestinationPhotos(place);
     if (photos.length === 0) return;
     setDestination((prev) => {
@@ -224,27 +356,71 @@ function CreateTripForm({
     });
   }
 
-  function pickSaved(key: string) {
-    const city = cityGroups.find((c) => c.key === key);
-    if (!city) return;
+  function addAdvancedDestination(place: GeocodedPlace, savedKey?: string | null) {
+    const fingerprint = placeFingerprint(place);
+    if (destinations.some((d) => placeFingerprint(d.place) === fingerprint)) {
+      setError("That city is already added.");
+      return;
+    }
+
+    const id = newDestId();
+    const next: DestDraft[] = [
+      ...destinations,
+      {
+        id,
+        place,
+        savedKey: savedKey ?? null,
+        dateRange: {},
+      },
+    ];
+    setDestinations(next);
+    setAddingDestination(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setError(null);
+    if (!nameTouched) {
+      setTripName(suggestTripName(next.map((d) => d.place)));
+    }
+
+    if (!place.photos?.length && savedKey == null) {
+      void fetchDestinationPhotos(place).then((photos) => {
+        if (photos.length === 0) return;
+        setDestinations((prev) =>
+          prev.map((d) =>
+            d.id === id ? { ...d, place: { ...d.place, photos } } : d
+          )
+        );
+      });
+    }
+  }
+
+  function geocodedFromSaved(city: CityGroupOption): GeocodedPlace {
     const countryCode =
       resolveCountryCode(city.countryName) ||
       (isAsciiId(city.countryId) && city.countryId.length === 2
         ? city.countryId.toUpperCase()
         : "");
-    applyDestination(
-      {
-        cityName: city.cityName,
-        countryName: city.countryName,
-        ...(typeof city.lat === "number" && typeof city.lon === "number"
-          ? { lat: city.lat, lon: city.lon }
-          : {}),
-        label: `${city.cityName}, ${city.countryName}`,
-        photos: city.imageUrl ? [city.imageUrl] : undefined,
-        ...(countryCode ? { countryCode } : {}),
-      },
-      key
-    );
+    return {
+      cityName: city.cityName,
+      countryName: city.countryName,
+      ...(typeof city.lat === "number" && typeof city.lon === "number"
+        ? { lat: city.lat, lon: city.lon }
+        : {}),
+      label: `${city.cityName}, ${city.countryName}`,
+      photos: city.imageUrl ? [city.imageUrl] : undefined,
+      ...(countryCode ? { countryCode } : {}),
+    };
+  }
+
+  function pickSaved(key: string) {
+    const city = cityGroups.find((c) => c.key === key);
+    if (!city) return;
+    const place = geocodedFromSaved(city);
+    if (createMode === "advanced") {
+      addAdvancedDestination(place, key);
+      return;
+    }
+    applyOrdinaryDestination(place, key);
   }
 
   async function handleMapPick(coords: { lat: number; lng: number }) {
@@ -256,17 +432,61 @@ function CreateTripForm({
         setError("Couldn’t identify that location. Try another spot.");
         return;
       }
-      await applyDestinationWithPhotos({
+      const geocoded: GeocodedPlace = {
         cityName: place.city || place.country,
         countryName: place.country || place.city,
         lat: place.lat,
         lon: place.lon,
         label: [place.city, place.country].filter(Boolean).join(", "),
         ...(place.countryCode ? { countryCode: place.countryCode } : {}),
-      });
+      };
+      if (createMode === "advanced") {
+        addAdvancedDestination(geocoded);
+        return;
+      }
+      await applyOrdinaryDestinationWithPhotos(geocoded);
     } finally {
       setMapResolving(false);
     }
+  }
+
+  function switchCreateMode(next: TripCreateMode) {
+    if (next === createMode) return;
+    setError(null);
+    setOpenCityDateId(null);
+    if (next === "advanced") {
+      if (destinations.length === 0 && destination) {
+        setDestinations([
+          {
+            id: newDestId(),
+            place: destination,
+            savedKey: selectedSavedKey,
+            dateRange: {},
+          },
+        ]);
+        setAddingDestination(false);
+      } else if (destinations.length === 0) {
+        setAddingDestination(true);
+      }
+    } else if (!destination && destinations[0]) {
+      applyOrdinaryDestination(
+        destinations[0].place,
+        destinations[0].savedKey
+      );
+    }
+    setCreateMode(next);
+  }
+
+  function removeDestination(id: string) {
+    setDestinations((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      if (next.length === 0) setAddingDestination(true);
+      if (!nameTouched) {
+        setTripName(suggestTripName(next.map((d) => d.place)));
+      }
+      return next;
+    });
+    setOpenCityDateId((current) => (current === id ? null : current));
   }
 
   function parseFrom(value: string): { city: string; country: string } {
@@ -301,6 +521,7 @@ function CreateTripForm({
   }
 
   async function resolveDestinationIds(
+    place: GeocodedPlace,
     savedCity: CityGroupOption | null
   ): Promise<EnglishPlaceIds | null> {
     if (
@@ -322,28 +543,97 @@ function CreateTripForm({
     }
 
     if (
-      destination &&
-      typeof destination.lat === "number" &&
-      typeof destination.lon === "number" &&
-      Number.isFinite(destination.lat) &&
-      Number.isFinite(destination.lon)
+      typeof place.lat === "number" &&
+      typeof place.lon === "number" &&
+      Number.isFinite(place.lat) &&
+      Number.isFinite(place.lon)
     ) {
-      const fromCoords = await resolveEnglishPlaceIds(
-        destination.lat,
-        destination.lon
-      );
+      const fromCoords = await resolveEnglishPlaceIds(place.lat, place.lon);
       if (fromCoords) return fromCoords;
     }
 
-    if (!destination) return null;
     return resolveEnglishPlaceIdsFromAddress(
-      [destination.cityName, destination.countryName].filter(Boolean).join(", ")
+      [place.cityName, place.countryName].filter(Boolean).join(", ")
     );
   }
 
+  async function buildDestinationPayload(
+    place: GeocodedPlace,
+    savedCity: CityGroupOption | null
+  ): Promise<TripDestination | null> {
+    const englishDestIds = await resolveDestinationIds(place, savedCity);
+    const destCountryCode =
+      englishDestIds?.countryCode ||
+      place.countryCode ||
+      resolveCountryCode(englishDestIds?.countryNameEn || place.countryName) ||
+      undefined;
+    const destCountryId = countryIdFromParts(
+      englishDestIds?.countryNameEn || place.countryName,
+      destCountryCode
+    );
+    const destCityId =
+      (englishDestIds?.cityId && isAsciiId(englishDestIds.cityId)
+        ? englishDestIds.cityId
+        : null) ||
+      (isAsciiId(slugifyId(englishDestIds?.cityNameEn || ""))
+        ? slugifyId(englishDestIds!.cityNameEn)
+        : null) ||
+      (isAsciiId(slugifyId(place.cityName))
+        ? slugifyId(place.cityName)
+        : null);
+
+    if (!isAsciiId(destCountryId) || !destCityId) return null;
+
+    const photos = place.photos ?? [];
+    return {
+      cityName: place.cityName,
+      cityId: destCityId,
+      countryName: place.countryName,
+      countryId: destCountryId,
+      ...(typeof place.lat === "number" && Number.isFinite(place.lat)
+        ? { lat: place.lat }
+        : {}),
+      ...(typeof place.lon === "number" && Number.isFinite(place.lon)
+        ? { lon: place.lon }
+        : {}),
+      ...(photos.length ? { photos } : {}),
+    };
+  }
+
+  function matchingPlaceIdsForCity(savedKey: string | null): string[] {
+    if (savedKey == null) return [];
+    const city = cityGroups.find((c) => c.key === savedKey);
+    if (!city) return [];
+    return locations
+      .filter(
+        (l) =>
+          (l.city.id || l.city.name) === city.cityId &&
+          (l.country.id || l.country.name) === city.countryId
+      )
+      .map((l) => l.id);
+  }
+
   async function handleCreate() {
-    if (!destination?.cityName || !destination.countryName) {
-      setError("Choose a destination.");
+    const selectedPlaces: DestDraft[] =
+      createMode === "advanced"
+        ? destinations
+        : destination
+          ? [
+              {
+                id: "ordinary",
+                place: destination,
+                savedKey: selectedSavedKey,
+                dateRange: {},
+              },
+            ]
+          : [];
+
+    if (selectedPlaces.length === 0) {
+      setError(
+        createMode === "advanced"
+          ? "Add at least one destination."
+          : "Choose a destination."
+      );
       return;
     }
     if (!dateRange.from || !dateRange.to) {
@@ -359,13 +649,44 @@ function CreateTripForm({
       return;
     }
 
+    const tripStart = startOfLocalDay(dateRange.from);
+    const tripEnd = startOfLocalDay(dateRange.to);
+    for (const item of selectedPlaces) {
+      if (!item.dateRange.from && !item.dateRange.to) continue;
+      if (!item.dateRange.from || !item.dateRange.to) {
+        setError(`Select both dates for ${item.place.cityName}, or leave them unset.`);
+        return;
+      }
+      const cityStart = startOfLocalDay(item.dateRange.from);
+      const cityEnd = startOfLocalDay(item.dateRange.to);
+      if (cityEnd < cityStart) {
+        setError(`End date must be after start date for ${item.place.cityName}.`);
+        return;
+      }
+      if (cityStart < tripStart || cityEnd > tripEnd) {
+        setError(
+          `Dates for ${item.place.cityName} must fall within the trip dates.`
+        );
+        return;
+      }
+    }
+
     const { city: fromCity, country: fromCountry } = parseFrom(fromValue);
     if (!fromCountry) {
       setError("Enter where you’re traveling from.");
       return;
     }
 
-    const name = tripName.trim() || `${destination.cityName} Trip`;
+    if (aiCreditsBalance < createCost) {
+      setError(
+        `Not enough AI credits. Need ${createCost}, you have ${aiCreditsBalance}.`
+      );
+      return;
+    }
+
+    const name =
+      tripName.trim() ||
+      suggestTripName(selectedPlaces.map((d) => d.place));
     const currencyMeta = CURRENCY_OPTIONS.find((c) => c.code === currencyCode);
     const startDate = timestampFromDate(dateRange.from);
     const endDate = timestampFromDate(dateRange.to);
@@ -373,77 +694,51 @@ function CreateTripForm({
     setSaving(true);
     setError(null);
     try {
-      let destinationPhotos = destination.photos ?? [];
-      if (destinationPhotos.length === 0 && selectedSavedKey == null) {
-        destinationPhotos = await fetchDestinationPhotos(destination);
-      }
-
-      const savedCity =
-        selectedSavedKey != null
-          ? cityGroups.find((c) => c.key === selectedSavedKey) ?? null
-          : null;
-
-      const [englishDestIds, englishFromIds] = await Promise.all([
-        resolveDestinationIds(savedCity),
-        resolveFromIds(fromCity.trim(), fromCountry.trim()),
-      ]);
-
-      const preparationItems = buildDefaultPreparationItems({
-        destinationCity: destination.cityName,
-        destinationCountry: destination.countryName,
-        fromCountry: fromCountry.trim(),
-        citizenship: profile?.citizenship,
-      });
-
-      const matchingPlaceIds =
-        selectedSavedKey != null
-          ? locations
-              .filter((l) => {
-                const city = cityGroups.find((c) => c.key === selectedSavedKey);
-                if (!city) return false;
-                return (
-                  (l.city.id || l.city.name) === city.cityId &&
-                  (l.country.id || l.country.name) === city.countryId
-                );
-              })
-              .map((l) => l.id)
-          : [];
-
-      const destCountryCode =
-        englishDestIds?.countryCode ||
-        destination.countryCode ||
-        resolveCountryCode(
-          englishDestIds?.countryNameEn || destination.countryName
-        ) ||
-        undefined;
-
-      const destCountryId = countryIdFromParts(
-        englishDestIds?.countryNameEn || destination.countryName,
-        destCountryCode
+      const resolved = await Promise.all(
+        selectedPlaces.map(async (item) => {
+          let place = item.place;
+          if (
+            (!place.photos || place.photos.length === 0) &&
+            item.savedKey == null
+          ) {
+            const photos = await fetchDestinationPhotos(place);
+            if (photos.length > 0) place = { ...place, photos };
+          }
+          const savedCity =
+            item.savedKey != null
+              ? cityGroups.find((c) => c.key === item.savedKey) ?? null
+              : null;
+          const payload = await buildDestinationPayload(place, savedCity);
+          return { item: { ...item, place }, payload };
+        })
       );
-      const destCityId =
-        (englishDestIds?.cityId && isAsciiId(englishDestIds.cityId)
-          ? englishDestIds.cityId
-          : null) ||
-        (isAsciiId(slugifyId(englishDestIds?.cityNameEn || ""))
-          ? slugifyId(englishDestIds!.cityNameEn)
-          : null) ||
-        (isAsciiId(slugifyId(destination.cityName))
-          ? slugifyId(destination.cityName)
-          : null);
 
-      if (!isAsciiId(destCountryId) || !destCityId) {
+      if (resolved.some((row) => !row.payload)) {
         setError(
           "Couldn’t resolve destination city/country ids. Try search again or pick on the map."
         );
         return;
       }
 
+      const destinationStops: TripDestinationStop[] = resolved.map((row) => {
+        const base = row.payload!;
+        const from = row.item.dateRange.from;
+        const to = row.item.dateRange.to;
+        return {
+          ...base,
+          ...(from ? { startDate: timestampFromDate(from) } : {}),
+          ...(to ? { endDate: timestampFromDate(to) } : {}),
+        };
+      });
+      const primary = destinationStops[0]!;
+
+      const englishFromIds = await resolveFromIds(
+        fromCity.trim(),
+        fromCountry.trim()
+      );
       const fromCountryCode =
         englishFromIds?.countryCode ||
-        resolveCountryCode(
-          englishFromIds?.countryNameEn || fromCountry.trim()
-        ) ||
+        resolveCountryCode(englishFromIds?.countryNameEn || fromCountry.trim()) ||
         undefined;
       const fromCountryId = countryIdFromParts(
         englishFromIds?.countryNameEn || fromCountry.trim(),
@@ -469,6 +764,28 @@ function CreateTripForm({
         return;
       }
 
+      const preparationItems = buildDefaultPreparationItems({
+        destinations: destinationStops.map((stop) => ({
+          cityName: stop.cityName,
+          countryName: stop.countryName,
+          countryId: stop.countryId,
+        })),
+        fromCountry: fromCountry.trim(),
+        fromCountryId,
+        citizenship: profile?.citizenship,
+        leisureType,
+        spendMoney,
+        startDate: dateRange.from,
+      });
+
+      const matchingPlaceIds = [
+        ...new Set(
+          selectedPlaces.flatMap((item) =>
+            matchingPlaceIdsForCity(item.savedKey)
+          )
+        ),
+      ];
+
       const tripId = await createTrip({
         userId,
         name,
@@ -481,22 +798,15 @@ function CreateTripForm({
           lon: profile?.lon,
         },
         destination: {
-          cityName: destination.cityName,
-          cityId: destCityId,
-          countryName: destination.countryName,
-          countryId: destCountryId,
-          lat:
-            typeof destination.lat === "number" &&
-            Number.isFinite(destination.lat)
-              ? destination.lat
-              : undefined,
-          lon:
-            typeof destination.lon === "number" &&
-            Number.isFinite(destination.lon)
-              ? destination.lon
-              : undefined,
-          ...(destinationPhotos.length ? { photos: destinationPhotos } : {}),
+          cityName: primary.cityName,
+          cityId: primary.cityId,
+          countryName: primary.countryName,
+          countryId: primary.countryId,
+          ...(typeof primary.lat === "number" ? { lat: primary.lat } : {}),
+          ...(typeof primary.lon === "number" ? { lon: primary.lon } : {}),
+          ...(primary.photos?.length ? { photos: primary.photos } : {}),
         },
+        ...(createMode === "advanced" ? { destinations: destinationStops } : {}),
         startDate,
         endDate,
         status: "planning",
@@ -505,6 +815,9 @@ function CreateTripForm({
           name: currencyMeta?.name ?? currencyCode,
           symbol: currencySymbolForCode(currencyCode),
         },
+        leisureType,
+        spendMoney,
+        createMode,
         preparation: { items: preparationItems },
         tripEssentials: { flights: [], accommodation: [], documents: [] },
         savedPlaceIds: matchingPlaceIds,
@@ -512,19 +825,63 @@ function CreateTripForm({
         itinerary: { status: "empty", days: [] },
       });
 
+      try {
+        await chargeCreateTrip({ tripId, mode: createMode });
+      } catch (chargeErr) {
+        try {
+          await deleteTrip(userId, tripId);
+        } catch {
+          // Trip remains; chargeCreateTrip is idempotent on retry.
+        }
+        throw chargeErr;
+      }
+
       onCreated?.(tripId);
       onClose();
       router.push(`/trip-planner/${tripId}?step=preparation&new=1`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create trip.");
+      if (isInsufficientAICreditsError(err)) {
+        setError(formatInsufficientCreditsMessage(err));
+      } else {
+        setError(err instanceof Error ? err.message : "Could not create trip.");
+      }
     } finally {
       setSaving(false);
     }
   }
 
+  const picker = (
+    <CreateTripDestinationPicker
+      cityGroups={cityGroups}
+      destinationMode={destinationMode}
+      onDestinationModeChange={setDestinationMode}
+      searchQuery={searchQuery}
+      onSearchQueryChange={setSearchQuery}
+      searchResults={searchResults}
+      searching={searching}
+      selectedLabel={
+        createMode === "ordinary" ? destination?.label ?? null : null
+      }
+      selectedSavedKey={
+        createMode === "ordinary" ? selectedSavedKey : null
+      }
+      mapResolving={mapResolving}
+      onPickSaved={pickSaved}
+      onPickSearch={(place) => {
+        if (createMode === "advanced") {
+          addAdvancedDestination(place);
+          return;
+        }
+        void applyOrdinaryDestinationWithPhotos(place);
+      }}
+      onMapPick={(coords) => {
+        void handleMapPick(coords);
+      }}
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
       <div className="relative shrink-0 border-b border-divider px-5 pb-4 pt-5">
         <button
           type="button"
@@ -543,227 +900,35 @@ function CreateTripForm({
         <p className="mt-1.5 max-w-md text-sm text-text-secondary">
           Add a few details to create your trip and start planning.
         </p>
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        {/* Destination */}
-        <section>
-          <FieldLabel icon={MapPin} required>
-            Destination
-          </FieldLabel>
-          <div className="relative mt-2">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <TextInput
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (destinationMode === "places") {
-                  setDestinationMode("search");
-                }
-              }}
-              onFocus={() => {
-                if (destinationMode === "places" && searchQuery.trim()) {
-                  setDestinationMode("search");
-                }
-              }}
-              placeholder="Search a city, select from your places or choose on map"
-              className="!pl-9"
-            />
-          </div>
-
-          <div className="mt-3 flex gap-4 border-b border-divider">
-            {(
-              [
-                { id: "places", label: "My places" },
-                { id: "search", label: "Search" },
-                { id: "map", label: "On map" },
-              ] as const
-            ).map((tab) => (
+        <div
+          role="tablist"
+          aria-label="Create trip mode"
+          className="mt-4 flex gap-1 rounded-full bg-surface p-1"
+        >
+          {CREATE_MODE_TABS.map((item) => {
+            const selected = createMode === item.id;
+            return (
               <button
-                key={tab.id}
+                key={item.id}
                 type="button"
-                onClick={() => setDestinationMode(tab.id)}
+                role="tab"
+                aria-selected={selected}
+                onClick={() => switchCreateMode(item.id)}
                 className={cx(
-                  "relative -mb-px pb-2.5 text-sm font-medium transition-colors",
-                  destinationMode === tab.id
-                    ? "text-primary"
+                  "flex-1 rounded-full px-3 py-2 text-sm font-medium transition-colors",
+                  selected
+                    ? "bg-surface-elevated text-text shadow-sm"
                     : "text-text-secondary hover:text-text"
                 )}
               >
-                {tab.label}
-                {destinationMode === tab.id ? (
-                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
-                ) : null}
+                {item.label}
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+      </div>
 
-          <div className="mt-3">
-            {destinationMode === "places" ? (
-              cityGroups.length === 0 ? (
-                <p className="rounded-2xl bg-surface px-4 py-6 text-center text-sm text-text-secondary">
-                  No saved cities yet. Use Search or On map.
-                </p>
-              ) : (
-                <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
-                  {cityGroups.map((city) => {
-                    const selected = selectedSavedKey === city.key;
-                    return (
-                      <button
-                        key={city.key}
-                        type="button"
-                        onClick={() => pickSaved(city.key)}
-                        className={cx(
-                          "w-[148px] shrink-0 overflow-hidden rounded-2xl border-2 bg-surface-elevated text-left transition-colors",
-                          selected
-                            ? "border-primary shadow-sm"
-                            : "border-border hover:border-primary/35"
-                        )}
-                      >
-                        <div className="relative aspect-[5/3.4] bg-surface">
-                          {city.imageUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={city.imageUrl}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center bg-primary-tint text-primary">
-                              <MapPin className="h-6 w-6" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="px-3 py-2.5">
-                          <p className="truncate text-sm font-semibold text-text">
-                            {city.cityName}
-                          </p>
-                          <p className="truncate text-xs text-text-secondary">
-                            {city.countryName}
-                          </p>
-                          <p className="mt-1 text-[11px] text-text-muted">
-                            {city.count} saved place
-                            {city.count === 1 ? "" : "s"}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )
-            ) : null}
-
-            {destinationMode === "search" ? (
-              <div className="space-y-1">
-                {searching ? (
-                  <p className="px-1 text-xs text-text-muted">Searching…</p>
-                ) : null}
-                {visibleSearchResults.length === 0 &&
-                searchQuery.trim().length >= 2 &&
-                !searching ? (
-                  <p className="rounded-2xl bg-surface px-4 py-5 text-center text-sm text-text-secondary">
-                    No cities found. Try another search.
-                  </p>
-                ) : null}
-                <div className="max-h-48 space-y-1 overflow-y-auto">
-                  {visibleSearchResults.map((result, i) => (
-                    <button
-                      key={`${result.label}-${i}`}
-                      type="button"
-                      onClick={() => {
-                        void applyDestinationWithPhotos(result);
-                      }}
-                      className={cx(
-                        "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors",
-                        destination?.label === result.label
-                          ? "border-primary bg-primary-tint"
-                          : "border-transparent hover:bg-surface"
-                      )}
-                    >
-                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span>
-                        <span className="block text-sm font-medium text-text">
-                          {result.cityName}
-                        </span>
-                        <span className="text-xs text-text-secondary">
-                          {result.countryName}
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {destinationMode === "map" ? (
-              <div className="overflow-hidden rounded-2xl border border-border">
-                <div className="border-b border-divider bg-primary-tint px-3 py-2 text-xs font-medium text-primary">
-                  {mapResolving
-                    ? "Finding city…"
-                    : "Tap the map to choose your destination"}
-                </div>
-                <div className="h-48">
-                  <TravelMap
-                    className="h-full w-full"
-                    interactionMode="pick-city"
-                    fitToMarkers={false}
-                    centerOnCurrentLocation
-                    onMapClick={(coords) => {
-                      void handleMapPick(coords);
-                    }}
-                  />
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        {/* From */}
-        <section>
-          <FieldLabel icon={Plane}>From</FieldLabel>
-          <div className="relative mt-2">
-            <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <TextInput
-              value={fromValue}
-              onChange={(e) => setFromValue(e.target.value)}
-              placeholder="City, Country"
-              className="!pl-9 !pr-9"
-            />
-            {fromValue ? (
-              <button
-                type="button"
-                aria-label="Clear from"
-                onClick={() => setFromValue("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-        </section>
-
-        {/* Dates */}
-        <TripDateRangeField
-          value={dateRange}
-          onChange={setDateRange}
-          disabled={saving}
-        />
-
-        {/* Currency */}
-        <section>
-          <FieldLabel icon={CircleDollarSign}>Currency</FieldLabel>
-          <div className="mt-2">
-            <SearchableSelect
-              value={currencyCode}
-              onChange={setCurrencyCode}
-              options={currencyOptions}
-              placeholder="Select currency…"
-              searchPlaceholder="Search currencies…"
-            />
-          </div>
-        </section>
-
-        {/* Trip name */}
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
         <section>
           <FieldLabel icon={Tag} required>
             Trip name
@@ -794,17 +959,245 @@ function CreateTripForm({
           </div>
         </section>
 
-        {/* Info banner */}
-        <div className="flex items-start gap-3 rounded-2xl bg-primary-tint px-4 py-3.5">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-primary shadow-sm">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <p className="text-sm leading-relaxed text-text">
-            After creating your trip, we&apos;ll fetch useful information about
-            your destination, prepare a personalized checklist and help you
-            plan your itinerary.
-          </p>
-        </div>
+        <section>
+          <FieldLabel icon={Plane}>From</FieldLabel>
+          <div className="relative mt-2">
+            <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+            <TextInput
+              value={fromValue}
+              onChange={(e) => setFromValue(e.target.value)}
+              placeholder="City, Country"
+              className="!pl-9 !pr-9"
+            />
+            {fromValue ? (
+              <button
+                type="button"
+                aria-label="Clear from"
+                onClick={() => setFromValue("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+        </section>
+
+        {createMode === "ordinary" ? (
+          <section>
+            <FieldLabel icon={MapPin} required>
+              Destination
+            </FieldLabel>
+            {picker}
+          </section>
+        ) : (
+          <section>
+            <FieldLabel icon={MapPin} required>
+              Destinations
+            </FieldLabel>
+            {destinationGroups.length > 0 ? (
+              <div className="mt-2 space-y-3">
+                {destinationGroups.map((group) => {
+                  const flag = group.countryCode
+                    ? getFlagEmoji(group.countryCode)
+                    : "";
+                  return (
+                    <div
+                      key={group.countryKey}
+                      className="rounded-2xl border border-border bg-surface-elevated px-3 py-3"
+                    >
+                      <p className="text-sm font-semibold text-text">
+                        {flag ? `${flag} ` : ""}
+                        {group.countryName}
+                      </p>
+                      <ul className="mt-2 space-y-2 pl-2">
+                        {group.cities.map((city) => {
+                          const datesLabel = formatCityDates(city.dateRange);
+                          const datesSet = Boolean(
+                            city.dateRange.from && city.dateRange.to
+                          );
+                          const dateOpen = openCityDateId === city.id;
+                          return (
+                            <li key={city.id}>
+                              <div className="flex items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm text-text">
+                                    {city.place.cityName}
+                                  </p>
+                                  <div className="mt-0.5 flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setOpenCityDateId(
+                                          dateOpen ? null : city.id
+                                        )
+                                      }
+                                      className={cx(
+                                        "text-xs",
+                                        datesSet
+                                          ? "text-text-secondary hover:text-text"
+                                          : "text-text-muted hover:text-text-secondary"
+                                      )}
+                                    >
+                                      {datesLabel}
+                                    </button>
+                                    {datesSet ? (
+                                      <button
+                                        type="button"
+                                        aria-label={`Clear dates for ${city.place.cityName}`}
+                                        onClick={() =>
+                                          setDestinations((prev) =>
+                                            prev.map((d) =>
+                                              d.id === city.id
+                                                ? { ...d, dateRange: {} }
+                                                : d
+                                            )
+                                          )
+                                        }
+                                        className="rounded p-0.5 text-text-muted hover:bg-surface hover:text-text"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  aria-label={`Remove ${city.place.cityName}`}
+                                  onClick={() => removeDestination(city.id)}
+                                  className="rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              {dateOpen ? (
+                                <div className="mt-2">
+                                  <DateRangePicker
+                                    key={`${city.id}-${city.dateRange.from?.getTime() ?? 0}-${city.dateRange.to?.getTime() ?? 0}`}
+                                    value={city.dateRange}
+                                    disabled={saving}
+                                    minDate={dateRange.from ?? null}
+                                    onCancel={() => setOpenCityDateId(null)}
+                                    onApply={(next) => {
+                                      setDestinations((prev) =>
+                                        prev.map((d) =>
+                                          d.id === city.id
+                                            ? { ...d, dateRange: next }
+                                            : d
+                                        )
+                                      );
+                                      setOpenCityDateId(null);
+                                    }}
+                                  />
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {showAdvancedPicker ? (
+              <div
+                className={cx(
+                  destinations.length > 0 &&
+                    "mt-3 rounded-2xl border border-border px-3 pb-3 pt-2"
+                )}
+              >
+                {destinations.length > 0 ? (
+                  <div className="mb-1 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setAddingDestination(false)}
+                      className="text-xs font-medium text-text-secondary hover:text-text"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : null}
+                {picker}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setSearchResults([]);
+                  setAddingDestination(true);
+                }}
+                className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm font-medium text-primary hover:border-primary/40 hover:bg-primary-tint"
+              >
+                <Plus className="h-4 w-4" />
+                Add destination
+              </button>
+            )}
+          </section>
+        )}
+
+        <TripDateRangeField
+          label="Trip dates"
+          value={dateRange}
+          onChange={setDateRange}
+          disabled={saving}
+        />
+
+        <section>
+          <FieldLabel icon={Compass}>Type of leisure</FieldLabel>
+          <div className="mt-2">
+            <SearchableSelect
+              value={leisureType}
+              onChange={(value) => {
+                if ((LEISURE_TYPES as readonly string[]).includes(value)) {
+                  setLeisureType(value as LeisureType);
+                }
+              }}
+              options={leisureOptions}
+              placeholder="Select leisure type…"
+              searchPlaceholder="Search leisure types…"
+              clearable={false}
+            />
+          </div>
+        </section>
+
+        <section>
+          <FieldLabel icon={Wallet}>Spend money</FieldLabel>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {SPEND_MONEY_OPTIONS.map((option) => {
+              const selected = spendMoney === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setSpendMoney(option.id)}
+                  className={cx(
+                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors",
+                    selected
+                      ? "border-primary bg-primary-tint text-primary"
+                      : "border-border text-text-secondary hover:border-primary/30 hover:text-text"
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <FieldLabel icon={CircleDollarSign}>Currency</FieldLabel>
+          <div className="mt-2">
+            <SearchableSelect
+              value={currencyCode}
+              onChange={setCurrencyCode}
+              options={currencyOptions}
+              placeholder="Select currency…"
+              searchPlaceholder="Search currencies…"
+            />
+          </div>
+        </section>
 
         {error ? (
           <p className="rounded-xl bg-error-background px-3 py-2 text-sm text-error">
@@ -813,7 +1206,6 @@ function CreateTripForm({
         ) : null}
       </div>
 
-      {/* Footer */}
       <div className="shrink-0 border-t border-divider bg-surface-elevated px-5 py-4">
         <div className="grid grid-cols-2 gap-3">
           <Button variant="secondary" onClick={onClose} className="w-full">
@@ -821,11 +1213,10 @@ function CreateTripForm({
           </Button>
           <Button
             loading={saving}
-            icon={Sparkles}
             onClick={() => void handleCreate()}
             className="w-full"
           >
-            Create trip
+            Create trip ({createCost} AI credits)
           </Button>
         </div>
       </div>

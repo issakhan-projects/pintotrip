@@ -51,14 +51,57 @@ export function detectDeviceLanguage(): string {
   return primary && /^[a-z]{2,3}$/.test(primary) ? primary : "en";
 }
 
+function profileUpdatedAtMillis(profile: UserProfile | null): number {
+  const ts = profile?.updatedAt;
+  if (ts && typeof ts.toMillis === "function") return ts.toMillis();
+  return 0;
+}
+
 function applyProfileToCache(
   userId: string,
   profile: UserProfile | null
 ): void {
+  const key = userProfileKey(userId);
+  const prev = userProfileStore.get(key);
+  // Soft IndexedDB reads can finish after a hard server read — never regress
+  // server-owned fields like aiCreditsBalance with an older snapshot.
+  if (
+    profile &&
+    prev &&
+    profileUpdatedAtMillis(prev) > profileUpdatedAtMillis(profile)
+  ) {
+    return;
+  }
   setUserProfileInCache(userId, profile);
   if (profile?.subscription?.plan) {
     setRealtimeSyncFromPlan(profile.subscription.plan);
   }
+}
+
+/** Soft memory older than this revalidates aiCreditsBalance / plan from server. */
+const PROFILE_REVALIDATE_MS = 8_000;
+
+function queryProfileFromServer(userId: string): Promise<UserProfile | null> {
+  const key = userProfileKey(userId);
+  return userProfileInFlight.run(`${key}:hard`, async () => {
+    const snap = await getDocCacheFirst(userRef(userId), {
+      forceServer: true,
+    });
+    if (!snap.exists()) {
+      applyProfileToCache(userId, null);
+      return null;
+    }
+    const profile = snap.data() as UserProfile;
+    applyProfileToCache(userId, profile);
+    return profile;
+  });
+}
+
+function revalidateProfileIfStale(userId: string): void {
+  const entry = userProfileStore.getEntry(userProfileKey(userId));
+  if (!entry) return;
+  if (Date.now() - entry.updatedAt < PROFILE_REVALIDATE_MS) return;
+  void queryProfileFromServer(userId);
 }
 
 export async function getUserProfile(
@@ -68,33 +111,26 @@ export async function getUserProfile(
   const key = userProfileKey(userId);
   const hard = options?.hard === true;
 
-  if (!hard) {
-    if (userProfileStore.has(key)) {
-      recordCacheHit();
-      return userProfileStore.get(key) ?? null;
-    }
+  if (hard) {
+    return queryProfileFromServer(userId);
   }
 
-  return userProfileInFlight.run(
-    `${key}:${hard ? "hard" : "soft"}`,
-    async () => {
-      if (!hard && userProfileStore.has(key)) {
-        recordCacheHit();
-        return userProfileStore.get(key) ?? null;
-      }
+  if (userProfileStore.has(key)) {
+    recordCacheHit();
+    revalidateProfileIfStale(userId);
+    return userProfileStore.get(key) ?? null;
+  }
 
-      const snap = await getDocCacheFirst(userRef(userId), {
-        forceServer: hard,
-      });
-      if (!snap.exists()) {
-        applyProfileToCache(userId, null);
-        return null;
-      }
-      const profile = snap.data() as UserProfile;
-      applyProfileToCache(userId, profile);
-      return profile;
+  return userProfileInFlight.run(`${key}:soft`, async () => {
+    if (userProfileStore.has(key)) {
+      recordCacheHit();
+      revalidateProfileIfStale(userId);
+      return userProfileStore.get(key) ?? null;
     }
-  );
+
+    // Credits are server-owned — never trust IndexedDB alone on a cold start.
+    return queryProfileFromServer(userId);
+  });
 }
 
 /**
@@ -142,7 +178,9 @@ export function subscribeUserProfile(
       };
     },
     attachSession: () => {
-      void getUserProfile(userId).catch((error) => {
+      // Hard read: soft path used to paint stale IndexedDB aiCreditsBalance
+      // after logout/login (e.g. 770 instead of the real 670).
+      void getUserProfile(userId, { hard: true }).catch((error) => {
         onError?.(error instanceof Error ? error : new Error(String(error)));
       });
     },
@@ -260,7 +298,8 @@ export async function ensureUserProfile(params: {
 
   let existing: UserProfile | null = null;
   try {
-    existing = await getUserProfile(params.userId);
+    // Hard on login/ensure — soft IndexedDB can resurrect an old credit balance.
+    existing = await getUserProfile(params.userId, { hard: true });
   } catch {
     // Read may fail before rules settle; still attempt create below.
   }

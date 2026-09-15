@@ -53,7 +53,10 @@ import {
 } from "../trip/parseModelResponse";
 import type {
   LeisureType,
+  PlanTripDestination,
   PlanTripExistingDay,
+  PlanTripSavedPlace,
+  PlanTripWeatherDay,
   PlannedDaySuggestion,
 } from "../trip/types";
 
@@ -153,6 +156,9 @@ export interface OpenAITripPlanner {
     currency: string;
     emptyDays: PlanTripExistingDay[];
     occupiedDays: PlanTripExistingDay[];
+    destinations?: PlanTripDestination[];
+    savedPlaces?: PlanTripSavedPlace[];
+    weather?: PlanTripWeatherDay[];
   }): Promise<{
     resultDays: PlannedDaySuggestion[];
     metrics: Omit<OpenAICallMetrics, "verificationPerformed">;
@@ -543,7 +549,8 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
 export { toSlowCityIntelligence };
 
 /**
- * OpenAI-backed trip day filler. Uses web search for real place grounding.
+ * OpenAI-backed trip itinerary planner. Leisure type controls purpose and
+ * intensity; web search grounds scheduled places when they are needed.
  */
 export function createOpenAITripPlanner(): OpenAITripPlanner {
   const client = createOpenAIClient();

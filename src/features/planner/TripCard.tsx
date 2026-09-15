@@ -11,6 +11,7 @@ import {
   tripMetaLine,
   tripStatusLabel,
 } from "./tripUtils";
+import { listTripDestinations } from "./tripDestinations";
 import { cx } from "@/lib/utils";
 
 interface TripCardProps {
@@ -24,8 +25,10 @@ function tripCoverUrl(
   trip: TripPlannerDoc,
   locations: SavedLocation[]
 ): string | null {
-  const fromDestination = trip.destination.photos?.find(Boolean);
-  if (fromDestination) return fromDestination;
+  for (const dest of listTripDestinations(trip)) {
+    const url = dest.photos?.find(Boolean);
+    if (url) return url;
+  }
 
   const byId = new Map(locations.map((l) => [l.id, l]));
   for (const id of trip.savedPlaceIds) {
@@ -47,7 +50,10 @@ export function TripCard({
   const progress = placesProgress(trip, locations);
   const days = tripDayCount(trip.startDate, trip.endDate);
   const destination =
-    trip.destination.cityName || trip.destination.countryName;
+    listTripDestinations(trip)
+      .map((dest) => dest.cityName)
+      .filter(Boolean)
+      .join(" · ") || trip.destination.countryName;
   const coverUrl = tripCoverUrl(trip, locations);
 
   useEffect(() => {

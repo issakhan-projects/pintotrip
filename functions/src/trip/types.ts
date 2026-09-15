@@ -50,6 +50,45 @@ export interface PlanTripExistingDay {
   placeTitles: string[];
 }
 
+export interface PlanTripSavedPlace {
+  locationId: string;
+  title: string;
+  lat: number;
+  lon: number;
+  cityName: string;
+  countryName: string;
+  cityId?: string;
+  countryId?: string;
+  status: string;
+  category?: string;
+}
+
+export interface PlanTripWeatherDay {
+  date: string;
+  cityName?: string;
+  available: boolean;
+  tempMin?: number;
+  tempMax?: number;
+  temp?: number;
+  description?: string;
+  icon?: string;
+  humidity?: number;
+  windSpeed?: number;
+  precipitationChance?: number;
+  units?: "metric" | "imperial";
+}
+
+export interface PlanTripDestination {
+  cityName: string;
+  countryName: string;
+  countryId?: string;
+  cityId?: string;
+  lat?: number;
+  lon?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
 export interface PlanTripRequest {
   tripId: string;
   destination: {
@@ -71,6 +110,9 @@ export interface PlanTripRequest {
   /** ISO 4217 currency for per-place price estimates (trip currency). */
   currency?: string;
   existingDays: PlanTripExistingDay[];
+  destinations?: PlanTripDestination[];
+  savedPlaces?: PlanTripSavedPlace[];
+  weather?: PlanTripWeatherDay[];
 }
 
 export interface PlannedPlaceSuggestion {
@@ -86,6 +128,8 @@ export interface PlannedPlaceSuggestion {
   countryId?: string;
   /** ISO 3166-1 alpha-2 */
   countryCode?: string;
+  /** Existing saved location id when organizing the traveler's places. */
+  locationId?: string;
   why: string;
   category: PlaceCategory;
   /**

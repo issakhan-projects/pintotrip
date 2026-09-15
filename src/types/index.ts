@@ -66,6 +66,8 @@ export type {
 export type {
   AICreditOperation,
   InsufficientAICreditsError,
+  ChargeCreateTripRequest,
+  ChargeCreateTripResult,
 } from "./credits";
 export {
   AI_CREDIT_COSTS,
@@ -74,6 +76,7 @@ export {
   REFERRAL_REWARD_AI_CREDITS,
   isInsufficientAICreditsError,
   formatInsufficientCreditsMessage,
+  planTripRegenerateCost,
 } from "./credits";
 export type {
   AppReview,
@@ -124,6 +127,9 @@ export type {
   TripStatus,
   TripPlace,
   TripDestination,
+  TripDestinationStop,
+  TripCreateMode,
+  SpendMoneyLevel,
   TripCurrency,
   CityIntelligenceStatus,
   TripCityIntelligence,
@@ -149,6 +155,7 @@ export type {
   TripPlannerUpdateInput,
   TripPlannerStep,
 } from "./trip-planner";
+export { SPEND_MONEY_LEVELS, SPEND_MONEY_OPTIONS } from "./trip-planner";
 export type {
   LeisureType,
   PlaceCategory,

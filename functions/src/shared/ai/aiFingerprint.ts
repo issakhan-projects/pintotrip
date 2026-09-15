@@ -110,6 +110,8 @@ export function planTripFingerprint(params: {
   occupiedDaysKey: string;
   lat?: number;
   lon?: number;
+  savedPlacesKey?: string;
+  weatherKey?: string;
 }): string {
   return fingerprintParts("planTrip", {
     city: params.cityName,
@@ -120,6 +122,8 @@ export function planTripFingerprint(params: {
     mode: params.mode,
     empty: params.emptyDaysKey,
     occupied: params.occupiedDaysKey,
+    saved: params.savedPlacesKey,
+    weather: params.weatherKey,
     lat:
       typeof params.lat === "number" ? roundCoord(params.lat) : undefined,
     lon:

@@ -147,6 +147,7 @@ function parsePlace(
     ...(priceCurrency ? { priceCurrency } : {}),
     ...(priceLabel ? { priceLabel } : {}),
     ...(link ? { link } : {}),
+    ...(asString(row.locationId) ? { locationId: asString(row.locationId)! } : {}),
   };
 }
 
@@ -167,8 +168,7 @@ function parseDay(
     .filter((p): p is PlannedPlaceSuggestion => p != null)
     .slice(0, 4);
 
-  if (places.length === 0) return null;
-
+  // Rest / worship / free days may have zero scheduled places.
   return {
     day: Math.floor(day),
     date,

@@ -532,10 +532,13 @@ function HowCreditsWork() {
           label="City Intelligence"
           credits={AI_CREDIT_COSTS.getCityIntelligence}
         />
-        <CreditRow label="Plan my trip" credits={AI_CREDIT_COSTS.planTrip} />
         <CreditRow
-          label="Recreate trip plan"
+          label="Recreate trip plan (ordinary)"
           credits={AI_CREDIT_COSTS.planTripRegenerate}
+        />
+        <CreditRow
+          label="Recreate trip plan (advanced)"
+          credits={AI_CREDIT_COSTS.planTripRegenerateAdvanced}
         />
         <CreditRow label="Regenerate" credits={AI_CREDIT_COSTS.regenerate} />
       </ul>

@@ -12,6 +12,7 @@ import {
   type UserCredential,
 } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebase/auth";
+import { clearClientDataCaches } from "@/lib/firebase/data-cache";
 import { detectUserLocation } from "@/lib/maps/detectLocation";
 import { ensureUserProfile } from "@/services/users";
 
@@ -171,6 +172,7 @@ export async function signInWithGoogle(): Promise<UserCredential> {
 }
 
 export async function logout(): Promise<void> {
+  clearClientDataCaches();
   await signOut(getFirebaseAuth());
 }
 

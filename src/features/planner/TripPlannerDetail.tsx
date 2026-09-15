@@ -23,6 +23,7 @@ import {
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import type {
+  PreparationItem,
   TripAccommodation,
   TripEssentials,
   TripItinerary,
@@ -41,6 +42,7 @@ import {
   preparationProgress,
   tripChecklistProgress,
 } from "./tripUtils";
+import { newCustomPreparationId } from "./buildPreparation";
 import { TripStepNav } from "./TripStepNav";
 import { TripDetailsStep } from "./TripDetailsStep";
 import { BeforeYouGoStep } from "./BeforeYouGoStep";
@@ -264,26 +266,42 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     await patchTrip({ preparation: { ...trip.preparation, items } });
   }
 
-  async function addPrepItem(title: string) {
+  async function addPrepItem(title: string, link?: string) {
     if (!trip) return;
     const maxOrder = trip.preparation.items.reduce(
       (max, item) => Math.max(max, item.order),
       -1
     );
-    const id =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `prep_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const items = [
       ...trip.preparation.items,
       {
-        id,
+        id: newCustomPreparationId(),
         title,
         completed: false,
         category: "other" as const,
         order: maxOrder + 1,
+        ...(link ? { link, linkLabel: "Open link" } : {}),
       },
     ];
+    setTrip({
+      ...trip,
+      preparation: { ...trip.preparation, items },
+    });
+    await patchTrip({ preparation: { ...trip.preparation, items } });
+  }
+
+  async function deletePrepItem(itemId: string) {
+    if (!trip) return;
+    const items = trip.preparation.items.filter((item) => item.id !== itemId);
+    setTrip({
+      ...trip,
+      preparation: { ...trip.preparation, items },
+    });
+    await patchTrip({ preparation: { ...trip.preparation, items } });
+  }
+
+  async function syncPrepItems(items: PreparationItem[]) {
+    if (!trip) return;
     setTrip({
       ...trip,
       preparation: { ...trip.preparation, items },
@@ -527,6 +545,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
             <TripDetailsStep
               trip={trip}
               galleryImages={galleryImages}
+              locations={locations}
               onEdit={openEditTrip}
               onRetryCityIntelligence={() => void fetchCityIntelligence()}
               onGoToPreparation={() => setStep("preparation")}
@@ -543,7 +562,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 trip.cityIntelligence.result?.exchangeRate?.from
               }
               onToggleItem={(id, value) => void togglePrepItem(id, value)}
-              onAddItem={(title) => void addPrepItem(title)}
+              onAddItem={(title, link) => void addPrepItem(title, link)}
+              onDeleteItem={(id) => void deletePrepItem(id)}
+              onSyncItems={(items) => void syncPrepItems(items)}
               onUpdateAccommodation={(value) => updateAccommodation(value)}
               onUpdateDocuments={(value) =>
                 updatePreparationField("documents", value)
@@ -574,23 +595,40 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               }}
               onMarkPlaceStatus={async (locationId, status: LocationStatus) => {
                 await patchLocation(locationId, { status });
-                if (trip.itinerary.days.length > 0) {
-                  const nextDays = trip.itinerary.days.map((day) => ({
-                    ...day,
-                    places: day.places.map((p) =>
-                      p.locationId === locationId ? { ...p, status } : p
-                    ),
-                  }));
+                if (trip.itinerary.days.length === 0) return;
+
+                if (status === "cancelled") {
+                  const days = trip.itinerary.days
+                    .map((day) => ({
+                      ...day,
+                      places: day.places
+                        .filter((p) => p.locationId !== locationId)
+                        .map((p, order) => ({ ...p, order })),
+                    }));
                   await patchTrip({
                     itinerary: {
-                      status:
-                        trip.itinerary.status === "empty"
-                          ? "edited"
-                          : trip.itinerary.status,
-                      days: nextDays,
+                      status: "edited",
+                      days,
                     },
                   });
+                  return;
                 }
+
+                const nextDays = trip.itinerary.days.map((day) => ({
+                  ...day,
+                  places: day.places.map((p) =>
+                    p.locationId === locationId ? { ...p, status } : p
+                  ),
+                }));
+                await patchTrip({
+                  itinerary: {
+                    status:
+                      trip.itinerary.status === "empty"
+                        ? "edited"
+                        : trip.itinerary.status,
+                    days: nextDays,
+                  },
+                });
               }}
               onSavePlaceNote={async (locationId, note) => {
                 await patchLocation(locationId, { note });
@@ -604,6 +642,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         open={editOpen}
         onClose={() => setEditOpen(false)}
         trip={trip}
+        locations={locations}
         onSave={async (input) => {
           await patchTrip(input);
         }}

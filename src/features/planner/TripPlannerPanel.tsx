@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
@@ -19,6 +19,8 @@ import { CreateTripSheet } from "./CreateTripSheet";
 
 interface TripPlannerPanelProps {
   user: User;
+  /** When landing from a trip page (`/map?tab=planner`), refetch so the list isn't IndexedDB-stale. */
+  resyncOnMount?: boolean;
 }
 
 type TripFilterTab = "all" | "active" | "past";
@@ -75,15 +77,23 @@ function emptyCopy(tab: TripFilterTab): { title: string; body: string } {
  * Trip Planner list — shown as the Planner tab in AppShell.
  * Pro plan only; free/plus see an upgrade gate.
  */
-export function TripPlannerPanel({ user }: TripPlannerPanelProps) {
+export function TripPlannerPanel({
+  user,
+  resyncOnMount = false,
+}: TripPlannerPanelProps) {
   const router = useRouter();
-  const { trips, loading, error } = useTrips(user.uid);
+  const { trips, loading, error, refresh } = useTrips(user.uid);
   const { locations } = useLocations(user.uid);
   const { profile } = useUserProfile(user);
   const isPro = isProEntitled(profile?.subscription);
   const [createOpen, setCreateOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tab, setTab] = useState<TripFilterTab>("all");
+
+  useEffect(() => {
+    if (!resyncOnMount) return;
+    void refresh({ hard: true, silent: true });
+  }, [resyncOnMount, refresh]);
 
   const filteredTrips = filterTrips(trips, tab);
 

@@ -30,41 +30,27 @@ import type { SavedLocation } from "@/hooks/useLocations";
 import type {
   ItineraryDay,
   ItineraryDayWeather,
+  ItineraryPlace,
   TripItinerary,
   TripPlannerDoc,
 } from "@/types/trip-planner";
 import type { LocationPrice, LocationStatus } from "@/types/location";
-import type { TripWeatherDay } from "@/types/weather";
 import { getBrowserCoords, type MapMarkerInput } from "@/lib/maps";
-import { getTripWeather } from "@/services/functions";
-import { startOfUtcDay } from "@/services/trip-planner";
-import { AI_CREDIT_COSTS } from "@/types/credits";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { cx } from "@/lib/utils";
 import { distanceKm } from "./clusterPlaces";
+import {
+  matchLocationsToDestinations,
+  sortLocationsForDestination,
+} from "./matchTripPlaces";
 import { PlanTripSheet } from "./PlanTripSheet";
+import { listTripDestinations, toIsoDate } from "./tripDestinations";
+import { isWeatherFresh, weatherForTrip } from "./tripWeather";
 
 type Coords = { lat: number; lon: number };
 
-/** Re-fetch OpenWeather if cached forecast is older than this. */
-const WEATHER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-
-function toIsoDate(date: Date): string {
-  const d = startOfUtcDay(date);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 function weatherIconUrl(icon: string): string {
   return `https://openweathermap.org/img/wn/${icon}@2x.png`;
-}
-
-function isWeatherFresh(weather: ItineraryDayWeather | undefined): boolean {
-  if (!weather?.fetchedAt) return false;
-  const age = Date.now() - Date.parse(weather.fetchedAt);
-  return Number.isFinite(age) && age >= 0 && age < WEATHER_CACHE_TTL_MS;
 }
 
 function itineraryNeedsWeatherFetch(days: ItineraryDay[]): boolean {
@@ -72,24 +58,12 @@ function itineraryNeedsWeatherFetch(days: ItineraryDay[]): boolean {
   return days.some((day) => !isWeatherFresh(day.weather));
 }
 
-function toDayWeather(
-  day: TripWeatherDay,
-  fetchedAt: string,
-  units: "metric" | "imperial"
-): ItineraryDayWeather {
-  return {
-    available: day.available,
-    tempMin: day.tempMin,
-    tempMax: day.tempMax,
-    temp: day.temp,
-    description: day.description,
-    icon: day.icon,
-    humidity: day.humidity,
-    windSpeed: day.windSpeed,
-    precipitationChance: day.precipitationChance,
-    units,
-    fetchedAt,
-  };
+function isActiveItinerarySlot(
+  slot: ItineraryPlace,
+  byId: Map<string, SavedLocation>
+): boolean {
+  if (slot.status === "cancelled") return false;
+  return byId.get(slot.locationId)?.status !== "cancelled";
 }
 
 function formatDistanceFrom(from: Coords, to: Coords): string {
@@ -154,7 +128,9 @@ export function PlacesStep({
         ids.add(place.locationId);
       }
     }
-    return locations.filter((l) => ids.has(l.id));
+    return locations.filter(
+      (l) => ids.has(l.id) && l.status !== "cancelled"
+    );
   }, [locations, trip.savedPlaceIds, trip.itinerary.days]);
 
   const byId = useMemo(
@@ -193,19 +169,22 @@ export function PlacesStep({
     const combined = [...placeMarkers, ...stayMarkers];
     if (combined.length > 0) return combined;
 
-    if (trip.destination.lat != null && trip.destination.lon != null) {
-      return [
-        {
-          id: "__destination__",
-          lat: trip.destination.lat,
-          lon: trip.destination.lon,
-          title: trip.destination.cityName,
-          kind: "city" as const,
-        },
-      ];
-    }
-    return [];
-  }, [tripPlaces, trip.destination, trip.tripEssentials?.accommodation]);
+    return listTripDestinations(trip)
+      .filter(
+        (dest) =>
+          typeof dest.lat === "number" &&
+          Number.isFinite(dest.lat) &&
+          typeof dest.lon === "number" &&
+          Number.isFinite(dest.lon)
+      )
+      .map((dest, index) => ({
+        id: `__destination__${dest.cityId || dest.cityName || index}`,
+        lat: dest.lat as number,
+        lon: dest.lon as number,
+        title: dest.cityName,
+        kind: "city" as const,
+      }));
+  }, [tripPlaces, trip, trip.tripEssentials?.accommodation]);
 
   const hasStayPins = useMemo(
     () =>
@@ -227,40 +206,12 @@ export function PlacesStep({
       }
     }
 
-    const destCountryId = trip.destination.countryId?.trim().toLowerCase() ?? "";
-    const destCountryName = trip.destination.countryName.trim().toLowerCase();
-    const destCityId = trip.destination.cityId?.trim().toLowerCase() ?? "";
-    const destCityName = trip.destination.cityName.trim().toLowerCase();
-
-    function matchesDestinationCountry(place: SavedLocation): boolean {
-      const placeCountryId = (place.country.id || "").trim().toLowerCase();
-      const placeCountryName = place.country.name.trim().toLowerCase();
-
-      if (destCountryId && placeCountryId && destCountryId === placeCountryId) {
-        return true;
-      }
-      if (destCountryName && placeCountryName === destCountryName) {
-        return true;
-      }
-      return false;
-    }
-
-    function isSameCity(place: SavedLocation): boolean {
-      const placeCityId = (place.city.id || "").trim().toLowerCase();
-      const placeCityName = place.city.name.trim().toLowerCase();
-      if (destCityId && placeCityId && destCityId === placeCityId) return true;
-      if (destCityName && placeCityName === destCityName) return true;
-      return false;
-    }
-
-    return locations
-      .filter((l) => !taken.has(l.id) && matchesDestinationCountry(l))
-      .sort((a, b) => {
-        const aCity = isSameCity(a) ? 0 : 1;
-        const bCity = isSameCity(b) ? 0 : 1;
-        return aCity - bCity || a.title.localeCompare(b.title);
-      });
-  }, [locations, trip.savedPlaceIds, trip.itinerary.days, trip.destination]);
+    const destinations = listTripDestinations(trip);
+    const matched = matchLocationsToDestinations(locations, destinations).filter(
+      (place) => !taken.has(place.id)
+    );
+    return sortLocationsForDestination(matched, destinations);
+  }, [locations, trip]);
 
   async function toggleItineraryPlace(
     dayIndex: number,
@@ -294,10 +245,9 @@ export function PlacesStep({
           places: day.places
             .filter((p) => p.locationId !== locationId)
             .map((p, order) => ({ ...p, order })),
-        }))
-        .filter((d) => d.places.length > 0);
+        }));
       await onUpdateItinerary({
-        status: days.length === 0 ? "empty" : "edited",
+        status: "edited",
         days,
       });
     }
@@ -314,10 +264,7 @@ export function PlacesStep({
       const day = trip.itinerary.days[addDayIndex];
       if (day && !day.places.some((p) => p.locationId === locationId)) {
         nextItinerary = {
-          status:
-            trip.itinerary.status === "empty"
-              ? "edited"
-              : trip.itinerary.status,
+          status: "edited",
           days: trip.itinerary.days.map((d, i) => {
             if (i !== addDayIndex) return d;
             return {
@@ -365,13 +312,6 @@ export function PlacesStep({
             you visit.
           </p>
         </div>
-        {/* <Button
-          icon={Sparkles}
-          onClick={openPlanSheet}
-          className="shrink-0 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
-        >
-          Plan my trip ({AI_CREDIT_COSTS.planTrip} AI credits)
-        </Button> */}
       </div>
 
       <div className="grid grid-cols-2 rounded-xl bg-surface p-1">
@@ -397,7 +337,8 @@ export function PlacesStep({
             fitToMarkers
             centerOnCurrentLocation={false}
             onMarkerSelect={(id) => {
-              if (id === "__destination__" || id.startsWith("__stay__")) return;
+              if (id.startsWith("__destination__") || id.startsWith("__stay__"))
+                return;
               const place = byId.get(id) ?? null;
               setDetail(place);
             }}
@@ -453,8 +394,13 @@ export function PlacesStep({
         <div className="space-y-2">
           {availableToAdd.length === 0 ? (
             <p className="text-sm text-text-secondary">
-              No saved places in {trip.destination.countryName} left to add.
-              Save places from that country on your map first.
+              No saved places in{" "}
+              {listTripDestinations(trip)
+                .map((dest) => dest.cityName)
+                .filter(Boolean)
+                .join(", ") || trip.destination.countryName}{" "}
+              left to add. Save places from those destinations on your map
+              first.
             </p>
           ) : (
             availableToAdd.map((place) => (
@@ -577,10 +523,21 @@ function ItineraryList({
     Map<number, ItineraryDayWeather>
   >(() => new Map());
 
-  const lat = trip.destination.lat;
-  const lon = trip.destination.lon;
-  const hasCoords = lat != null && lon != null;
+  const destinations = listTripDestinations(trip);
+  const hasCoords = destinations.some(
+    (dest) =>
+      typeof dest.lat === "number" &&
+      Number.isFinite(dest.lat) &&
+      typeof dest.lon === "number" &&
+      Number.isFinite(dest.lon)
+  );
   const needsFetch = itineraryNeedsWeatherFetch(trip.itinerary.days);
+  const destWeatherKey = destinations
+    .map(
+      (dest) =>
+        `${dest.cityId ?? dest.cityName}:${dest.lat ?? ""}:${dest.lon ?? ""}:${dest.startDate?.toMillis?.() ?? ""}:${dest.endDate?.toMillis?.() ?? ""}`
+    )
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
@@ -605,13 +562,7 @@ function ItineraryList({
   }, [needsFetch, trip.itinerary.days]);
 
   useEffect(() => {
-    if (
-      !hasCoords ||
-      lat == null ||
-      lon == null ||
-      trip.itinerary.days.length === 0 ||
-      !needsFetch
-    ) {
+    if (!hasCoords || trip.itinerary.days.length === 0 || !needsFetch) {
       setWeatherLoading(false);
       return;
     }
@@ -619,32 +570,16 @@ function ItineraryList({
     let cancelled = false;
     setWeatherLoading(true);
 
-    void getTripWeather({
-      lat,
-      lon,
-      startDate: toIsoDate(trip.startDate.toDate()),
-      endDate: toIsoDate(trip.endDate.toDate()),
-      units: "metric",
-      cityName: trip.destination.cityName,
-    })
-      .then(async (result) => {
+    void weatherForTrip(trip)
+      .then(async ({ byIsoDate }) => {
         if (cancelled) return;
 
-        const byDate = new Map(result.days.map((d) => [d.date, d]));
-        const fetchedAt = result.fetchedAt || new Date().toISOString();
         const localWeather = new Map<number, ItineraryDayWeather>();
-        const days = trip.itinerary.days.map((day, index) => {
-          const forecast =
-            byDate.get(toIsoDate(day.date.toDate())) ?? result.days[index];
-          const weather = forecast
-            ? toDayWeather(forecast, fetchedAt, result.units)
-            : ({
-                available: false,
-                units: result.units,
-                fetchedAt,
-              } satisfies ItineraryDayWeather);
-          localWeather.set(day.day, weather);
-          return { ...day, weather };
+        const days = trip.itinerary.days.map((day) => {
+          const weather =
+            byIsoDate.get(toIsoDate(day.date.toDate())) ?? day.weather;
+          if (weather) localWeather.set(day.day, weather);
+          return weather ? { ...day, weather } : day;
         });
 
         setWeatherByDay(localWeather);
@@ -671,12 +606,10 @@ function ItineraryList({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional trip field deps
   }, [
     hasCoords,
-    lat,
-    lon,
+    destWeatherKey,
     needsFetch,
     trip.startDate?.toMillis?.(),
     trip.endDate?.toMillis?.(),
-    trip.destination.cityName,
     trip.itinerary.days.length,
   ]);
 
@@ -685,8 +618,8 @@ function ItineraryList({
       <div className="rounded-2xl border border-dashed border-border bg-surface px-4 py-10 text-center">
         <p className="text-sm font-medium text-text">No itinerary yet</p>
         <p className="mt-1 text-sm text-text-secondary">
-          Choose a leisure style and let AI fill empty days with places, or add
-          your own.
+          Choose a leisure style and let AI plan days around that purpose —
+          including rest and free time — or add your own.
         </p>
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <Button
@@ -702,7 +635,7 @@ function ItineraryList({
             onClick={onPlan}
             className="!bg-primary hover:!bg-primary-hover !border-primary !text-white h-11"
           >
-            Plan my trip ({AI_CREDIT_COSTS.planTrip} AI credits)
+            Plan my trip
           </Button>
         </div>
       </div>
@@ -713,7 +646,10 @@ function ItineraryList({
     <div className="space-y-4">
       {trip.itinerary.days.map((day, dayIndex) => {
         const isCollapsed = collapsed[day.day] ?? false;
-        const placeCount = day.places.length;
+        const activePlaces = day.places.filter((slot) =>
+          isActiveItinerarySlot(slot, byId)
+        );
+        const placeCount = activePlaces.length;
         const dateLabel = day.date.toDate().toLocaleDateString("en-GB", {
           weekday: "short",
           day: "numeric",
@@ -774,7 +710,7 @@ function ItineraryList({
             {!isCollapsed ? (
               <>
                 <ul className="mt-4 space-y-1">
-                  {day.places.map((slot) => {
+                  {activePlaces.map((slot) => {
                     const place = byId.get(slot.locationId);
                     const visited = slot.status === "visited";
                     const distanceLabel =
@@ -893,6 +829,11 @@ function ItineraryList({
                     );
                   })}
                 </ul>
+                {placeCount === 0 ? (
+                  <p className="mt-4 rounded-xl bg-surface px-3 py-2.5 text-sm text-text-secondary">
+                    Free time — nothing scheduled.
+                  </p>
+                ) : null}
 
                 <button
                   type="button"

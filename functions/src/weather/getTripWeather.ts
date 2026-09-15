@@ -307,6 +307,38 @@ async function fetchOpenWeatherForecast(params: {
   return json;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchOpenWeatherForecastWithRetry(params: {
+  lat: number;
+  lon: number;
+  units: "metric" | "imperial";
+  apiKey: string;
+}): Promise<OwmForecastResponse> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await fetchOpenWeatherForecast(params);
+    } catch (err) {
+      lastError = err;
+      const message = err instanceof Error ? err.message : String(err);
+      if (/Invalid API key|401|not configured/i.test(message)) {
+        throw err;
+      }
+      if (attempt < 2) {
+        await sleep(400 * 2 ** attempt);
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenWeatherMap request failed.");
+}
+
 /**
  * getTripWeather
  *
@@ -341,7 +373,7 @@ export const getTripWeather = onCall(
     const tripDateSet = new Set(tripDates);
 
     try {
-      const forecast = await fetchOpenWeatherForecast({
+      const forecast = await fetchOpenWeatherForecastWithRetry({
         lat: input.lat,
         lon: input.lon,
         units: input.units ?? "metric",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -21,11 +21,13 @@ import {
   Shield,
   Shirt,
   Sparkles,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { fetchFrankfurterRate } from "@/lib/currency";
 import { resolveCurrencyCode } from "@/lib/currencies";
+import { listTravelDocuments } from "@/lib/documents";
 import type {
   PreparationCategory,
   PreparationItem,
@@ -37,6 +39,15 @@ import type {
 import { preparationProgress } from "./tripUtils";
 import { TripEssentialsSection } from "./TripEssentialsSection";
 import { cx } from "@/lib/utils";
+import {
+  isCustomPreparationItem,
+  preparationInputFromTrip,
+  preparationItemsEqual,
+  spendMoneyCurrencyTip,
+  syncTripPreparationItems,
+  type LocalDocSignals,
+} from "./buildPreparation";
+import { parseHttpUrl } from "./preparationLinks";
 
 const KERBEZ_URL = "https://kerbez.app";
 
@@ -56,7 +67,9 @@ interface BeforeYouGoStepProps {
   /** User's preferred home currency (ISO 4217). */
   homeCurrency?: string;
   onToggleItem: (itemId: string, completed: boolean) => void;
-  onAddItem: (title: string) => void;
+  onAddItem: (title: string, link?: string) => void;
+  onDeleteItem?: (itemId: string) => void;
+  onSyncItems?: (items: PreparationItem[]) => void;
   onUpdateAccommodation: (value: TripAccommodation | null) => Promise<void>;
   onUpdateDocuments: (value: TripDocumentDetails | null) => Promise<void>;
   onUpdateVisa: (value: TripVisaDetails | null) => Promise<void>;
@@ -71,6 +84,8 @@ export function BeforeYouGoStep({
   homeCurrency,
   onToggleItem,
   onAddItem,
+  onDeleteItem,
+  onSyncItems,
   onUpdateAccommodation,
   onUpdateDocuments,
   onUpdateVisa,
@@ -82,7 +97,47 @@ export function BeforeYouGoStep({
   const progress = preparationProgress(items);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  const [draftLink, setDraftLink] = useState("");
+  const [draftLinkError, setDraftLinkError] = useState<string | null>(null);
   const addInputId = useId();
+  const addLinkInputId = useId();
+
+  const localDocs = useMemo(
+    () => localDocSignals(userId, trip.startDate?.toDate?.()),
+    [userId, trip.startDate]
+  );
+
+  const onSyncItemsRef = useRef(onSyncItems);
+  onSyncItemsRef.current = onSyncItems;
+
+  useEffect(() => {
+    const sync = onSyncItemsRef.current;
+    if (!sync) return;
+    const next = syncTripPreparationItems(
+      trip.preparation.items,
+      preparationInputFromTrip(trip, localDocs)
+    );
+    if (!preparationItemsEqual(trip.preparation.items, next)) {
+      sync(next);
+    }
+    // trip.preparation.items is read but omitted from deps so toggles/custom
+    // items are not rebuilt (and clobbered) on every checkbox click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
+  }, [
+    localDocs,
+    trip.id,
+    trip.destination,
+    trip.destinations,
+    trip.from,
+    trip.leisureType,
+    trip.spendMoney,
+    trip.startDate,
+    trip.cityIntelligence,
+    trip.tripEssentials,
+    trip.preparation.accommodation,
+    trip.preparation.documents,
+    trip.preparation.visa,
+  ]);
 
   const intel = trip.cityIntelligence.result;
   const destCurrency = resolveCurrencyCode(
@@ -157,17 +212,25 @@ export function BeforeYouGoStep({
     };
   }, [fromCurrency, destCurrency]);
 
-  const currencyTip =
-    intel?.details?.practicalInfo?.payment ||
-    "It's a good idea to have some cash for small purchases, transport and tips.";
+  const currencyTip = spendMoneyCurrencyTip(
+    trip.spendMoney,
+    intel?.details?.practicalInfo?.payment
+  );
 
   const aiInsight = buildAiInsight(trip);
 
   function submitCustomItem() {
     const title = draft.trim();
     if (!title) return;
-    onAddItem(title);
+    const url = parseHttpUrl(draftLink);
+    if (draftLink.trim() && !url) {
+      setDraftLinkError("Enter a valid http(s) link.");
+      return;
+    }
+    onAddItem(title, url);
     setDraft("");
+    setDraftLink("");
+    setDraftLinkError(null);
     setAdding(false);
   }
 
@@ -237,13 +300,18 @@ export function BeforeYouGoStep({
                 key={item.id}
                 item={item}
                 onToggle={() => onToggleItem(item.id, !item.completed)}
+                onDelete={
+                  onDeleteItem && isCustomPreparationItem(item)
+                    ? () => onDeleteItem(item.id)
+                    : undefined
+                }
               />
             ))}
           </ul>
 
           {adding ? (
             <form
-              className="mt-4 flex gap-2"
+              className="mt-4 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 submitCustomItem();
@@ -258,21 +326,40 @@ export function BeforeYouGoStep({
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="Custom item title…"
                 autoFocus
-                className="flex-1"
               />
-              <Button type="submit" disabled={!draft.trim()}>
-                Add
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => {
-                  setAdding(false);
-                  setDraft("");
+              <label htmlFor={addLinkInputId} className="sr-only">
+                Optional link
+              </label>
+              <TextInput
+                id={addLinkInputId}
+                type="url"
+                value={draftLink}
+                onChange={(e) => {
+                  setDraftLink(e.target.value);
+                  if (draftLinkError) setDraftLinkError(null);
                 }}
-              >
-                Cancel
-              </Button>
+                placeholder="Optional link — https://…"
+              />
+              {draftLinkError ? (
+                <p className="text-xs text-red-600">{draftLinkError}</p>
+              ) : null}
+              <div className="flex gap-2">
+                <Button type="submit" disabled={!draft.trim()}>
+                  Add
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setAdding(false);
+                    setDraft("");
+                    setDraftLink("");
+                    setDraftLinkError(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
             </form>
           ) : (
             <button
@@ -451,56 +538,83 @@ export function BeforeYouGoStep({
 function ChecklistRow({
   item,
   onToggle,
+  onDelete,
 }: {
   item: PreparationItem;
   onToggle: () => void;
+  onDelete?: () => void;
 }) {
   const Icon = CATEGORY_ICON[item.category] ?? ClipboardList;
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 py-5 text-left transition-colors first:pt-1 last:pb-1 hover:bg-surface/60"
-      >
-        <span
+      <div className="flex w-full items-center gap-3 py-5 text-left transition-colors first:pt-1 last:pb-1 hover:bg-surface/60">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-pressed={item.completed}
+          aria-label={item.title}
           className={cx(
             "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
             item.completed
               ? "border-primary bg-primary text-white"
               : "border-border bg-white text-transparent"
           )}
-          aria-hidden
         >
           <Check className="h-3 w-3" strokeWidth={3} />
-        </span>
+        </button>
 
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
           <Icon className="h-4 w-4" aria-hidden />
         </span>
 
-        <span className="min-w-0 flex-1">
-          <span
-            className={cx(
-              "block text-sm font-semibold",
-              item.completed ? "text-text-secondary line-through" : "text-text"
-            )}
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="block w-full text-left"
           >
-            {item.title}
-          </span>
-          {item.description ? (
-            <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
-              {item.description}
+            <span
+              className={cx(
+                "block text-sm font-semibold",
+                item.completed ? "text-text-secondary line-through" : "text-text"
+              )}
+            >
+              {item.title}
             </span>
+            {item.description ? (
+              <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+                {item.description}
+              </span>
+            ) : null}
+          </button>
+          {item.link ? (
+            <a
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 inline-flex max-w-full items-center gap-2 rounded-xl border border-primary/20 bg-primary-tint px-3 py-2 text-sm font-semibold text-primary shadow-sm hover:bg-primary/10"
+            >
+              <span className="truncate">
+                {item.linkLabel?.trim() || "Open link"}
+              </span>
+              <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
+            </a>
           ) : null}
-        </span>
-{/* 
-        <ChevronRight
-          className="h-4 w-4 shrink-0 text-text-muted"
-          aria-hidden
-        /> */}
-      </button>
+        </div>
+
+        {onDelete ? (
+          <button
+            type="button"
+            aria-label={`Remove ${item.title}`}
+            onClick={onDelete}
+            className="rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
     </li>
   );
 }
@@ -516,7 +630,14 @@ function buildAiInsight(trip: TripPlannerDoc): string | null {
   const result = trip.cityIntelligence.result;
   if (!result) return null;
 
-  const city = trip.destination.cityName;
+  const destinations =
+    trip.destinations && trip.destinations.length > 0
+      ? trip.destinations
+      : [trip.destination];
+  const cities = [
+    ...new Set(destinations.map((d) => d.cityName).filter(Boolean)),
+  ];
+  const city = cities.join(", ") || trip.destination.cityName;
   const parts: string[] = [];
 
   const best =
@@ -531,6 +652,36 @@ function buildAiInsight(trip: TripPlannerDoc): string | null {
   if (parts.length === 0) return null;
 
   const joined = parts.join(" ");
-  if (joined.toLowerCase().includes(city.toLowerCase())) return joined;
+  if (cities.some((name) => joined.toLowerCase().includes(name.toLowerCase()))) {
+    return joined;
+  }
   return `For ${city}: ${joined}`;
+}
+
+function passportValidForTrip(
+  expiryDate: string | undefined,
+  startDate?: Date
+): boolean {
+  if (!expiryDate?.trim()) return true;
+  const expiry = new Date(expiryDate);
+  if (Number.isNaN(expiry.getTime())) return true;
+  const need = startDate ? new Date(startDate) : new Date();
+  need.setMonth(need.getMonth() + 6);
+  return expiry >= need;
+}
+
+function localDocSignals(userId: string, startDate?: Date): LocalDocSignals {
+  const docs = listTravelDocuments(userId);
+  const passports = docs.filter((doc) => doc.kind === "passport");
+  const ids = docs.filter((doc) => doc.kind === "id");
+  return {
+    hasPassport: passports.length > 0,
+    passportValidForTrip:
+      passports.length === 0
+        ? true
+        : passports.some((doc) =>
+            passportValidForTrip(doc.data.expiryDate, startDate)
+          ),
+    hasId: ids.length > 0,
+  };
 }

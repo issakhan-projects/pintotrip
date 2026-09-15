@@ -10,10 +10,12 @@ import {
   CircleDollarSign,
   MapPin,
   Plane,
+  Plus,
   Search,
   Tag,
   X,
 } from "lucide-react";
+import type { SavedLocation } from "@/hooks/useLocations";
 import { Sheet } from "@/components/ui/Sheet";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { CURRENCY_OPTIONS, resolveCurrencyCode } from "@/lib/currencies";
@@ -28,7 +30,11 @@ import {
   resolveEnglishPlaceIdsFromAddress,
 } from "@/lib/maps";
 import { timestampFromDate } from "@/services/trip-planner";
-import type { TripPlannerDoc, TripPlannerUpdateInput } from "@/types/trip-planner";
+import type {
+  TripDestinationStop,
+  TripPlannerDoc,
+  TripPlannerUpdateInput,
+} from "@/types/trip-planner";
 import {
   autocompleteDestinations,
   fetchDestinationPhotos,
@@ -36,11 +42,18 @@ import {
 } from "./destinationSearch";
 import { currencySymbolForCode } from "./tripUtils";
 import { TripDateRangeField } from "./TripDateRangeField";
+import {
+  EditTripDestinationsEditor,
+  stopToEditDraft,
+  type EditDestDraft,
+} from "./EditTripDestinationsEditor";
+import { listTripDestinations } from "./tripDestinations";
 
 interface EditTripSheetProps {
   open: boolean;
   onClose: () => void;
   trip: TripPlannerDoc;
+  locations?: SavedLocation[];
   onSave: (input: TripPlannerUpdateInput) => Promise<void>;
 }
 
@@ -77,6 +90,7 @@ export function EditTripSheet({
   open,
   onClose,
   trip,
+  locations = [],
   onSave,
 }: EditTripSheetProps) {
   return (
@@ -92,6 +106,7 @@ export function EditTripSheet({
         <EditTripForm
           key={trip.id}
           trip={trip}
+          locations={locations}
           onClose={onClose}
           onSave={onSave}
         />
@@ -102,10 +117,12 @@ export function EditTripSheet({
 
 function EditTripForm({
   trip,
+  locations,
   onClose,
   onSave,
 }: {
   trip: TripPlannerDoc;
+  locations: SavedLocation[];
   onClose: () => void;
   onSave: (input: TripPlannerUpdateInput) => Promise<void>;
 }) {
@@ -140,6 +157,15 @@ function EditTripForm({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const initialCities = listTripDestinations(trip);
+  const [destinations, setDestinations] = useState<EditDestDraft[]>(() =>
+    initialCities.length > 1 ? initialCities.map(stopToEditDraft) : []
+  );
+  const [addingDestination, setAddingDestination] = useState(false);
+  const [multiEditor, setMultiEditor] = useState(
+    () => initialCities.length > 1
+  );
+  const isMultiCityEditor = multiEditor;
 
   useEffect(() => {
     const q = searchQuery.trim();
@@ -206,9 +232,126 @@ function EditTripForm({
     });
   }
 
+  async function resolvePlaceToStop(
+    place: GeocodedPlace,
+    original?: TripDestinationStop
+  ): Promise<TripDestinationStop | null> {
+    const sameOriginal =
+      original &&
+      original.cityName.trim().toLowerCase() ===
+        place.cityName.trim().toLowerCase() &&
+      original.countryName.trim().toLowerCase() ===
+        place.countryName.trim().toLowerCase();
+    if (sameOriginal && original) {
+      const { startDate: _s, endDate: _e, ...rest } = original;
+      return {
+        ...rest,
+        photos: place.photos?.length ? place.photos : original.photos,
+        lat:
+          typeof place.lat === "number" && Number.isFinite(place.lat)
+            ? place.lat
+            : original.lat,
+        lon:
+          typeof place.lon === "number" && Number.isFinite(place.lon)
+            ? place.lon
+            : original.lon,
+      };
+    }
+
+    let englishDestIds = null as Awaited<
+      ReturnType<typeof resolveEnglishPlaceIds>
+    >;
+    if (
+      typeof place.lat === "number" &&
+      typeof place.lon === "number" &&
+      Number.isFinite(place.lat) &&
+      Number.isFinite(place.lon)
+    ) {
+      englishDestIds = await resolveEnglishPlaceIds(place.lat, place.lon);
+    }
+    if (!englishDestIds) {
+      englishDestIds = await resolveEnglishPlaceIdsFromAddress(
+        [place.cityName, place.countryName].filter(Boolean).join(", ")
+      );
+    }
+
+    const destCountryCode =
+      englishDestIds?.countryCode ||
+      place.countryCode ||
+      resolveCountryCode(
+        englishDestIds?.countryNameEn || place.countryName
+      ) ||
+      undefined;
+    const destCountryId = countryIdFromParts(
+      englishDestIds?.countryNameEn || place.countryName,
+      destCountryCode
+    );
+    const destCityId =
+      (englishDestIds?.cityId && isAsciiId(englishDestIds.cityId)
+        ? englishDestIds.cityId
+        : null) ||
+      (isAsciiId(slugifyId(englishDestIds?.cityNameEn || ""))
+        ? slugifyId(englishDestIds!.cityNameEn)
+        : null) ||
+      (isAsciiId(slugifyId(place.cityName))
+        ? slugifyId(place.cityName)
+        : null) ||
+      (isAsciiId(original?.cityId) ? original!.cityId : null);
+
+    if (!isAsciiId(destCountryId) || !destCityId) return null;
+
+    return {
+      cityName: place.cityName,
+      cityId: destCityId,
+      countryName: place.countryName,
+      countryId: destCountryId,
+      lat:
+        typeof place.lat === "number" && Number.isFinite(place.lat)
+          ? place.lat
+          : original?.lat,
+      lon:
+        typeof place.lon === "number" && Number.isFinite(place.lon)
+          ? place.lon
+          : original?.lon,
+      ...(place.photos?.length
+        ? { photos: place.photos }
+        : original?.photos?.length
+          ? { photos: original.photos }
+          : {}),
+    };
+  }
+
+  function beginMultiCity() {
+    if (destinations.length === 0) {
+      const current = listTripDestinations(trip)[0];
+      setDestinations([
+        current
+          ? {
+              ...stopToEditDraft(current, 0),
+              place: destination,
+            }
+          : {
+              id: "current",
+              place: destination,
+              savedKey: null,
+              dateRange: {},
+            },
+      ]);
+    }
+    setAddingDestination(true);
+    setMultiEditor(true);
+  }
+
   async function handleSave() {
-    if (!destination?.cityName || !destination.countryName) {
-      setError("Choose a destination.");
+    const primaryPlace = isMultiCityEditor
+      ? destinations[0]?.place
+      : destination;
+    if (!primaryPlace?.cityName || !primaryPlace.countryName) {
+      setError(
+        isMultiCityEditor
+          ? "Add at least one destination."
+          : "Choose a destination."
+      );
       return;
     }
     if (!dateRange.from || !dateRange.to) {
@@ -224,6 +367,18 @@ function EditTripForm({
       return;
     }
 
+    if (isMultiCityEditor) {
+      for (const item of destinations) {
+        if (!item.dateRange.from && !item.dateRange.to) continue;
+        if (!item.dateRange.from || !item.dateRange.to) {
+          setError(
+            `Select both dates for ${item.place.cityName}, or leave them unset.`
+          );
+          return;
+        }
+      }
+    }
+
     const { city: fromCity, country: fromCountry } = parseFrom(fromValue);
     if (!fromCountry) {
       setError("Enter where you’re traveling from.");
@@ -234,65 +389,49 @@ function EditTripForm({
     setError(null);
 
     try {
-      const name = tripName.trim() || `${destination.cityName} Trip`;
+      const name = tripName.trim() || `${primaryPlace.cityName} Trip`;
       const currencyMeta = CURRENCY_OPTIONS.find((c) => c.code === currencyCode);
       const startDate = timestampFromDate(dateRange.from);
       const endDate = timestampFromDate(dateRange.to);
-      const destChanged = destinationChanged(trip, destination);
 
-      let englishDestIds = null as Awaited<
-        ReturnType<typeof resolveEnglishPlaceIds>
-      >;
-      if (
-        typeof destination.lat === "number" &&
-        typeof destination.lon === "number" &&
-        Number.isFinite(destination.lat) &&
-        Number.isFinite(destination.lon)
-      ) {
-        englishDestIds = await resolveEnglishPlaceIds(
-          destination.lat,
-          destination.lon
+      let destinationStops: TripDestinationStop[] | null = null;
+      if (isMultiCityEditor) {
+        const resolved = await Promise.all(
+          destinations.map(async (draft) => {
+            const stop = await resolvePlaceToStop(draft.place, draft.original);
+            if (!stop) return null;
+            const from = draft.dateRange.from;
+            const to = draft.dateRange.to;
+            const { startDate: _s, endDate: _e, ...rest } = stop;
+            return {
+              ...rest,
+              ...(from ? { startDate: timestampFromDate(from) } : {}),
+              ...(to ? { endDate: timestampFromDate(to) } : {}),
+            };
+          })
         );
+        if (resolved.some((row) => !row)) {
+          setError("Couldn’t resolve destination. Try searching again.");
+          return;
+        }
+        destinationStops = resolved as TripDestinationStop[];
       }
-      if (!englishDestIds) {
-        englishDestIds = await resolveEnglishPlaceIdsFromAddress(
-          [destination.cityName, destination.countryName]
-            .filter(Boolean)
-            .join(", ")
-        );
-      }
 
-      const destCountryCode =
-        englishDestIds?.countryCode ||
-        destination.countryCode ||
-        resolveCountryCode(
-          englishDestIds?.countryNameEn || destination.countryName
-        ) ||
-        undefined;
-      const destCountryId = countryIdFromParts(
-        englishDestIds?.countryNameEn || destination.countryName,
-        destCountryCode
-      );
-      const destCityId =
-        (englishDestIds?.cityId && isAsciiId(englishDestIds.cityId)
-          ? englishDestIds.cityId
-          : null) ||
-        (isAsciiId(slugifyId(englishDestIds?.cityNameEn || ""))
-          ? slugifyId(englishDestIds!.cityNameEn)
-          : null) ||
-        (isAsciiId(slugifyId(destination.cityName))
-          ? slugifyId(destination.cityName)
-          : null) ||
-        (isAsciiId(trip.destination.cityId)
-          ? trip.destination.cityId
-          : null);
-
-      if (!isAsciiId(destCountryId) || !destCityId) {
-        setError(
-          "Couldn’t resolve destination. Try searching again."
-        );
+      const primaryStop =
+        destinationStops?.[0] ??
+        (await resolvePlaceToStop(destination, {
+          ...trip.destination,
+        }));
+      if (!primaryStop?.cityId || !primaryStop.countryId) {
+        setError("Couldn’t resolve destination. Try searching again.");
         return;
       }
+
+      const destChanged = destinationChanged(trip, {
+        cityName: primaryStop.cityName,
+        countryName: primaryStop.countryName,
+        label: `${primaryStop.cityName}, ${primaryStop.countryName}`,
+      });
 
       const englishFromIds = await resolveEnglishPlaceIdsFromAddress(
         [fromCity.trim(), fromCountry.trim()].filter(Boolean).join(", ")
@@ -338,25 +477,17 @@ function EditTripForm({
           lon: trip.from.lon,
         },
         destination: {
-          cityName: destination.cityName,
-          cityId: destCityId,
-          countryName: destination.countryName,
-          countryId: destCountryId,
-          lat:
-            typeof destination.lat === "number" &&
-            Number.isFinite(destination.lat)
-              ? destination.lat
-              : trip.destination.lat,
-          lon:
-            typeof destination.lon === "number" &&
-            Number.isFinite(destination.lon)
-              ? destination.lon
-              : trip.destination.lon,
-          photos:
-            destination.photos?.length
-              ? destination.photos
-              : trip.destination.photos,
+          cityName: primaryStop.cityName,
+          cityId: primaryStop.cityId,
+          countryName: primaryStop.countryName,
+          countryId: primaryStop.countryId,
+          lat: primaryStop.lat,
+          lon: primaryStop.lon,
+          photos: primaryStop.photos,
         },
+        ...(destinationStops
+          ? { destinations: destinationStops }
+          : {}),
         startDate,
         endDate,
         currency: {
@@ -417,54 +548,78 @@ function EditTripForm({
         <div className="space-y-2">
           <span className="flex items-center gap-1.5 text-sm font-medium text-text">
             <MapPin className="h-3.5 w-3.5 text-text-muted" aria-hidden />
-            Destination
+            {isMultiCityEditor ? "Destinations" : "Destination"}
             <span className="text-error" aria-hidden>
               *
             </span>
           </span>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <TextInput
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search a city"
-              className="!pl-9"
+          {isMultiCityEditor ? (
+            <EditTripDestinationsEditor
+              destinations={destinations}
+              onChange={setDestinations}
+              adding={addingDestination}
+              onAddingChange={setAddingDestination}
+              locations={locations}
+              tripDateRange={dateRange}
+              disabled={saving}
+              onError={setError}
             />
-          </div>
-          {searching ? (
-            <p className="text-xs text-text-muted">Searching…</p>
-          ) : null}
-          {searchResults.length > 0 ? (
-            <ul className="overflow-hidden rounded-xl border border-border bg-surface-elevated">
-              {searchResults.slice(0, 6).map((place) => (
-                <li key={`${place.label}-${place.lat}-${place.lon}`}>
-                  <button
-                    type="button"
-                    onClick={() => void applyDestination(place)}
-                    className="flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
-                  >
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-                    <span>
-                      <span className="block font-medium text-text">
-                        {place.cityName}
-                      </span>
-                      <span className="block text-xs text-text-secondary">
-                        {place.countryName}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {destination ? (
-            <p className="rounded-xl bg-primary-tint px-3 py-2 text-sm text-primary">
-              Selected:{" "}
-              <span className="font-semibold">
-                {destination.cityName}, {destination.countryName}
-              </span>
-            </p>
-          ) : null}
+          ) : (
+            <>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+                <TextInput
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search a city"
+                  className="!pl-9"
+                />
+              </div>
+              {searching ? (
+                <p className="text-xs text-text-muted">Searching…</p>
+              ) : null}
+              {searchResults.length > 0 ? (
+                <ul className="overflow-hidden rounded-xl border border-border bg-surface-elevated">
+                  {searchResults.slice(0, 6).map((place) => (
+                    <li key={`${place.label}-${place.lat}-${place.lon}`}>
+                      <button
+                        type="button"
+                        onClick={() => void applyDestination(place)}
+                        className="flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
+                      >
+                        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+                        <span>
+                          <span className="block font-medium text-text">
+                            {place.cityName}
+                          </span>
+                          <span className="block text-xs text-text-secondary">
+                            {place.countryName}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {destination ? (
+                <p className="rounded-xl bg-primary-tint px-3 py-2 text-sm text-primary">
+                  Selected:{" "}
+                  <span className="font-semibold">
+                    {destination.cityName}, {destination.countryName}
+                  </span>
+                </p>
+              ) : null}
+              <button
+                type="button"
+                disabled={saving || !destination}
+                onClick={beginMultiCity}
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm font-medium text-primary hover:border-primary/40 hover:bg-primary-tint"
+              >
+                <Plus className="h-4 w-4" />
+                Add destination
+              </button>
+            </>
+          )}
         </div>
 
         <label className="block space-y-2">

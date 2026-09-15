@@ -5,11 +5,17 @@
 export const AI_CREDIT_COSTS = {
   findPlace: 10,
   getCityIntelligence: 5,
-  /** First AI itinerary fill for empty trip days. */
-  planTrip: 20,
-  /** Recreate AI itinerary preview (additional charge). */
+  /** First AI itinerary fill for empty trip days — included, no charge. */
+  planTrip: 0,
+  /** Recreate AI itinerary — Ordinary trip. */
   planTripRegenerate: 10,
+  /** Recreate AI itinerary — Advanced trip. */
+  planTripRegenerateAdvanced: 30,
   regenerate: 5,
+  /** Create Trip — Ordinary tab. */
+  createTripOrdinary: 20,
+  /** Create Trip — Advanced tab. */
+  createTripAdvanced: 75,
 } as const;
 
 /** Starting balance written when a user profile is first created. */
@@ -22,6 +28,32 @@ export const REVIEW_REWARD_AI_CREDITS = 100;
 export const REFERRAL_REWARD_AI_CREDITS = 100;
 
 export type AICreditOperation = keyof typeof AI_CREDIT_COSTS;
+
+export function planTripRegenerateOperation(
+  createMode?: string | null
+): Extract<
+  AICreditOperation,
+  "planTripRegenerate" | "planTripRegenerateAdvanced"
+> {
+  return createMode === "advanced"
+    ? "planTripRegenerateAdvanced"
+    : "planTripRegenerate";
+}
+
+export function planTripRegenerateCost(createMode?: string | null): number {
+  return AI_CREDIT_COSTS[planTripRegenerateOperation(createMode)];
+}
+
+export type ChargeCreateTripRequest = {
+  tripId: string;
+  mode: "ordinary" | "advanced";
+};
+
+export type ChargeCreateTripResult = {
+  success: true;
+  creditsCharged: number;
+  remainingCredits: number;
+};
 
 export type InsufficientAICreditsError = {
   success: false;

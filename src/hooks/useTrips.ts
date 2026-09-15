@@ -8,9 +8,13 @@ import {
 import { tripsKey, tripsStore } from "@/lib/firebase/data-cache";
 import type { TripPlannerDoc } from "@/types/trip-planner";
 
+function readCachedTrips(userId: string): TripPlannerDoc[] {
+  return tripsStore.get(tripsKey(userId))?.items ?? [];
+}
+
 export function useTrips(userId: string | undefined) {
   const [trips, setTrips] = useState<TripPlannerDoc[]>(() =>
-    userId ? (tripsStore.get(tripsKey(userId))?.items ?? []) : []
+    userId ? readCachedTrips(userId) : []
   );
   const [loading, setLoading] = useState(() => {
     if (!userId) return false;
@@ -55,15 +59,44 @@ export function useTrips(userId: string | undefined) {
         if (!cancelled) setLoading(false);
       });
 
+    const pullFromStore = () => {
+      const next = tripsStore.get(tripsKey(userId));
+      if (next) setTrips(next.items);
+    };
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      pullFromStore();
+      // Mobile Safari / prod restores a frozen heap via bfcache — memory is stale.
+      void ensureTrips(userId, { hard: event.persisted }).then((state) => {
+        if (!cancelled) {
+          setTrips(state.items);
+          setError(null);
+        }
+      });
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      pullFromStore();
+      void ensureTrips(userId).then((state) => {
+        if (!cancelled) setTrips(state.items);
+      });
+    };
+
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
       unsub();
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [userId]);
 
   /** Soft by default (0 reads when warm). Pass { hard: true } to force server. */
   const refresh = useCallback(
-    async (options?: { hard?: boolean }) => {
+    async (options?: { hard?: boolean; silent?: boolean }) => {
       if (!userId) {
         setTrips([]);
         setLoading(false);
@@ -71,14 +104,15 @@ export function useTrips(userId: string | undefined) {
       }
 
       const hard = options?.hard === true;
-      if (hard) setLoading(true);
+      const silent = options?.silent === true;
+      if (hard && !silent) setLoading(true);
       setError(null);
       try {
         setTrips((await ensureTrips(userId, { hard })).items);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load trips.");
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     },
     [userId]

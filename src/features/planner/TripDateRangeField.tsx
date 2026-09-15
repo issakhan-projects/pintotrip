@@ -40,6 +40,8 @@ export function defaultTripDateRange(): DateRangeValue {
 interface TripDateRangeFieldProps {
   value: DateRangeValue;
   onChange: (value: DateRangeValue) => void;
+  /** Field label. Defaults to "Dates". */
+  label?: string;
   /** Start expanded (default false). */
   defaultOpen?: boolean;
   disabled?: boolean;
@@ -54,6 +56,7 @@ interface TripDateRangeFieldProps {
 export function TripDateRangeField({
   value,
   onChange,
+  label = "Dates",
   defaultOpen = false,
   disabled,
   className,
@@ -70,7 +73,7 @@ export function TripDateRangeField({
     <section className={className}>
       <div className="flex items-center gap-1.5 text-sm font-medium text-text">
         <CalendarDays className="h-3.5 w-3.5 text-text-muted" aria-hidden />
-        <span>Dates</span>
+        <span>{label}</span>
         <span className="text-error" aria-hidden>
           *
         </span>

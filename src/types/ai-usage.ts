@@ -24,4 +24,5 @@ export type AIOperationName =
   | "findPlace"
   | "getCityIntelligence"
   | "planTrip"
-  | "planTripRegenerate";
+  | "planTripRegenerate"
+  | "planTripRegenerateAdvanced";

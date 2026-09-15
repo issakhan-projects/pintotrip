@@ -258,3 +258,27 @@ export function patchUserProfileInCache(
   userProfileStore.set(key, next);
   return next;
 }
+
+/**
+ * Drop all client-side domain caches (memory only — IndexedDB is managed by
+ * Firestore). Call on logout so the next login cannot paint stale profile /
+ * trips / places from the previous session.
+ */
+export function clearClientDataCaches(): void {
+  locationsStore.clearAll();
+  favoriteCitiesStore.clearAll();
+  tripsStore.clearAll();
+  tripDetailStore.clearAll();
+  userProfileStore.clearAll();
+  travelIntelPlacesStore.clearAll();
+  travelIntelCitiesStore.clearAll();
+  travelIntelCountriesStore.clearAll();
+  travelIntelDailyStore.clearAll();
+
+  locationsInFlight.clear();
+  favoriteCitiesInFlight.clear();
+  tripsInFlight.clear();
+  tripDetailInFlight.clear();
+  userProfileInFlight.clear();
+  travelIntelInFlight.clear();
+}

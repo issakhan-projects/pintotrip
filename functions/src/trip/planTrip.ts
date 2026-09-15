@@ -9,8 +9,11 @@ import {
   deductCredits,
 } from "../shared/creditService";
 import type { InsufficientAICreditsError } from "../shared/credits";
-import { getRequiredCredits } from "../shared/credits";
-import { initAdmin } from "../shared/admin";
+import {
+  getRequiredCredits,
+  planTripRegenerateOperation,
+} from "../shared/credits";
+import { initAdmin, adminDb } from "../shared/admin";
 import {
   AI_CACHE_TTL,
   executeCachedAI,
@@ -24,6 +27,9 @@ import {
   type PlanTripRequest,
   type PlanTripResult,
   type PlannedDaySuggestion,
+  type PlanTripDestination,
+  type PlanTripSavedPlace,
+  type PlanTripWeatherDay,
 } from "./types";
 
 function isLeisureType(value: unknown): value is LeisureType {
@@ -118,6 +124,113 @@ function parseExistingDays(value: unknown): PlanTripExistingDay[] {
   });
 }
 
+function parseDestinations(value: unknown): PlanTripDestination[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const destinations: PlanTripDestination[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const body = row as Record<string, unknown>;
+    if (typeof body.cityName !== "string" || !body.cityName.trim()) continue;
+    if (typeof body.countryName !== "string" || !body.countryName.trim()) {
+      continue;
+    }
+    destinations.push({
+      cityName: body.cityName.trim(),
+      countryName: body.countryName.trim(),
+      ...(typeof body.countryId === "string" && body.countryId.trim()
+        ? { countryId: body.countryId.trim().toLowerCase() }
+        : {}),
+      ...(typeof body.cityId === "string" && body.cityId.trim()
+        ? { cityId: body.cityId.trim().toLowerCase() }
+        : {}),
+      ...(typeof body.lat === "number" && Number.isFinite(body.lat)
+        ? { lat: body.lat }
+        : {}),
+      ...(typeof body.lon === "number" && Number.isFinite(body.lon)
+        ? { lon: body.lon }
+        : {}),
+      ...(typeof body.startDate === "string" && isIsoDate(body.startDate.trim())
+        ? { startDate: body.startDate.trim() }
+        : {}),
+      ...(typeof body.endDate === "string" && isIsoDate(body.endDate.trim())
+        ? { endDate: body.endDate.trim() }
+        : {}),
+    });
+  }
+  return destinations.length > 0 ? destinations : undefined;
+}
+
+function parseSavedPlaces(value: unknown): PlanTripSavedPlace[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const places: PlanTripSavedPlace[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const body = row as Record<string, unknown>;
+    if (typeof body.locationId !== "string" || !body.locationId.trim()) continue;
+    if (typeof body.title !== "string" || !body.title.trim()) continue;
+    const lat = body.lat;
+    const lon = body.lon;
+    if (typeof lat !== "number" || !Number.isFinite(lat)) continue;
+    if (typeof lon !== "number" || !Number.isFinite(lon)) continue;
+    places.push({
+      locationId: body.locationId.trim(),
+      title: body.title.trim(),
+      lat,
+      lon,
+      cityName:
+        typeof body.cityName === "string" ? body.cityName.trim() : "",
+      countryName:
+        typeof body.countryName === "string" ? body.countryName.trim() : "",
+      ...(typeof body.cityId === "string" && body.cityId.trim()
+        ? { cityId: body.cityId.trim() }
+        : {}),
+      ...(typeof body.countryId === "string" && body.countryId.trim()
+        ? { countryId: body.countryId.trim() }
+        : {}),
+      status: typeof body.status === "string" ? body.status : "planned",
+      ...(typeof body.category === "string" && body.category.trim()
+        ? { category: body.category.trim() }
+        : {}),
+    });
+  }
+  return places.length > 0 ? places : undefined;
+}
+
+function parseWeather(value: unknown): PlanTripWeatherDay[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const days: PlanTripWeatherDay[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue;
+    const body = row as Record<string, unknown>;
+    if (typeof body.date !== "string" || !isIsoDate(body.date.trim())) continue;
+    days.push({
+      date: body.date.trim(),
+      available: body.available === true,
+      ...(typeof body.cityName === "string" && body.cityName.trim()
+        ? { cityName: body.cityName.trim() }
+        : {}),
+      ...(typeof body.tempMin === "number" ? { tempMin: body.tempMin } : {}),
+      ...(typeof body.tempMax === "number" ? { tempMax: body.tempMax } : {}),
+      ...(typeof body.temp === "number" ? { temp: body.temp } : {}),
+      ...(typeof body.description === "string" && body.description.trim()
+        ? { description: body.description.trim() }
+        : {}),
+      ...(typeof body.icon === "string" && body.icon.trim()
+        ? { icon: body.icon.trim() }
+        : {}),
+      ...(typeof body.humidity === "number" ? { humidity: body.humidity } : {}),
+      ...(typeof body.precipitationChance === "number"
+        ? { precipitationChance: body.precipitationChance }
+        : {}),
+      ...(typeof body.windSpeed === "number" ? { windSpeed: body.windSpeed } : {}),
+      ...(body.units === "metric" || body.units === "imperial"
+        ? { units: body.units }
+        : {}),
+    });
+  }
+  return days.length > 0 ? days : undefined;
+}
+
 function parseRequest(data: unknown): PlanTripRequest {
   if (!data || typeof data !== "object") {
     throw new HttpsError("invalid-argument", "Request body is required.");
@@ -160,15 +273,22 @@ function parseRequest(data: unknown): PlanTripRequest {
       ? dest.cityId.trim().toLowerCase()
       : undefined;
   const cityName = dest.cityName.trim();
+  const extraDestinations = parseDestinations(body.destinations);
+  const savedPlaces = parseSavedPlaces(body.savedPlaces);
+  const weather = parseWeather(body.weather);
 
+  const umrahDestinations = [
+    { countryName, countryId, cityName, cityId },
+    ...(extraDestinations ?? []).map((d) => ({
+      countryName: d.countryName,
+      countryId: d.countryId,
+      cityName: d.cityName,
+      cityId: d.cityId,
+    })),
+  ];
   if (
     body.leisureType === "umrah" &&
-    !isSaudiArabiaDestination({
-      countryName,
-      countryId,
-      cityName,
-      cityId,
-    })
+    !umrahDestinations.some((d) => isSaudiArabiaDestination(d))
   ) {
     throw new HttpsError(
       "invalid-argument",
@@ -213,21 +333,88 @@ function parseRequest(data: unknown): PlanTripRequest {
         : undefined,
     ...(currency ? { currency } : {}),
     existingDays: parseExistingDays(body.existingDays),
+    ...(extraDestinations ? { destinations: extraDestinations } : {}),
+    ...(savedPlaces ? { savedPlaces } : {}),
+    ...(weather ? { weather } : {}),
   };
 }
 
+async function loadTripCreateMode(
+  uid: string,
+  tripId: string
+): Promise<"ordinary" | "advanced"> {
+  const tripRef = adminDb().doc(`users/${uid}/tripPlanner/${tripId}`);
+  const snap = await tripRef.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Trip not found.");
+  }
+  const trip = snap.data() ?? {};
+  const ownerId = typeof trip.userId === "string" ? trip.userId : uid;
+  if (ownerId !== uid) {
+    throw new HttpsError("permission-denied", "You cannot plan this trip.");
+  }
+  return trip.createMode === "advanced" ? "advanced" : "ordinary";
+}
+
+const MAX_PLACES_PER_DAY = 4;
+
+function defaultFreeDaySuggestion(
+  empty: PlanTripExistingDay,
+  leisureType: LeisureType
+): PlannedDaySuggestion {
+  if (leisureType === "umrah") {
+    return {
+      day: empty.day,
+      date: empty.date,
+      title: empty.title?.trim() || "Worship and rest",
+      description:
+        "Time for worship and rest. Extra sightseeing is optional and not required today.",
+      places: [],
+    };
+  }
+  if (leisureType === "relaxation") {
+    return {
+      day: empty.day,
+      date: empty.date,
+      title: empty.title?.trim() || "Free time",
+      description:
+        "Unstructured rest. A successful day can have no scheduled places.",
+      places: [],
+    };
+  }
+  return {
+    day: empty.day,
+    date: empty.date,
+    title: empty.title?.trim() || "Open day",
+    description:
+      "Left open on purpose. Add a place only if it serves this trip's leisure type.",
+    places: [],
+  };
+}
+
+/**
+ * Keep every empty itinerary day, including rest/worship days with 0 places.
+ * Leisure type decides intensity — unused time is not treated as a failure.
+ */
 function filterToEmptyDays(
   suggestions: PlannedDaySuggestion[],
-  emptyDayNumbers: Set<number>
+  emptyDays: PlanTripExistingDay[],
+  leisureType: LeisureType
 ): PlannedDaySuggestion[] {
-  return suggestions
-    .filter((d) => emptyDayNumbers.has(d.day))
-    .map((d) => ({
-      ...d,
-      places: d.places.slice(0, 4),
-    }))
-    .filter((d) => d.places.length > 0)
-    .sort((a, b) => a.day - b.day);
+  const emptyDayNumbers = new Set(emptyDays.map((d) => d.day));
+  const byDay = new Map<number, PlannedDaySuggestion>();
+  for (const suggestion of suggestions) {
+    if (!emptyDayNumbers.has(suggestion.day)) continue;
+    byDay.set(suggestion.day, {
+      ...suggestion,
+      places: suggestion.places.slice(0, MAX_PLACES_PER_DAY),
+    });
+  }
+
+  return emptyDays.map(
+    (empty) =>
+      byDay.get(empty.day) ?? defaultFreeDaySuggestion(empty, leisureType)
+  );
 }
 
 function mapOpenAIError(err: unknown): HttpsError {
@@ -258,9 +445,11 @@ export type PlanTripResponse = PlanTripResult | InsufficientAICreditsError;
  *
  * Pipeline:
  * 1. Authenticate caller
- * 2. Validate AI credits (20 generate / 10 regenerate) BEFORE OpenAI
- * 3. Suggest places only for empty itinerary days for the leisure type
- * 4. On success: deduct credits + record aiUsage
+ * 2. Generate is included (no credit charge). Recreate charges
+ *    ordinary 10 / advanced 30 BEFORE OpenAI
+ * 3. Suggest an itinerary for empty days shaped by leisureType
+ *    (purpose, intensity, free time). Saved places are options, not a quota.
+ * 4. On success: deduct regenerate credits + record aiUsage
  * 5. On AI failure: do not deduct credits
  *
  * Persistence of locations / itinerary is done by the client after user confirms.
@@ -293,8 +482,11 @@ export const planTrip = onCall(
       );
     }
 
-    const operation =
-      input.mode === "regenerate" ? "planTripRegenerate" : "planTrip";
+    const createMode = await loadTripCreateMode(uid, input.tripId);
+    const chargeOperation =
+      input.mode === "regenerate"
+        ? planTripRegenerateOperation(createMode)
+        : null;
 
     const emptyDaysKey = JSON.stringify(
       emptyDays.map((d) => ({ day: d.day, date: d.date }))
@@ -317,6 +509,16 @@ export const planTrip = onCall(
       occupiedDaysKey,
       lat: input.destination.lat,
       lon: input.destination.lon,
+      savedPlacesKey: JSON.stringify(
+        (input.savedPlaces ?? []).map((p) => p.locationId).sort()
+      ),
+      weatherKey: JSON.stringify(
+        (input.weather ?? []).map((w) => ({
+          date: w.date,
+          available: w.available,
+          temp: w.temp,
+        }))
+      ),
     });
 
     try {
@@ -331,12 +533,17 @@ export const planTrip = onCall(
         // regenerate always needs a fresh plan; still dedupe in-flight.
         skipCache: input.mode === "regenerate",
         execute: async () => {
-          const creditCheck = await assertSufficientCredits(uid, operation);
-          if (!creditCheck.ok) {
-            throw Object.assign(
-              new Error("INSUFFICIENT_AI_CREDITS"),
-              creditCheck.response
+          if (chargeOperation) {
+            const creditCheck = await assertSufficientCredits(
+              uid,
+              chargeOperation
             );
+            if (!creditCheck.ok) {
+              throw Object.assign(
+                new Error("INSUFFICIENT_AI_CREDITS"),
+                creditCheck.response
+              );
+            }
           }
 
           const analyzer = createOpenAITripPlanner();
@@ -350,10 +557,16 @@ export const planTrip = onCall(
             currency: input.currency ?? "USD",
             emptyDays,
             occupiedDays,
+            destinations: input.destinations,
+            savedPlaces: input.savedPlaces,
+            weather: input.weather,
           });
 
-          const emptyDayNumbers = new Set(emptyDays.map((d) => d.day));
-          const days = filterToEmptyDays(resultDays, emptyDayNumbers);
+          const days = filterToEmptyDays(
+            resultDays,
+            emptyDays,
+            input.leisureType
+          );
 
           if (days.length === 0) {
             throw new Error("Plan trip model returned no usable empty days.");
@@ -376,20 +589,27 @@ export const planTrip = onCall(
 
       let remainingCredits = 0;
       let creditsCharged = 0;
-      if (cachedOrLive.billable) {
-        remainingCredits = await deductCredits(uid, operation);
-        creditsCharged = getRequiredCredits(operation);
+      if (cachedOrLive.billable && chargeOperation) {
+        remainingCredits = await deductCredits(uid, chargeOperation);
+        creditsCharged = getRequiredCredits(chargeOperation);
         await recordAIUsage({
-          operation,
+          operation: chargeOperation,
           cost: cachedOrLive.cost,
           userId: uid,
         });
       } else {
-        // Cache/dedupe hit — report current balance without charging.
-        const balanceCheck = await assertSufficientCredits(uid, operation);
+        // Generate (free) or cache/dedupe hit — report balance without charging.
+        const balanceCheck = await assertSufficientCredits(uid, "planTrip");
         remainingCredits = balanceCheck.ok
           ? balanceCheck.availableCredits
           : balanceCheck.response.availableCredits;
+        if (cachedOrLive.billable) {
+          await recordAIUsage({
+            operation: "planTrip",
+            cost: cachedOrLive.cost,
+            userId: uid,
+          });
+        }
       }
 
       logger.info("planTrip success", {
@@ -399,6 +619,9 @@ export const planTrip = onCall(
         mode: input.mode ?? "generate",
         emptyDayCount: emptyDays.length,
         filledDayCount: cachedOrLive.result.days.length,
+        freeDayCount: cachedOrLive.result.days.filter(
+          (d) => d.places.length === 0
+        ).length,
         placeCount: cachedOrLive.result.days.reduce(
           (n, d) => n + d.places.length,
           0
@@ -426,7 +649,7 @@ export const planTrip = onCall(
         const response = err as InsufficientAICreditsError;
         logger.info("planTrip blocked: insufficient credits", {
           uid,
-          operation,
+          operation: chargeOperation,
           requiredCredits: response.requiredCredits,
           availableCredits: response.availableCredits,
         });

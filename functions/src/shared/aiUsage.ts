@@ -21,7 +21,8 @@ export type AIOperationName =
   | "findPlace"
   | "getCityIntelligence"
   | "planTrip"
-  | "planTripRegenerate";
+  | "planTripRegenerate"
+  | "planTripRegenerateAdvanced";
 
 export interface AITokenUsage {
   promptTokens: number;

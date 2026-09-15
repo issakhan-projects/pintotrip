@@ -10,6 +10,7 @@ import {
   limit,
   startAfter,
   Timestamp,
+  getDocsFromCache,
   type DocumentReference,
   type CollectionReference,
   type QueryDocumentSnapshot,
@@ -38,6 +39,9 @@ import type {
 } from "@/types/trip-planner";
 
 export const TRIPS_PAGE_SIZE = 30;
+
+/** Soft list reads older than this revalidate from the server in the background. */
+const TRIPS_REVALIDATE_MS = 8_000;
 
 function tripsCollection(userId: string): CollectionReference {
   return collection(getFirestoreDb(), FirestorePaths.tripPlanner(userId));
@@ -85,6 +89,93 @@ function createdAtMillis(trip: TripPlannerDoc): number {
   return 0;
 }
 
+function updatedAtMillis(trip: TripPlannerDoc): number {
+  const ts = trip.updatedAt;
+  if (ts && typeof ts.toMillis === "function") return ts.toMillis();
+  return 0;
+}
+
+function tripsQuery(userId: string) {
+  return query(
+    tripsCollection(userId),
+    orderBy("createdAt", "desc"),
+    limit(TRIPS_PAGE_SIZE)
+  );
+}
+
+function applyTripsSnapshot(
+  userId: string,
+  items: TripPlannerDoc[],
+  last: QueryDocumentSnapshot | undefined
+): TripsCacheState {
+  const key = tripsKey(userId);
+  const prev = tripsStore.get(key);
+
+  const byId = new Map<string, TripPlannerDoc>();
+  for (const trip of items) {
+    const existing = tripDetailStore.get(tripDetailKey(userId, trip.id));
+    // Keep a newer in-memory edit over a stale query snapshot (IndexedDB / bfcache).
+    const chosen =
+      existing && updatedAtMillis(existing) > updatedAtMillis(trip)
+        ? existing
+        : trip;
+    byId.set(chosen.id, chosen);
+    tripDetailStore.set(tripDetailKey(userId, chosen.id), chosen);
+  }
+
+  // Keep trips that were just created locally but are missing from the query
+  // (pending serverTimestamp + orderBy("createdAt") is a known Firestore gap).
+  if (prev) {
+    const now = Date.now();
+    for (const trip of prev.items) {
+      if (byId.has(trip.id)) continue;
+      if (now - createdAtMillis(trip) < 60_000) {
+        byId.set(trip.id, trip);
+      }
+    }
+  }
+
+  const merged = [...byId.values()].sort(
+    (a, b) => createdAtMillis(b) - createdAtMillis(a)
+  );
+  const hasMore = items.length >= TRIPS_PAGE_SIZE;
+  const state: TripsCacheState = {
+    items: merged,
+    complete: !hasMore,
+    hasMore,
+    cursor: last
+      ? { id: last.id, createdAtMillis: createdAtMillis(mapDoc(last)) }
+      : null,
+  };
+  tripsStore.set(key, state);
+  return state;
+}
+
+function queryTripsFromServer(userId: string): Promise<TripsCacheState> {
+  const key = tripsKey(userId);
+  return tripsInFlight.run(`${key}:hard`, async () => {
+    const snap = await getDocsCacheFirst(tripsQuery(userId), {
+      forceServer: true,
+    });
+    const state = applyTripsSnapshot(
+      userId,
+      snap.docs.map(mapDoc),
+      snap.docs[snap.docs.length - 1]
+    );
+    if (state.hasMore) {
+      void loadRemainingTripPages(userId);
+    }
+    return state;
+  });
+}
+
+function revalidateTripsIfStale(userId: string): void {
+  const entry = tripsStore.getEntry(tripsKey(userId));
+  if (!entry) return;
+  if (Date.now() - entry.updatedAt < TRIPS_REVALIDATE_MS) return;
+  void queryTripsFromServer(userId);
+}
+
 export async function ensureTrips(
   userId: string,
   options?: { hard?: boolean }
@@ -92,54 +183,48 @@ export async function ensureTrips(
   const key = tripsKey(userId);
   const hard = options?.hard === true;
 
-  if (!hard) {
-    const mem = tripsStore.get(key);
-    // Trust only lists that came from a real query (or are still paginating).
-    // A detail-page upsert used to seed { complete:false, hasMore:false, cursor:null }.
-    if (mem && isTrustedTripsCache(mem)) {
-      recordCacheHit();
-      return mem;
-    }
+  if (hard) {
+    return queryTripsFromServer(userId);
   }
 
-  return tripsInFlight.run(`${key}:${hard ? "hard" : "soft"}`, async () => {
-    if (!hard) {
-      const mem = tripsStore.get(key);
-      if (mem && isTrustedTripsCache(mem)) {
+  const mem = tripsStore.get(key);
+  // Trust only lists that came from a real query (or are still paginating).
+  // A detail-page upsert used to seed { complete:false, hasMore:false, cursor:null }.
+  if (mem && isTrustedTripsCache(mem)) {
+    recordCacheHit();
+    revalidateTripsIfStale(userId);
+    return mem;
+  }
+
+  return tripsInFlight.run(`${key}:soft`, async () => {
+    const current = tripsStore.get(key);
+    if (current && isTrustedTripsCache(current)) {
+      recordCacheHit();
+      revalidateTripsIfStale(userId);
+      return current;
+    }
+
+    try {
+      const cached = await getDocsFromCache(tripsQuery(userId));
+      if (!cached.empty) {
         recordCacheHit();
-        return mem;
+        const state = applyTripsSnapshot(
+          userId,
+          cached.docs.map(mapDoc),
+          cached.docs[cached.docs.length - 1]
+        );
+        if (state.hasMore) {
+          void loadRemainingTripPages(userId);
+        }
+        // IndexedDB is often hours old on mobile/prod — follow with a server read.
+        void queryTripsFromServer(userId);
+        return state;
       }
+    } catch {
+      // Persistence unavailable — fall through to server.
     }
 
-    const q = query(
-      tripsCollection(userId),
-      orderBy("createdAt", "desc"),
-      limit(TRIPS_PAGE_SIZE)
-    );
-    const snap = await getDocsCacheFirst(q, { forceServer: hard });
-    const items = snap.docs.map(mapDoc);
-    const last = snap.docs[snap.docs.length - 1];
-    const hasMore = snap.docs.length >= TRIPS_PAGE_SIZE;
-    const state: TripsCacheState = {
-      items,
-      complete: !hasMore,
-      hasMore,
-      cursor: last
-        ? { id: last.id, createdAtMillis: createdAtMillis(mapDoc(last)) }
-        : null,
-    };
-    tripsStore.set(key, state);
-
-    // Hydrate detail cache for listed trips (no extra reads — reuse list docs).
-    for (const trip of items) {
-      tripDetailStore.set(tripDetailKey(userId, trip.id), trip);
-    }
-
-    if (hasMore) {
-      void loadRemainingTripPages(userId);
-    }
-
-    return state;
+    return queryTripsFromServer(userId);
   });
 }
 

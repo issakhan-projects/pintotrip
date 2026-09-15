@@ -86,7 +86,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const [manualOpen, setManualOpen] = useState(false);
   /** Bumped on bottom-nav switches so nested panel state (profile subviews, etc.) resets. */
   const [placesMountKey, setPlacesMountKey] = useState(0);
-  const [plannerMountKey, setPlannerMountKey] = useState(0);
+  const [plannerOpened, setPlannerOpened] = useState(initialTab === "planner");
   const [profileMountKey, setProfileMountKey] = useState(0);
   const mapRef = useRef<MapInstance | null>(null);
 
@@ -116,7 +116,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         setPlacesMountKey((k) => k + 1);
       }
       if (next === "planner") {
-        setPlannerMountKey((k) => k + 1);
+        setPlannerOpened(true);
       }
       if (next === "profile") {
         setProfileMountKey((k) => k + 1);
@@ -305,9 +305,19 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         </div>
       ) : null}
 
-      {tab === "planner" ? (
-        <div className="absolute inset-0 z-10 bg-background">
-          <TripPlannerPanel key={plannerMountKey} user={user} />
+      {plannerOpened ? (
+        <div
+          className={
+            tab === "planner"
+              ? "absolute inset-0 z-10 bg-background"
+              : "pointer-events-none hidden"
+          }
+          aria-hidden={tab !== "planner"}
+        >
+          <TripPlannerPanel
+            user={user}
+            resyncOnMount={initialTab === "planner"}
+          />
         </div>
       ) : null}
 
