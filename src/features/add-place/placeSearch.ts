@@ -5,6 +5,10 @@ import {
   cachedRequest,
   normalizeQuery,
 } from "@/lib/maps/requestCache";
+import {
+  trackPlacesApiCacheHit,
+  trackPlacesApiNetwork,
+} from "@/lib/maps/placesApiUsage";
 
 export type SearchedPlace = {
   placeId: string;
@@ -78,43 +82,61 @@ export async function searchPlacesByName(
   const key = `places:search:${normalizeQuery(trimmed)}`;
 
   try {
-    return await cachedRequest(key, PLACES_SEARCH_TTL_MS, async () => {
-      const { Place } = await loadPlacesLibrary();
-      // Field mask: only what the add-place UI needs. No Place Details per suggestion.
-      const { places } = await Place.searchByText({
-        textQuery: trimmed,
-        fields: [
-          "id",
-          "displayName",
-          "formattedAddress",
-          "location",
-          "addressComponents",
-        ],
-        maxResultCount: 6,
-      });
-
-      const results: SearchedPlace[] = [];
-      for (const place of places) {
-        const coords = place.location ? toLatLng(place.location) : null;
-        const placeId = place.id?.trim();
-        const title = place.displayName?.trim();
-        if (!coords || !placeId || !title) continue;
-
-        const { cityName, countryName } = parseCityCountry(
-          place.addressComponents
-        );
-        results.push({
-          placeId,
-          title,
-          address: place.formattedAddress?.trim() || title,
-          cityName: cityName || countryName || "Unknown",
-          countryName: countryName || cityName || "Unknown",
-          lat: coords.lat,
-          lon: coords.lon,
+    return await cachedRequest(
+      key,
+      PLACES_SEARCH_TTL_MS,
+      async () => {
+        const { Place } = await loadPlacesLibrary();
+        // Field mask: only what the add-place UI needs. No Place Details per suggestion.
+        const { places } = await Place.searchByText({
+          textQuery: trimmed,
+          fields: [
+            "id",
+            "displayName",
+            "formattedAddress",
+            "location",
+            "addressComponents",
+          ],
+          maxResultCount: 6,
         });
+
+        const results: SearchedPlace[] = [];
+        for (const place of places) {
+          const coords = place.location ? toLatLng(place.location) : null;
+          const placeId = place.id?.trim();
+          const title = place.displayName?.trim();
+          if (!coords || !placeId || !title) continue;
+
+          const { cityName, countryName } = parseCityCountry(
+            place.addressComponents
+          );
+          results.push({
+            placeId,
+            title,
+            address: place.formattedAddress?.trim() || title,
+            cityName: cityName || countryName || "Unknown",
+            countryName: countryName || cityName || "Unknown",
+            lat: coords.lat,
+            lon: coords.lon,
+          });
+        }
+        return results;
+      },
+      {
+        onNetworkFetch: () =>
+          trackPlacesApiNetwork({
+            kind: "textSearch",
+            source: "add-place/searchPlacesByName",
+            detail: { query: trimmed },
+          }),
+        onCacheHit: () =>
+          trackPlacesApiCacheHit({
+            kind: "textSearch",
+            source: "add-place/searchPlacesByName",
+            detail: { query: trimmed },
+          }),
       }
-      return results;
-    });
+    );
   } catch {
     return [];
   }

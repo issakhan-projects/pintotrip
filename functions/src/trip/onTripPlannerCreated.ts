@@ -2,8 +2,9 @@
  * Firestore trigger: users/{userId}/tripPlanner/{tripId} created
  * → Discover airports (+ train stations when multi-city) on destinations[]
  * → Discover international airports only on from (origin)
- * → Prefer cityTransportCache; Places Text Search only on cache miss
+ * → Prefer transportLocations cache; Places Text Search only on cache miss
  * → write transport onto destinations[] and from.
+
  *
  * Enrichment is best-effort: never fails trip creation.
  */

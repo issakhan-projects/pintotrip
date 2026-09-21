@@ -7,7 +7,6 @@ import {
   BarChart3,
   BookOpen,
   Bus,
-  ChevronDown,
   Coins,
   Info,
   Lightbulb,
@@ -18,6 +17,7 @@ import {
   CloudSun,
 } from "lucide-react";
 import type { Timestamp } from "firebase/firestore";
+import { Sheet } from "@/components/ui/Sheet";
 import type { CityIntelligenceResult } from "@/types/city-intelligence";
 import type { CityIntelligenceStatus } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
@@ -60,7 +60,11 @@ function hasCity(
 ): entry is CityIntelligenceResult & {
   city: NonNullable<CityIntelligenceResult["city"]>;
 } {
-  return Boolean(entry?.city?.cityId);
+  return Boolean(entry?.city?.cityId || entry?.city?.name);
+}
+
+function cityKey(entry: CityIntelligenceResult, index: number): string {
+  return entry.city?.cityId || entry.city?.name || `city-${index}`;
 }
 
 export function TripCityIntelligenceBlock({
@@ -82,8 +86,9 @@ export function TripCityIntelligenceBlock({
     if (validResults.length === 0) return null;
     if (activeCityId) {
       return (
-        validResults.find((r) => r.city.cityId === activeCityId) ??
-        validResults[0]!
+        validResults.find(
+          (r, i) => cityKey(r, i) === activeCityId
+        ) ?? validResults[0]!
       );
     }
     return validResults[0]!;
@@ -114,22 +119,69 @@ export function TripCityIntelligenceBlock({
   }
 
   const details = selected?.details;
+  // Legacy payloads stored currency / visa under details.* or top-level aliases.
+  const legacyDetails = details as
+    | (NonNullable<CityIntelligenceResult["details"]> & {
+        currency?: { code?: string; name?: string };
+        visa?: CityIntelligenceResult["visa"];
+        bestTimeToVisit?: {
+          months?: string[];
+          season?: string;
+          description?: string;
+        };
+        practicalInfo?: {
+          transport?: string;
+          tips?: string[];
+          safety?: string;
+        };
+      })
+    | undefined;
+  const legacyResult = selected as
+    | (CityIntelligenceResult & {
+        currency?: string;
+        visaRequirements?: { summary?: string };
+        approximateDailyBudget?: {
+          amount?: number;
+          currency?: string;
+          summary?: string;
+        };
+      })
+    | undefined;
+
   const currencyLabel =
     selected?.exchangeRate?.to ||
     details?.dailyBudget?.currency ||
+    legacyDetails?.currency?.code ||
+    (legacyDetails?.currency?.name
+      ? [legacyDetails.currency.code, legacyDetails.currency.name]
+          .filter(Boolean)
+          .join(" ")
+      : null) ||
+    legacyResult?.currency ||
     null;
 
   const visa =
     selected?.visa?.description ||
-    (selected?.visa?.required === true
+    legacyDetails?.visa?.description ||
+    legacyResult?.visaRequirements?.summary ||
+    (selected?.visa?.required === true ||
+    legacyDetails?.visa?.required === true
       ? "Visa required"
-      : selected?.visa?.required === false
+      : selected?.visa?.required === false ||
+          legacyDetails?.visa?.required === false
         ? "Visa not required"
         : null);
 
   const bestTime =
     selected?.bestTimeToVisit?.summary ||
-    selected?.bestTimeToVisit?.months?.join(", ");
+    selected?.bestTimeToVisit?.months?.join(", ") ||
+    [
+      legacyDetails?.bestTimeToVisit?.season,
+      legacyDetails?.bestTimeToVisit?.description,
+    ]
+      .filter(Boolean)
+      .join(" — ") ||
+    legacyDetails?.bestTimeToVisit?.months?.join(", ");
 
   const budget = (() => {
     const midUser = details?.dailyBudget?.midRange?.userCurrency;
@@ -137,6 +189,8 @@ export function TripCityIntelligenceBlock({
     const localCode =
       details?.dailyBudget?.currency?.trim().toUpperCase() ||
       selected?.exchangeRate?.to?.trim().toUpperCase() ||
+      legacyDetails?.currency?.code?.trim().toUpperCase() ||
+      legacyResult?.approximateDailyBudget?.currency?.trim().toUpperCase() ||
       "";
     const userCode =
       selected?.exchangeRate?.from?.trim().toUpperCase() || "";
@@ -168,7 +222,18 @@ export function TripCityIntelligenceBlock({
     if (midLocal != null && Number.isFinite(midLocal) && localCode) {
       return formatAmount(midLocal, localCode);
     }
-    return details?.dailyBudget?.description;
+    const approx = legacyResult?.approximateDailyBudget;
+    if (
+      approx?.amount != null &&
+      Number.isFinite(approx.amount) &&
+      (approx.currency || localCode)
+    ) {
+      return formatAmount(
+        approx.amount,
+        (approx.currency || localCode).toUpperCase()
+      );
+    }
+    return details?.dailyBudget?.description || approx?.summary;
   })();
 
   const climate = details?.climate?.description;
@@ -182,7 +247,9 @@ export function TripCityIntelligenceBlock({
   const transport = details?.practicalInfo?.transport;
   const safety =
     selected?.safeRate?.summary ||
-    (selected?.safeRate?.score != null
+    legacyDetails?.practicalInfo?.safety ||
+    (selected?.safeRate?.score != null &&
+    Number.isFinite(selected.safeRate.score)
       ? `${selected.safeRate.score}/${selected.safeRate.outOf}`
       : null);
   const tips = details?.practicalInfo?.tips?.[0];
@@ -279,15 +346,15 @@ export function TripCityIntelligenceBlock({
 
       {multiCity ? (
         <div className="-mx-1 mt-4 flex gap-1.5 overflow-x-auto px-1 pb-1">
-          {validResults.map((entry) => {
+          {validResults.map((entry, index) => {
+            const key = cityKey(entry, index);
             const active =
-              (activeCityId ?? validResults[0]?.city.cityId) ===
-              entry.city.cityId;
+              (activeCityId ?? cityKey(validResults[0]!, 0)) === key;
             return (
               <button
-                key={entry.city.cityId}
+                key={key}
                 type="button"
-                onClick={() => setActiveCityId(entry.city.cityId)}
+                onClick={() => setActiveCityId(key)}
                 className={cx(
                   "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                   active
@@ -350,64 +417,79 @@ function IntelTile({
   tone: TileTone;
   loading?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
   const text = value?.trim() || "";
-  const canExpand = !loading && text.length > 48;
+  const canOpen = !loading && text.length > 48;
 
   return (
-    <div className="rounded-xl border border-border/70 bg-surface px-3 py-3">
-      <div className="flex items-center gap-2">
-        <span
-          className={cx(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
-            TONE_CLASS[tone]
-          )}
-        >
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
-          {label}
-        </span>
-        {canExpand ? (
+    <>
+      <div className="rounded-xl border border-border/70 bg-surface px-3 py-3">
+        <div className="flex items-center gap-2">
+          <span
+            className={cx(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
+              TONE_CLASS[tone]
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
+            {label}
+          </span>
+          {canOpen ? (
+            <button
+              type="button"
+              aria-label={`Show ${label} details`}
+              onClick={() => setOpen(true)}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+        {loading ? (
+          <p className="mt-2.5 flex items-center gap-1.5 text-xs text-text-muted">
+            <Loader2 className="h-3 w-3 animate-spin text-primary" />
+            Checking…
+          </p>
+        ) : (
           <button
             type="button"
-            aria-expanded={expanded}
-            aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
-            onClick={() => setExpanded((v) => !v)}
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-elevated hover:text-text"
+            disabled={!canOpen}
+            onClick={() => {
+              if (canOpen) setOpen(true);
+            }}
+            className={cx(
+              "mt-2.5 w-full text-left text-sm font-medium leading-snug text-text",
+              canOpen && "cursor-pointer",
+              !canOpen && "cursor-default"
+            )}
           >
-            <ChevronDown
-              className={cx(
-                "h-4 w-4 transition-transform duration-200",
-                expanded && "rotate-180"
-              )}
-            />
+            <span className="line-clamp-2">{text || "—"}</span>
           </button>
-        ) : null}
+        )}
       </div>
-      {loading ? (
-        <p className="mt-2.5 flex items-center gap-1.5 text-xs text-text-muted">
-          <Loader2 className="h-3 w-3 animate-spin text-primary" />
-          Checking…
-        </p>
-      ) : (
-        <button
-          type="button"
-          disabled={!canExpand}
-          onClick={() => {
-            if (canExpand) setExpanded((v) => !v);
-          }}
-          className={cx(
-            "mt-2.5 w-full text-left text-sm font-medium leading-snug text-text",
-            canExpand && "cursor-pointer",
-            !canExpand && "cursor-default"
-          )}
-        >
-          <span className={cx(!expanded && "line-clamp-2")}>
-            {text || "—"}
+
+      <Sheet
+        open={open}
+        onClose={() => setOpen(false)}
+        title={label}
+        size="sm"
+        leading={
+          <span
+            className={cx(
+              "flex h-9 w-9 items-center justify-center rounded-xl",
+              TONE_CLASS[tone]
+            )}
+          >
+            <Icon className="h-4 w-4" />
           </span>
-        </button>
-      )}
-    </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-text whitespace-pre-wrap">
+          {text}
+        </p>
+      </Sheet>
+    </>
   );
 }

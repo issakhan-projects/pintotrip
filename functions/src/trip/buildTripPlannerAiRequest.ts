@@ -26,7 +26,6 @@ import type {
   SpendMoneyLevel,
   TemperatureType,
   TripCreateMode,
-  TripPlannerAiAirport,
   TripPlannerAiItineraryRoute,
   TripPlannerAiRequest,
   TripPlannerAiRequestDayWeather,
@@ -278,7 +277,7 @@ function parseRouteDoc(
   };
 }
 
-function slimAirport(raw: Record<string, unknown>): TripPlannerAiAirport | null {
+function slimAirport(raw: Record<string, unknown>): TripPlannerAiTransportLocation | null {
   const placeId = typeof raw.placeId === "string" ? raw.placeId.trim() : "";
   const name = typeof raw.name === "string" ? raw.name.trim() : "";
   const loc = raw.location as { lat?: number; lon?: number } | undefined;
@@ -495,7 +494,7 @@ function buildDestinations(params: {
     if (cityId && cityName && countryName) {
       const airports = (from.transport?.airports ?? [])
         .map((a) => slimAirport(a))
-        .filter((a): a is TripPlannerAiAirport => Boolean(a));
+        .filter((a): a is TripPlannerAiTransportLocation => Boolean(a));
       out[cityId] = {
         cityId,
         cityName,
@@ -537,7 +536,7 @@ function buildDestinations(params: {
     const countryName = dest.countryName?.trim() || "";
     const airports = (dest.transport?.airports ?? [])
       .map((a) => slimAirport(a))
-      .filter((a): a is TripPlannerAiAirport => Boolean(a));
+      .filter((a): a is TripPlannerAiTransportLocation => Boolean(a));
     const stations = (dest.transport?.trainStations ?? [])
       .map((s) => slimStation(s))
       .filter((s): s is TripPlannerAiTransportLocation => Boolean(s));

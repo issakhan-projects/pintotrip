@@ -29,7 +29,6 @@ import {
 } from "@/services/storage";
 import { allocateTripRouteId } from "@/services/trip-routes";
 import type {
-  TripAirport,
   TripPlannerDoc,
   TripRoute,
   TripRouteAttachment,
@@ -271,7 +270,7 @@ function RouteDatetimeField({
   );
 }
 
-function findAirport(airports: TripAirport[], key: string) {
+function findAirport(airports: TripTransportLocation[], key: string) {
   if (!key) return undefined;
   const normalized = key.trim().toUpperCase();
   return airports.find(

@@ -174,9 +174,9 @@ export class CityStatusOverlayController {
         }
 
         nextStyles.set(placeId, { status: entry.status, featureType });
-        devLog.info(
-          `[PinToTrip DDS] City highlight: ${entry.cityName} → ${placeId} (${entry.status}, ${featureType})`
-        );
+        // devLog.info(
+        //   `[PinToTrip DDS] City highlight: ${entry.cityName} → ${placeId} (${entry.status}, ${featureType})`
+        // );
 
         if (
           entry.locationIdsMissingPlaceId.length > 0 &&

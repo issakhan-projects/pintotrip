@@ -49,6 +49,15 @@ export {
   PLACE_PHOTOS_TTL_MS,
 } from "./requestCache";
 export {
+  getPlacesApiUsage,
+  resetPlacesApiUsage,
+  subscribePlacesApiUsage,
+  trackPlacesApiNetwork,
+  trackPlacesApiCacheHit,
+  type PlacesApiKind,
+  type PlacesApiUsageSnapshot,
+} from "./placesApiUsage";
+export {
   getCityStatuses,
   type CityHighlightStatus,
   type CityStatusEntry,

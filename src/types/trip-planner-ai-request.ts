@@ -20,7 +20,6 @@ import type {
   RoutePoint,
   SpendMoneyLevel,
   TripAccommodation,
-  TripAirport,
   TripCreateMode,
   TripPlannerDoc,
   TripRoute,
@@ -48,17 +47,17 @@ export type TripPlannerAiSavedPlace = {
 /** Full location docs used as builder input (before slim mapping). */
 export type TripPlannerAiSavedPlaceSource = UserLocation & { id: string };
 
-/** Transport pin without googleMapsUri / types (not sent to the model). */
+/**
+ * Transport pin without googleMapsUri / types (not sent to the model).
+ * Airports may include iataCode.
+ */
 export type TripPlannerAiTransportLocation = Omit<
   TripTransportLocation,
   "googleMapsUri" | "types"
 >;
 
-/** Airport pin without types[] (not sent to the model). */
-export type TripPlannerAiAirport = Omit<TripAirport, "types">;
-
 export type TripPlannerAiDestinationTransport = {
-  airports: TripPlannerAiAirport[];
+  airports: TripPlannerAiTransportLocation[];
   trainStations?: TripPlannerAiTransportLocation[];
   lastCheckedAt: string;
 };

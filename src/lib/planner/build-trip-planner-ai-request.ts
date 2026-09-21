@@ -13,7 +13,6 @@ import { listTripRoutes } from "@/services/trip-routes";
 import { getUserLocation } from "@/services/locations";
 import type {
   BuildTripPlannerAiRequestInput,
-  TripPlannerAiAirport,
   TripPlannerAiCityInfo,
   TripPlannerAiDestinationTransport,
   TripPlannerAiItineraryRoute,
@@ -32,7 +31,6 @@ import type { LeisureType } from "@/types/trip-plan";
 import type { TemperatureUnit } from "@/types/user";
 import type {
   TripAccommodation,
-  TripAirport,
   TripDestinationStop,
   TripDestinationTransport,
   TripPlannerDoc,
@@ -81,21 +79,10 @@ function slimTransportLocation(
     placeId: pin.placeId,
     name: pin.name,
     type: pin.type,
+    ...(pin.iataCode !== undefined ? { iataCode: pin.iataCode } : {}),
     location: pin.location,
     ...(pin.address ? { address: pin.address } : {}),
     // googleMapsUri, types intentionally omitted
-  };
-}
-
-function slimAirport(airport: TripAirport): TripPlannerAiAirport {
-  return {
-    placeId: airport.placeId,
-    name: airport.name,
-    type: "airport",
-    ...(airport.iataCode !== undefined ? { iataCode: airport.iataCode } : {}),
-    location: airport.location,
-    ...(airport.address ? { address: airport.address } : {}),
-    // types intentionally omitted
   };
 }
 
@@ -103,7 +90,7 @@ function slimTransport(
   transport: TripDestinationTransport
 ): TripPlannerAiDestinationTransport {
   return {
-    airports: (transport.airports ?? []).map(slimAirport),
+    airports: (transport.airports ?? []).map(slimTransportLocation),
     ...(Array.isArray(transport.trainStations)
       ? {
           trainStations: transport.trainStations.map(slimTransportLocation),

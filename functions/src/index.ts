@@ -7,7 +7,7 @@
  * completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
- * onTripPlannerCreated (tripPlanner create → transport discovery + cityTransportCache).
+ * onTripPlannerCreated (tripPlanner create → transport discovery + transportLocations).
  * HTTP: paddleWebhook (Paddle Billing notifications).
  * Callables: createPaddlePortalSession.
  */

@@ -200,6 +200,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Country → location → transport cache — Admin SDK only.
+    // Filled by onTripPlannerCreated; Places Text Search only on cache miss.
+    match /transportLocations/{countryId}/locations/{locationId} {
+      allow read, write: if false;
+
+      match /transport/{transportId} {
+        allow read, write: if false;
+      }
+    }
+
     // Paddle webhook idempotency ledger — Admin SDK only.
     match /paddleWebhookEvents/{eventId} {
       allow read, write: if false;

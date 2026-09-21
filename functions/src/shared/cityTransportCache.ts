@@ -11,7 +11,6 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { adminDb } from "./admin";
 import type {
-  TripAirport,
   TripDestinationTransport,
   TripTransportLocation,
 } from "./transportDiscovery";
@@ -34,7 +33,7 @@ export type CityTransportCacheEntry = {
   countryName?: string;
   cityId?: string;
   countryId?: string;
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations?: TripTransportLocation[];
   /** Places airport Text Search completed (even if zero results). */
   airportsChecked: boolean;
@@ -105,9 +104,9 @@ function isExpired(expiresAt: FirebaseFirestore.Timestamp | undefined): boolean 
   return expiresAt.toMillis() < Date.now();
 }
 
-function normalizeCachedAirports(raw: unknown): TripAirport[] {
+function normalizeCachedAirports(raw: unknown): TripTransportLocation[] {
   if (!Array.isArray(raw)) return [];
-  const out: TripAirport[] = [];
+  const out: TripTransportLocation[] = [];
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const a = row as Record<string, unknown>;
@@ -226,7 +225,7 @@ export async function getCityTransportCache(
 export type SetCityTransportCacheParams = {
   cacheKey: string;
   input: CityTransportCacheInput;
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations?: TripTransportLocation[];
   airportsChecked: boolean;
   trainStationsChecked?: boolean;

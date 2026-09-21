@@ -9,6 +9,7 @@ import {
   normalizeQuery,
   roundCoord,
 } from "./requestCache";
+import { trackPlacesApiCacheHit, trackPlacesApiNetwork } from "./placesApiUsage";
 import { devLog } from "@/lib/devLog";
 
 export interface CityPlaceIdQuery {
@@ -145,12 +146,12 @@ async function resolveViaReverseGeocode(
       (r: { place_id?: string; types?: string[]; formatted_address?: string }) =>
         r.place_id === placeId
     );
-    devLog.info(
-      `[PinToTrip DDS] Reverse-geocode Place ID for "${city.cityName}":`,
-      placeId,
-      matched?.types,
-      matched?.formatted_address
-    );
+    // devLog.info(
+    //   `[PinToTrip DDS] Reverse-geocode Place ID for "${city.cityName}":`,
+    //   placeId,
+    //   matched?.types,
+    //   matched?.formatted_address
+    // );
   }
 
   return { placeId, hadPlaceIds };
@@ -175,22 +176,48 @@ async function resolveViaPlaces(
       : "";
   const searchKey = `places:text:${normalizeQuery(textQuery)}:${includedType}:${bias}`;
 
-  return cachedRequest(searchKey, PLACES_SEARCH_TTL_MS, async () => {
-    const { Place } = await loadPlacesLibrary();
-    const request = {
-      textQuery,
-      fields: ["id", "location", "displayName"],
-      includedType,
-      maxResultCount: 1,
-      ...(city.lat != null && city.lon != null
-        ? { locationBias: { lat: city.lat, lng: city.lon } }
-        : {}),
-    };
+  return cachedRequest(
+    searchKey,
+    PLACES_SEARCH_TTL_MS,
+    async () => {
+      const { Place } = await loadPlacesLibrary();
+      const request = {
+        textQuery,
+        fields: ["id", "location", "displayName"],
+        includedType,
+        maxResultCount: 1,
+        ...(city.lat != null && city.lon != null
+          ? { locationBias: { lat: city.lat, lng: city.lon } }
+          : {}),
+      };
 
-    const { places } = await Place.searchByText(request);
-    const id = places[0]?.id?.trim();
-    return id || null;
-  });
+      const { places } = await Place.searchByText(request);
+      const id = places[0]?.id?.trim();
+      return id || null;
+    },
+    {
+      onNetworkFetch: () =>
+        trackPlacesApiNetwork({
+          kind: "textSearch",
+          source: "maps/cityPlaceId",
+          detail: {
+            query: textQuery,
+            includedType,
+            cityKey: city.key,
+          },
+        }),
+      onCacheHit: () =>
+        trackPlacesApiCacheHit({
+          kind: "textSearch",
+          source: "maps/cityPlaceId",
+          detail: {
+            query: textQuery,
+            includedType,
+            cityKey: city.key,
+          },
+        }),
+    }
+  );
 }
 
 async function resolveViaGeocoder(

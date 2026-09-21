@@ -6,8 +6,13 @@ import type {
   TripPreparation,
   TripCityIntelligence,
 } from "@/types/trip-planner";
+import { normalizeTripCityIntelligence } from "./normalize-city-intelligence";
 
-type RawTrip = TripPlanner & { destination?: TripDestination; id?: string };
+type RawTrip = TripPlanner & {
+  destination?: TripDestination;
+  id?: string;
+  cityIntelligence?: TripCityIntelligence & { result?: unknown };
+};
 
 /**
  * Coalesce legacy fields and fill required arrays so UI never iterates
@@ -49,14 +54,10 @@ export function normalizeTripDoc(
     items: Array.isArray(preparationRaw?.items) ? preparationRaw.items : [],
   };
 
-  const intelRaw = rest.cityIntelligence as TripCityIntelligence | undefined;
-  const cityIntelligence: TripCityIntelligence = {
-    status: intelRaw?.status ?? "pending",
-    ...(intelRaw ?? {}),
-    results: Array.isArray(intelRaw?.results)
-      ? intelRaw.results.filter((r) => Boolean(r?.city?.cityId))
-      : intelRaw?.results,
-  };
+  const cityIntelligence = normalizeTripCityIntelligence(
+    rest.cityIntelligence,
+    destinations
+  );
 
   return {
     ...rest,

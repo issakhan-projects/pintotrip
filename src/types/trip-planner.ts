@@ -10,11 +10,13 @@ export type TripStatus =
   | "completed"
   | "cancelled";
 
-/** Normalized transport pin from Google Places (train stations, etc.). */
+/** Normalized transport pin from Google Places (airports + train stations). */
 export type TripTransportLocation = {
   placeId: string;
   name: string;
   type: "airport" | "train_station";
+  /** Official IATA code when type is "airport"; null when unknown. */
+  iataCode?: string | null;
   location: {
     lat: number;
     lon: number;
@@ -25,27 +27,12 @@ export type TripTransportLocation = {
   googleMapsUri?: string;
 };
 
-/** Airport pin with optional IATA enrichment (AI metadata only). */
-export type TripAirport = {
-  placeId: string;
-  name: string;
-  type: "airport";
-  /** Official IATA code when resolved; null when unknown. */
-  iataCode?: string | null;
-  location: {
-    lat: number;
-    lon: number;
-  };
-  address?: string;
-  types?: string[];
-};
-
 /**
  * Per-destination transport discovered async after trip create.
  * Single-city trips omit `trainStations`.
  */
 export type TripDestinationTransport = {
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations?: TripTransportLocation[];
   /** ISO timestamp when discovery last completed for this city. */
   lastCheckedAt: string;

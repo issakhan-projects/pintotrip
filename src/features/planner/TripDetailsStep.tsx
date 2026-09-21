@@ -201,7 +201,7 @@ function SingleCityTripDetails({
               </p>
             ) : null}
 
-            {thumbs.length > 0 ? (
+            {/* {thumbs.length > 0 ? (
               <div className="mt-3 grid grid-cols-4 gap-2">
                 {thumbs.map((url, index) => {
                   const isOverflow = index === 3 && extraCount > 0;
@@ -210,7 +210,6 @@ function SingleCityTripDetails({
                       key={`${url}-${index}`}
                       className="relative aspect-square overflow-hidden rounded-lg bg-surface"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={url}
                         alt=""
@@ -225,7 +224,7 @@ function SingleCityTripDetails({
                   );
                 })}
               </div>
-            ) : null}
+            ) : null} */}
           </div>
         </section>
       </div>

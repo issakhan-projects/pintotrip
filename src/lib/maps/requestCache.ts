@@ -25,20 +25,28 @@ export function normalizeQuery(query: string): string {
 export async function cachedRequest<T>(
   key: string,
   ttlMs: number,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  options?: {
+    onCacheHit?: () => void;
+    onNetworkFetch?: () => void;
+  }
 ): Promise<T> {
   const now = Date.now();
   const hit = store.get(key);
   if (hit && hit.expiresAt > now) {
+    options?.onCacheHit?.();
     return hit.value as T;
   }
 
   const pending = inflight.get(key);
   if (pending) {
+    // In-flight share — not a new network call from this caller; count as cache/dedupe hit.
+    options?.onCacheHit?.();
     return pending as Promise<T>;
   }
 
   const promise = (async (): Promise<T> => {
+    options?.onNetworkFetch?.();
     const value = await fn();
     store.set(key, { value, expiresAt: Date.now() + ttlMs });
     return value;

@@ -3,20 +3,21 @@
  *
  * Airports + train stations: Google Places Text Search (New).
  * Airports also get one IATA AI call per city.
- * Shared Firestore cache (`cityTransportCache`) skips Places when the city
- * was already discovered. Does not charge user AI credits.
+ * Shared Firestore cache (`transportLocations`) skips Places when the
+ * country/location was already discovered. Does not charge user AI credits.
  */
 
 import { logger } from "firebase-functions";
 import { createOpenAIClient, LOCATION_MODEL } from "./openai";
 import { googlePrivateApiKey } from "./config";
 import {
-  cityTransportCacheKey,
-  getCityTransportCache,
-  setCityTransportCache,
-  transportFromCacheEntry,
-  type CityTransportCacheEntry,
-} from "./cityTransportCache";
+  getTransportLocations,
+  resolveTransportLocationIds,
+  setTransportLocations,
+  transportFromLocationsEntry,
+  type TransportLocationIds,
+  type TransportLocationsEntry,
+} from "./transportLocations";
 
 export type TripTransportType = "airport" | "train_station";
 
@@ -24,6 +25,8 @@ export type TripTransportLocation = {
   placeId: string;
   name: string;
   type: TripTransportType;
+  /** Official IATA code when type is "airport"; null when unknown. */
+  iataCode?: string | null;
   location: {
     lat: number;
     lon: number;
@@ -34,21 +37,8 @@ export type TripTransportLocation = {
   googleMapsUri?: string;
 };
 
-export type TripAirport = {
-  placeId: string;
-  name: string;
-  type: "airport";
-  iataCode?: string | null;
-  location: {
-    lat: number;
-    lon: number;
-  };
-  address?: string;
-  types?: string[];
-};
-
 export type TripDestinationTransport = {
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations?: TripTransportLocation[];
   lastCheckedAt: string;
 };
@@ -66,6 +56,25 @@ export type TransportDestinationInput = {
 const PLACES_TEXT_SEARCH_URL =
   "https://places.googleapis.com/v1/places:searchText";
 
+/** Process-lifetime Places Text Search counter (Cloud Functions logs). */
+let placesTextSearchNetworkCount = 0;
+
+function logPlacesTextSearch(input: {
+  kind: string;
+  cityName: string;
+  countryName?: string;
+  resultCount: number;
+}): void {
+  placesTextSearchNetworkCount += 1;
+  logger.info("[Places API] NETWORK Text Search", {
+    count: placesTextSearchNetworkCount,
+    kind: input.kind,
+    cityName: input.cityName,
+    countryName: input.countryName ?? null,
+    resultCount: input.resultCount,
+  });
+}
+
 const TEXT_SEARCH_FIELD_MASK = [
   "places.id",
   "places.displayName",
@@ -75,7 +84,7 @@ const TEXT_SEARCH_FIELD_MASK = [
   "places.googleMapsUri",
 ].join(",");
 
-const MAX_RESULTS = 10;
+const MAX_RESULTS = 5;
 const IATA_MAX_TOKENS = 400;
 
 const IATA_SYSTEM_PROMPT = `You are an airport identification service.
@@ -283,6 +292,12 @@ async function searchPlacesByText(input: {
   }
 
   const places = Array.isArray(json.places) ? json.places : [];
+  logPlacesTextSearch({
+    kind: input.kind.includedType,
+    cityName: city,
+    countryName: input.countryName,
+    resultCount: places.length,
+  });
   const normalized: TripTransportLocation[] = [];
   for (const place of places) {
     const item = normalizePlace(place, input.kind.domainType, {
@@ -371,7 +386,7 @@ async function resolveAirportIataCodes(input: {
 function toAirports(
   places: TripTransportLocation[],
   iataByName: Map<string, string | null>
-): TripAirport[] {
+): TripTransportLocation[] {
   return places.map((place) => ({
     placeId: place.placeId,
     name: place.name,
@@ -433,16 +448,15 @@ export function mergeTransportPreferExisting(
 }
 
 async function writeTransportCache(params: {
-  cacheKey: string;
+  ids: TransportLocationIds;
   destination: TransportDestinationInput;
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations?: TripTransportLocation[];
   airportsChecked: boolean;
   trainStationsChecked?: boolean;
-  lastCheckedAt: string;
 }): Promise<void> {
-  await setCityTransportCache({
-    cacheKey: params.cacheKey,
+  await setTransportLocations({
+    ids: params.ids,
     input: {
       cityName: params.destination.cityName,
       countryName: params.destination.countryName,
@@ -453,20 +467,19 @@ async function writeTransportCache(params: {
     trainStations: params.trainStations,
     airportsChecked: params.airportsChecked,
     trainStationsChecked: params.trainStationsChecked,
-    lastCheckedAt: params.lastCheckedAt,
   });
 }
 
-/** Persist trip-local transport into the shared city cache (best-effort). */
+/** Persist trip-local transport into transportLocations (best-effort). */
 async function backfillTransportCache(
   destination: TransportDestinationInput,
   transport: TripDestinationTransport,
   options: { includeTrainStations: boolean }
 ): Promise<void> {
-  const cacheKey = cityTransportCacheKey(destination);
-  if (!cacheKey) return;
+  const ids = resolveTransportLocationIds(destination);
+  if (!ids) return;
 
-  const existing = await getCityTransportCache(cacheKey);
+  const existing = await getTransportLocations(ids);
   if (
     existing?.airportsChecked &&
     existing.airports.length > 0 &&
@@ -476,28 +489,26 @@ async function backfillTransportCache(
   }
 
   await writeTransportCache({
-    cacheKey,
+    ids,
     destination,
     airports:
       transport.airports.length > 0
         ? transport.airports
         : (existing?.airports ?? []),
-    trainStations:
-      options.includeTrainStations
-        ? (transport.trainStations ?? existing?.trainStations ?? [])
-        : existing?.trainStations,
+    trainStations: options.includeTrainStations
+      ? (transport.trainStations ?? existing?.trainStations ?? [])
+      : existing?.trainStations,
     airportsChecked: true,
     trainStationsChecked: options.includeTrainStations
       ? true
       : existing?.trainStationsChecked,
-    lastCheckedAt: transport.lastCheckedAt || new Date().toISOString(),
   });
 }
 
 /**
  * Discover airports (Text Search) + optional train stations (Text Search) for one city.
  * Only cityName is required (countryName improves query precision).
- * Reads/writes `cityTransportCache` so Places is skipped for known cities.
+ * Reads/writes `transportLocations` so Places is skipped for known locations.
  */
 export async function discoverDestinationTransport(
   destination: TransportDestinationInput,
@@ -521,16 +532,16 @@ export async function discoverDestinationTransport(
     return undefined;
   }
 
-  const cacheKey = cityTransportCacheKey({
+  const ids = resolveTransportLocationIds({
     cityName,
     countryName: destination.countryName,
     cityId: destination.cityId,
     countryId: destination.countryId,
   });
 
-  let cached: CityTransportCacheEntry | null = null;
-  if (cacheKey) {
-    cached = await getCityTransportCache(cacheKey);
+  let cached: TransportLocationsEntry | null = null;
+  if (ids) {
+    cached = await getTransportLocations(ids);
   }
 
   // Full cache hit: airports known; trains known or not needed.
@@ -539,13 +550,14 @@ export async function discoverDestinationTransport(
     (!options.includeTrainStations || cached.trainStationsChecked)
   ) {
     logger.info("transportDiscovery cache hit", {
-      cacheKey,
+      countryId: ids?.countryId,
+      locationId: ids?.locationId,
       cityName,
       airportCount: cached.airports.length,
-      trainStationCount: cached.trainStations?.length ?? 0,
+      trainStationCount: cached.trainStations.length,
       includeTrainStations: options.includeTrainStations,
     });
-    return transportFromCacheEntry(cached, options);
+    return transportFromLocationsEntry(cached, options);
   }
 
   // Partial hit: reuse airports; Text Search trains only.
@@ -555,7 +567,8 @@ export async function discoverDestinationTransport(
     !cached.trainStationsChecked
   ) {
     logger.info("transportDiscovery cache partial — fetching train stations", {
-      cacheKey,
+      countryId: ids?.countryId,
+      locationId: ids?.locationId,
       cityName,
       airportCount: cached.airports.length,
     });
@@ -574,15 +587,14 @@ export async function discoverDestinationTransport(
     }
 
     const lastCheckedAt = new Date().toISOString();
-    if (cacheKey) {
+    if (ids) {
       await writeTransportCache({
-        cacheKey,
+        ids,
         destination: { ...destination, cityName },
         airports: cached.airports,
         trainStations,
         airportsChecked: true,
         trainStationsChecked: true,
-        lastCheckedAt,
       });
     }
 
@@ -658,18 +670,18 @@ export async function discoverDestinationTransport(
   const lastCheckedAt = new Date().toISOString();
 
   // Cache only after a successful Places response (including empty).
-  if (cacheKey && airportsSearchOk) {
+  if (ids && airportsSearchOk) {
     await writeTransportCache({
-      cacheKey,
+      ids,
       destination: { ...destination, cityName },
       airports,
       trainStations: trainStationsChecked ? trainStations ?? [] : undefined,
       airportsChecked: true,
       trainStationsChecked,
-      lastCheckedAt,
     });
     logger.info("transportDiscovery cache write", {
-      cacheKey,
+      countryId: ids.countryId,
+      locationId: ids.locationId,
       cityName,
       airportCount: airports.length,
       trainStationCount: trainStations?.length ?? 0,

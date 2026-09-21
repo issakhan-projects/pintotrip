@@ -22,6 +22,7 @@ import { ReviewSheet } from "@/features/review/ReviewSheet";
 import { TravelProfileSheet } from "@/features/onboarding";
 import { isProEntitled } from "@/features/profile/plans";
 import { NotificationBanner } from "@/features/referral";
+import { PlacesApiDevBadge } from "@/features/app/PlacesApiDevBadge";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
 import { useFavoriteCities } from "@/hooks/useFavoriteCities";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -686,6 +687,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           markReviewSubmitted();
         }}
       />
+
+      <PlacesApiDevBadge />
     </main>
   );
 }

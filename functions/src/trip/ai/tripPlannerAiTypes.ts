@@ -33,21 +33,14 @@ export type TripPlannerAiTransportLocation = {
   placeId: string;
   name: string;
   type: "airport" | "train_station";
-  location: { lat: number; lon: number };
-  address?: string;
-};
-
-export type TripPlannerAiAirport = {
-  placeId: string;
-  name: string;
-  type: "airport";
+  /** Official IATA code when type is "airport"; null when unknown. */
   iataCode?: string | null;
   location: { lat: number; lon: number };
   address?: string;
 };
 
 export type TripPlannerAiDestinationTransport = {
-  airports: TripPlannerAiAirport[];
+  airports: TripPlannerAiTransportLocation[];
   trainStations?: TripPlannerAiTransportLocation[];
   lastCheckedAt: string;
 };

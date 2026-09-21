@@ -2,7 +2,6 @@
 
 import type {
   RoutePoint,
-  TripAirport,
   TripDestinationStop,
   TripPlace,
   TripPlannerDoc,
@@ -24,7 +23,7 @@ export type RouteCityOption = {
   lon?: number;
   timezone?: string;
   /** From `from.transport` / `destinations[].transport`. */
-  airports: TripAirport[];
+  airports: TripTransportLocation[];
   trainStations: TripTransportLocation[];
   /** Original trip place — used to re-read transport when the trip doc updates. */
   source: "from" | "destination";
@@ -33,7 +32,7 @@ export type RouteCityOption = {
 
 function readAirports(
   place: TripPlace | TripDestinationStop | undefined
-): TripAirport[] {
+): TripTransportLocation[] {
   const airports = place?.transport?.airports;
   if (!Array.isArray(airports)) return [];
   return airports.flatMap((airport) => {
@@ -132,9 +131,9 @@ export function listRouteCities(trip: TripPlannerDoc): RouteCityOption[] {
 export function airportsForRouteCity(
   trip: TripPlannerDoc,
   city: RouteCityOption | undefined
-): TripAirport[] {
+): TripTransportLocation[] {
   if (!city) return [];
-  const byPlaceId = new Map<string, TripAirport>();
+  const byPlaceId = new Map<string, TripTransportLocation>();
 
   const addFromPlace = (place: TripPlace | TripDestinationStop | undefined) => {
     if (!placeMatchesCityKey(place, city)) return;
@@ -174,7 +173,7 @@ export function trainStationsForRouteCity(
   return Array.from(byPlaceId.values());
 }
 
-export function toAirportSelectOptions(airports: TripAirport[]) {
+export function toAirportSelectOptions(airports: TripTransportLocation[]) {
   return airports.map((airport) => {
     const code = airport.iataCode?.trim().toUpperCase() || undefined;
     return {
@@ -512,7 +511,7 @@ export function cityPointFromOption(city: RouteCityOption): RoutePoint {
 
 export function airportToRoutePoint(
   city: RouteCityOption,
-  airport: TripAirport
+  airport: TripTransportLocation
 ): RoutePoint {
   const code = airport.iataCode?.trim().toUpperCase() || undefined;
   return {
