@@ -66,8 +66,6 @@ export type {
 export type {
   AICreditOperation,
   InsufficientAICreditsError,
-  ChargeCreateTripRequest,
-  ChargeCreateTripResult,
 } from "./credits";
 export {
   AI_CREDIT_COSTS,
@@ -76,6 +74,7 @@ export {
   REFERRAL_REWARD_AI_CREDITS,
   isInsufficientAICreditsError,
   formatInsufficientCreditsMessage,
+  planTripCost,
   planTripRegenerateCost,
 } from "./credits";
 export type {
@@ -111,6 +110,8 @@ export type {
 export { getConfidenceLevel } from "./ai";
 export type {
   GetCityIntelligenceRequest,
+  GetCityIntelligenceBatchResult,
+  CityIntelligenceCityInput,
   CityIntelligenceResult,
   CityIntelligenceDetails,
   UsefulApp,
@@ -128,6 +129,7 @@ export type {
   TripPlace,
   TripDestination,
   TripDestinationStop,
+  TripStopType,
   TripCreateMode,
   SpendMoneyLevel,
   TripCurrency,
@@ -136,9 +138,8 @@ export type {
   PreparationCategory,
   PreparationItem,
   TripAccommodation,
+  TripFlightAirport,
   TripFlightEssential,
-  TripDocumentEssential,
-  TripEssentials,
   TripVisaStatus,
   TripVisaDetails,
   TripDocumentDetails,
@@ -153,9 +154,46 @@ export type {
   TripPlannerDoc,
   TripPlannerCreateInput,
   TripPlannerUpdateInput,
+  RoutePoint,
+  TripRouteTransport,
+  TripRouteStatus,
+  TripRouteInstant,
+  TripRouteAttachment,
+  TripRoute,
+  TripRouteCreateInput,
+  TripRouteUpdateInput,
   TripPlannerStep,
 } from "./trip-planner";
-export { SPEND_MONEY_LEVELS, SPEND_MONEY_OPTIONS } from "./trip-planner";
+export type {
+  TripPlannerAiStopType,
+  TripPlannerAiRequestTrip,
+  TripPlannerAiCityInfo,
+  TripPlannerAiRequestDestination,
+  TripPlannerAiSavedPlace,
+  TripPlannerAiSavedPlaceSource,
+  TripPlannerAiItineraryRoute,
+  TripPlannerAiRequestItineraryDay,
+  TripPlannerAiRequest,
+  TripPlannerAiResponseRouteSource,
+  TripPlannerAiResponseRoute,
+  TripPlannerAiResponseFreeTime,
+  TripPlannerAiResponseSavedPlaceRef,
+  TripPlannerAiResponseLocationPlace,
+  TripPlannerAiResponseNestedPlace,
+  TripPlannerAiResponsePlace,
+  TripPlannerAiResponseDay,
+  TripPlannerAiResponse,
+  FillTripPlannerAiPlacesRequest,
+  FillTripPlannerAiPlacesResult,
+  BuildTripPlannerAiRequestInput,
+} from "./trip-planner-ai-request";
+export {
+  SPEND_MONEY_LEVELS,
+  SPEND_MONEY_OPTIONS,
+  TRIP_STOP_TYPES,
+  TRIP_STOP_TYPE_OPTIONS,
+  TRIP_ROUTE_TRANSPORTS,
+} from "./trip-planner";
 export type {
   LeisureType,
   PlaceCategory,
@@ -164,11 +202,13 @@ export type {
   PlanTripRequest,
   PlannedPlaceSuggestion,
   PlannedDaySuggestion,
+  PlannedRouteSuggestion,
   PlanTripResult,
 } from "./trip-plan";
 export {
   LEISURE_TYPES,
   LEISURE_TYPE_OPTIONS,
+  LEISURE_CUSTOM_MAX_LENGTH,
   PLACE_CATEGORIES,
   PLACE_CATEGORY_LABELS,
 } from "./trip-plan";

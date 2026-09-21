@@ -3,10 +3,9 @@ import type { SpendMoneyLevel } from "@/types/trip-planner";
 import type {
   PreparationItem,
   TripAccommodation,
-  TripDocumentDetails,
-  TripFlightEssential,
   TripPlannerDoc,
   TripVisaDetails,
+  TripDocumentDetails,
 } from "@/types/trip-planner";
 import { resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts } from "@/lib/utils";
@@ -15,8 +14,27 @@ import {
   UMRAH_PREPARATION_ITEMS,
 } from "./umrahPreparation";
 import { officialVisaLink, parseHttpUrl } from "./preparationLinks";
+import { listTripDestinations } from "./tripDestinations";
+import { listTripAccommodations } from "./essentialsHelpers";
 
 const CUSTOM_PREFIX = "custom:";
+
+/** Minimal flight shape for preparation tips (from routes / legacy data). */
+type PrepFlight = {
+  routeLabel?: string;
+  fromCityName?: string;
+  toCityName?: string;
+  routeAirports?: Array<{ code?: string }>;
+  departure?: { code?: string };
+  arrival?: { code?: string };
+  departureAirport?: string;
+  arrivalAirport?: string;
+  departureAt?: string;
+  arrivalAt?: string;
+  airline?: string;
+  flightNumber?: string;
+  bookingLink?: string;
+};
 
 const SYSTEM_FIXED_IDS = new Set([
   "visa",
@@ -42,7 +60,7 @@ const LEGACY_TITLE_TO_ID: Record<string, string> = {
   "book your flight": "flight",
   "get travel insurance": "travel-insurance",
   "prepare local currency / payment": "money",
-  "download offline maps": "offline-maps",
+  //"download offline maps": "offline-maps",
   "pack for the weather": "pack-weather",
 };
 
@@ -67,8 +85,8 @@ export type PreparationBuildInput = {
   leisureType?: string;
   spendMoney?: SpendMoneyLevel;
   startDate?: Date;
-  cityIntelligence?: CityIntelligenceResult | null;
-  flights?: TripFlightEssential[];
+  cityIntelligenceResults?: CityIntelligenceResult[] | null;
+  flights?: PrepFlight[];
   accommodation?: TripAccommodation[];
   documents?: TripDocumentDetails | null;
   visa?: TripVisaDetails | null;
@@ -164,15 +182,11 @@ function withItemLink(
 function visaLinkForCountry(
   country: CountryGroup,
   saved?: TripVisaDetails | null,
-  intel?: PreparationBuildInput["cityIntelligence"]
+  _intel?: CityIntelligenceResult | null
 ): { url: string; label: string } | undefined {
   const savedLink = parseHttpUrl(saved?.applicationLink);
   if (savedLink) {
     return { url: savedLink, label: "Visa application" };
-  }
-  const sourceLink = parseHttpUrl(intel?.visaRequirements?.source);
-  if (sourceLink) {
-    return { url: sourceLink, label: "Official source" };
   }
   return officialVisaLink(country.countryId, country.countryName);
 }
@@ -222,13 +236,21 @@ export function spendMoneyCurrencyTip(
   );
 }
 
-function formatFlight(flight: TripFlightEssential): string {
-  const name = [flight.airline, flight.flightNumber].filter(Boolean).join(" ");
-  const route = [flight.departureAirport, flight.arrivalAirport]
-    .filter(Boolean)
-    .join(" → ");
+function formatFlight(flight: PrepFlight): string {
+  const route =
+    flight.routeLabel?.trim() ||
+    [flight.fromCityName, flight.toCityName].filter(Boolean).join(" → ");
+  const codes =
+    flight.routeAirports && flight.routeAirports.length > 0
+      ? flight.routeAirports.map((a) => a.code).filter(Boolean).join(" → ")
+      : [
+          flight.departure?.code || flight.departureAirport,
+          flight.arrival?.code || flight.arrivalAirport,
+        ]
+          .filter(Boolean)
+          .join(" → ");
   const when = flight.departureAt?.trim() || flight.arrivalAt?.trim() || "";
-  return [name, route, when].filter(Boolean).join(" · ");
+  return [route, codes, when].filter(Boolean).join(" · ");
 }
 
 function buildVisaItem(
@@ -238,13 +260,16 @@ function buildVisaItem(
 ): DraftItem {
   const deadline = beforeDeparture(input.startDate);
   const saved = isPrimaryIntelCountry ? input.visa : null;
-  const intel = isPrimaryIntelCountry ? input.cityIntelligence : null;
-  const visa = intel?.details?.visa;
+  const intelList = input.cityIntelligenceResults ?? [];
+  const intel =
+    intelList.find(
+      (entry) =>
+        entry.city &&
+        countryKey(entry.city.country, entry.city.countryId) ===
+          country.countryId
+    ) ?? (isPrimaryIntelCountry ? intelList[0] : null);
+  const visa = intel?.visa;
   const required = visa?.required;
-  const sourceText = intel?.visaRequirements?.source?.trim();
-  const sourceIsUrl = Boolean(
-    parseHttpUrl(intel?.visaRequirements?.source)
-  );
   const link = visaLinkForCountry(country, saved, intel);
 
   if (!isPrimaryIntelCountry && !saved) {
@@ -271,9 +296,8 @@ function buildVisaItem(
         title: "Visa not required",
         description: joinSentences(
           `No visa needed for ${country.countryName}.`,
-          intel?.visaRequirements?.summary &&
-            intel.visaRequirements.summary !== "Visa not required"
-            ? intel.visaRequirements.summary
+          visa?.description && visa.description !== "Visa not required"
+            ? visa.description
             : undefined
         ),
         category: "documents",
@@ -294,8 +318,7 @@ function buildVisaItem(
   const uncertain =
     required === "unknown" ||
     required == null ||
-    visa?.verificationRequired === true ||
-    intel?.visaRequirements?.requiresOfficialVerification === true;
+    visa?.verificationRequired === true;
 
   const title =
     required === true ||
@@ -305,8 +328,7 @@ function buildVisaItem(
       ? `Visa for ${country.countryName}`
       : `Check visa / entry requirements for ${country.countryName}`;
 
-  const summary =
-    intel?.visaRequirements?.summary || visa?.description || undefined;
+  const summary = visa?.description || undefined;
 
   return withItemLink(
     {
@@ -319,7 +341,6 @@ function buildVisaItem(
         uncertain
           ? "Verification with an official source is required — do not rely on this checklist alone."
           : undefined,
-        sourceText && !sourceIsUrl ? `Source: ${sourceText}.` : undefined,
         deadline
       ),
       category: "documents",
@@ -343,79 +364,70 @@ function buildSystemItems(input: PreparationBuildInput): DraftItem[] {
   const deadline = beforeDeparture(input.startDate);
   const docs = input.documents;
   const local = input.localDocs;
-  const intel = input.cityIntelligence;
+  const intelList = input.cityIntelligenceResults ?? [];
+  const intel = intelList[0];
   const paymentTip = intel?.details?.practicalInfo?.payment;
   const items: DraftItem[] = [];
 
-  const intelCountryName = intel?.details?.city?.country?.trim();
-  const intelCountryId = intelCountryName
-    ? countryKey(intelCountryName)
+  const intelCountryId = intel?.city
+    ? countryKey(intel.city.country, intel.city.countryId)
     : countries[0]?.countryId;
+  const allDomestic =
+    countries.length > 0 &&
+    countries.every((c) =>
+      sameCountryAsHome(c, input.fromCountry, input.fromCountryId)
+    );
 
-  if (countries.length === 0) {
+  if (!allDomestic) {
+    if (countries.length === 0) {
+      items.push({
+        id: "visa",
+        title: "Check visa / entry requirements",
+        description: joinSentences(
+          "Verify entry rules with official sources.",
+          deadline
+        ),
+        category: "documents",
+        completed: false,
+      });
+    } else {
+      for (const country of countries) {
+        if (sameCountryAsHome(country, input.fromCountry, input.fromCountryId)) {
+          continue;
+        }
+        const isPrimary =
+          country.countryId === (intelCountryId ?? countries[0]?.countryId);
+        items.push(buildVisaItem(country, input, isPrimary));
+      }
+    }
+
     items.push({
-      id: "visa",
-      title: "Check visa / entry requirements",
+      id: "passport",
+      title: "Check passport",
       description: joinSentences(
-        "Verify entry rules with official sources.",
+        cities
+          ? `Confirm your passport is ready for ${cities}.`
+          : "Confirm your passport is ready for this trip.",
         deadline
       ),
       category: "documents",
-      completed: false,
+      completed: Boolean(docs?.passportReady || local?.hasPassport),
     });
-  } else {
-    for (const country of countries) {
-      const domestic = sameCountryAsHome(
-        country,
-        input.fromCountry,
-        input.fromCountryId
-      );
-      if (domestic && countries.length === 1) {
-        items.push({
-          id: `visa:${country.countryId}`,
-          title: "Confirm domestic travel ID",
-          description: joinSentences(
-            `You're staying in ${country.countryName}. Confirm the ID you need for domestic travel.`,
-            deadline
-          ),
-          category: "documents",
-          completed: Boolean(docs?.idReady || local?.hasId),
-        });
-        continue;
-      }
-      if (domestic) continue;
-      const isPrimary =
-        country.countryId === (intelCountryId ?? countries[0]?.countryId);
-      items.push(buildVisaItem(country, input, isPrimary));
-    }
+
+    items.push({
+      id: "passport-validity",
+      title: "Check passport validity",
+      description: joinSentences(
+        "Many destinations need 6+ months remaining validity.",
+        deadline
+      ),
+      category: "documents",
+      completed: Boolean(
+        docs?.passportReady ||
+          (local?.hasPassport && local.passportValidForTrip)
+      ),
+    });
   }
-
-  items.push({
-    id: "passport",
-    title: "Check passport",
-    description: joinSentences(
-      cities
-        ? `Confirm your passport is ready for ${cities}.`
-        : "Confirm your passport is ready for this trip.",
-      deadline
-    ),
-    category: "documents",
-    completed: Boolean(docs?.passportReady || local?.hasPassport),
-  });
-
-  items.push({
-    id: "passport-validity",
-    title: "Check passport validity",
-    description: joinSentences(
-      "Many destinations need 6+ months remaining validity.",
-      deadline
-    ),
-    category: "documents",
-    completed: Boolean(
-      docs?.passportReady ||
-        (local?.hasPassport && local.passportValidForTrip)
-    ),
-  });
 
   items.push({
     id: "travel-documents",
@@ -441,6 +453,11 @@ function buildSystemItems(input: PreparationBuildInput): DraftItem[] {
 
   const flights = (input.flights ?? []).filter(
     (f) =>
+      f.routeLabel ||
+      f.fromCityName ||
+      f.toCityName ||
+      f.departure?.code ||
+      f.arrival?.code ||
       f.airline ||
       f.flightNumber ||
       f.departureAirport ||
@@ -448,11 +465,6 @@ function buildSystemItems(input: PreparationBuildInput): DraftItem[] {
       f.bookingLink ||
       f.departureAt
   );
-  const allDomestic =
-    countries.length > 0 &&
-    countries.every((c) =>
-      sameCountryAsHome(c, input.fromCountry, input.fromCountryId)
-    );
 
   if (flights.length > 0) {
     const details = flights.map(formatFlight).filter(Boolean).join("; ");
@@ -484,7 +496,6 @@ function buildSystemItems(input: PreparationBuildInput): DraftItem[] {
       ),
       category: "transport",
       completed: false,
-      derived: true,
     });
   }
 
@@ -521,17 +532,18 @@ function buildSystemItems(input: PreparationBuildInput): DraftItem[] {
       ),
       category: "booking",
       completed: false,
-      derived: true,
     });
   }
 
-  items.push({
-    id: "money",
-    title: "Prepare local currency / payment",
-    description: spendMoneyDescription(input.spendMoney, paymentTip),
-    category: "money",
-    completed: false,
-  });
+  if (!allDomestic) {
+    items.push({
+      id: "money",
+      title: "Prepare local currency / payment",
+      description: spendMoneyDescription(input.spendMoney, paymentTip),
+      category: "money",
+      completed: false,
+    });
+  }
 
   items.push({
     id: "offline-maps",
@@ -605,8 +617,11 @@ export function mergePreparationItems(
   const next: PreparationItem[] = generated.map((item, order) => {
     const prev = resolveExisting(existing, item.id, item.title);
     if (prev) used.add(prev.id);
+    // `derived` means the system asserts "done" (booked flight, visa approved,
+    // etc.). Incomplete system rows must not be derived, or a sync right after
+    // a user check would force completed back to false.
     const completed = item.derived
-      ? item.completed
+      ? true
       : Boolean(item.completed || prev?.completed);
     const merged: PreparationItem = {
       id: item.id,
@@ -625,6 +640,8 @@ export function mergePreparationItems(
   for (const item of existing) {
     if (used.has(item.id)) continue;
     if (generatedIds.has(item.id)) continue;
+    // Drop superseded system rows (e.g. visa/passport after a domestic trip).
+    if (SYSTEM_FIXED_IDS.has(item.id) || item.id.startsWith("visa:")) continue;
     if (LEGACY_TITLE_TO_ID[normalizeTitle(item.title)]) continue;
     next.push({
       ...item,
@@ -690,15 +707,9 @@ export function preparationInputFromTrip(
   trip: TripPlannerDoc,
   localDocs?: LocalDocSignals
 ): PreparationBuildInput {
-  const destinations =
-    trip.destinations && trip.destinations.length > 0
-      ? trip.destinations
-      : [trip.destination];
+  const destinations = listTripDestinations(trip);
 
-  const stays = [
-    ...(trip.tripEssentials?.accommodation ?? []),
-    ...(trip.preparation.accommodation ? [trip.preparation.accommodation] : []),
-  ];
+  const stays = listTripAccommodations(trip);
 
   return {
     destinations: destinations.map((d) => ({
@@ -711,8 +722,7 @@ export function preparationInputFromTrip(
     leisureType: trip.leisureType,
     spendMoney: trip.spendMoney,
     startDate: trip.startDate?.toDate?.(),
-    cityIntelligence: trip.cityIntelligence.result,
-    flights: trip.tripEssentials?.flights,
+    cityIntelligenceResults: trip.cityIntelligence.results,
     accommodation: stays,
     documents: trip.preparation.documents,
     visa: trip.preparation.visa,

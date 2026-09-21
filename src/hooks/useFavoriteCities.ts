@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  favoriteCityId,
   ensureFavoriteCities,
+  findFavoriteCity,
   removeFavoriteCity,
-  upsertFavoriteCity,
+  resolveFavoriteCityId,
   subscribeFavoriteCitiesCache,
+  upsertFavoriteCity,
 } from "@/services/favorite-cities";
 import {
   favoriteCitiesStore,
@@ -78,14 +79,9 @@ export function useFavoriteCities(userId: string | undefined) {
 
   const refresh = useCallback(
     async (options?: { hard?: boolean }) => {
-      if (!userId) {
-        setFavoriteCities([]);
-        setLoading(false);
-        return;
-      }
-
+      if (!userId) return;
       const hard = options?.hard === true;
-      if (hard) setLoading(true);
+      setLoading(true);
       setError(null);
       try {
         const state = await ensureFavoriteCities(userId, { hard });
@@ -102,9 +98,19 @@ export function useFavoriteCities(userId: string | undefined) {
   );
 
   const isFavorite = useCallback(
-    (cityName: string, country: string) => {
-      const id = favoriteCityId(cityName, country);
-      return favoriteCities.some((c) => c.cityId === id || c.id === id);
+    (
+      cityName: string,
+      country: string,
+      coords?: { lat: number; lon: number }
+    ) => {
+      return Boolean(
+        findFavoriteCity(favoriteCities, {
+          cityName,
+          country,
+          lat: coords?.lat,
+          lon: coords?.lon,
+        })
+      );
     },
     [favoriteCities]
   );
@@ -118,7 +124,12 @@ export function useFavoriteCities(userId: string | undefined) {
       status?: LocationStatus;
     }) => {
       if (!userId) throw new Error("Not signed in.");
-      const cityId = favoriteCityId(input.cityName, input.country);
+      const cityId = await resolveFavoriteCityId(input);
+      if (!cityId) {
+        throw new Error(
+          "Could not resolve English city/country ids for this place. Try again."
+        );
+      }
       const payload: FavoriteCityCreateInput = {
         cityId,
         cityName: input.cityName.trim(),
@@ -135,12 +146,33 @@ export function useFavoriteCities(userId: string | undefined) {
   );
 
   const removeFavorite = useCallback(
-    async (cityName: string, country: string) => {
+    async (
+      cityName: string,
+      country: string,
+      coords?: { lat: number; lon: number }
+    ) => {
       if (!userId) throw new Error("Not signed in.");
-      const cityId = favoriteCityId(cityName, country);
+      const existing = findFavoriteCity(favoriteCities, {
+        cityName,
+        country,
+        lat: coords?.lat,
+        lon: coords?.lon,
+      });
+      const cityId =
+        existing?.cityId ||
+        existing?.id ||
+        (await resolveFavoriteCityId({
+          cityName,
+          country,
+          lat: coords?.lat ?? existing?.lat ?? 0,
+          lon: coords?.lon ?? existing?.lon ?? 0,
+        }));
+      if (!cityId) {
+        throw new Error("Could not find this saved city to remove.");
+      }
       await removeFavoriteCity(userId, cityId);
     },
-    [userId]
+    [userId, favoriteCities]
   );
 
   const toggleFavorite = useCallback(
@@ -151,8 +183,16 @@ export function useFavoriteCities(userId: string | undefined) {
       lon: number;
       status?: LocationStatus;
     }) => {
-      if (isFavorite(input.cityName, input.country)) {
-        await removeFavorite(input.cityName, input.country);
+      if (
+        isFavorite(input.cityName, input.country, {
+          lat: input.lat,
+          lon: input.lon,
+        })
+      ) {
+        await removeFavorite(input.cityName, input.country, {
+          lat: input.lat,
+          lon: input.lon,
+        });
         return false;
       }
       await addFavorite(input);

@@ -216,7 +216,7 @@ export function TripPlannerSection() {
             </svg>
           </p>
 
-          <div className="relative z-10 flex flex-col gap-4 rounded-2xl border border-border bg-white/95 p-4 shadow-[0_16px_40px_rgba(17,24,39,0.12)] backdrop-blur-sm sm:p-5">
+          <div className="relative z-10 flex flex-col gap-4 rounded-2xl border border-border p-4 backdrop-blur-sm sm:p-5">
             <div className="min-w-0">
               <h3 className="text-lg font-semibold tracking-tight text-text sm:text-xl">
                 Places &amp; Itinerary

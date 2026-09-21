@@ -10,11 +10,14 @@ import {
   type DateRangeValue,
 } from "@/components/ui";
 import {
+  CalendarDays,
   CircleDollarSign,
   Compass,
   MapPin,
   Plane,
   Plus,
+  Route,
+  Sparkles,
   Tag,
   Wallet,
   X,
@@ -24,13 +27,18 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type { UserProfile } from "@/types/user";
 import {
+  MAX_TRIP_DAYS,
+  MAX_TRIP_DESTINATIONS,
   SPEND_MONEY_OPTIONS,
+  TRIP_STOP_TYPE_OPTIONS,
   type SpendMoneyLevel,
   type TripCreateMode,
   type TripDestination,
   type TripDestinationStop,
+  type TripStopType,
 } from "@/types/trip-planner";
 import {
+  LEISURE_CUSTOM_MAX_LENGTH,
   LEISURE_TYPES,
   LEISURE_TYPE_OPTIONS,
   type LeisureType,
@@ -42,19 +50,16 @@ import {
   reverseGeocode,
   resolveEnglishPlaceIds,
   resolveEnglishPlaceIdsFromAddress,
+  englishPlaceIdsFromNames,
+  resolveTimezoneFromCoords,
+  geocodeByAddress,
 } from "@/lib/maps";
 import type { EnglishPlaceIds } from "@/lib/maps";
 import {
   createTrip,
-  deleteTrip,
   timestampFromDate,
+  tripDayCount,
 } from "@/services/trip-planner";
-import { chargeCreateTrip } from "@/services/functions";
-import {
-  AI_CREDIT_COSTS,
-  formatInsufficientCreditsMessage,
-  isInsufficientAICreditsError,
-} from "@/types/credits";
 import { buildDefaultPreparationItems } from "./buildPreparation";
 import {
   autocompleteDestinations,
@@ -72,6 +77,7 @@ import {
   type CityGroupOption,
   type DestinationMode,
 } from "./CreateTripDestinationPicker";
+import { isSaudiArabiaCountry } from "./tripDestinations";
 
 interface CreateTripSheetProps {
   open: boolean;
@@ -87,12 +93,34 @@ type DestDraft = {
   place: GeocodedPlace;
   savedKey: string | null;
   dateRange: DateRangeValue;
+  stopType: TripStopType;
 };
 
-const CREATE_MODE_TABS: Array<{ id: TripCreateMode; label: string }> = [
-  { id: "ordinary", label: "Ordinary" },
-  { id: "advanced", label: "Advanced" },
+const CREATE_MODE_TABS: Array<{
+  id: TripCreateMode;
+  label: string;
+  hint: string;
+  icon: typeof MapPin;
+}> = [
+  {
+    id: "ordinary",
+    label: "Ordinary",
+    hint: "One city",
+    icon: MapPin,
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    hint: "Multi-stop",
+    icon: Route,
+  },
 ];
+
+const SPEND_HINTS: Record<SpendMoneyLevel, string> = {
+  low: "Budget-friendly",
+  medium: "Balanced",
+  high: "Comfort first",
+};
 
 function newDestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `d-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -246,6 +274,10 @@ function CreateTripForm({
   const [destination, setDestination] = useState<GeocodedPlace | null>(null);
   const [destinations, setDestinations] = useState<DestDraft[]>([]);
   const [addingDestination, setAddingDestination] = useState(true);
+  /** Required before adding a city in advanced mode. */
+  const [pendingStopType, setPendingStopType] = useState<TripStopType | null>(
+    null
+  );
   const [openCityDateId, setOpenCityDateId] = useState<string | null>(null);
   const [fromValue, setFromValue] = useState(() => {
     const city = profile?.city?.trim() ?? "";
@@ -257,6 +289,7 @@ function CreateTripForm({
     () => resolveCurrencyCode(profile?.currency) || "USD"
   );
   const [leisureType, setLeisureType] = useState<LeisureType>("mixed");
+  const [leisureCustom, setLeisureCustom] = useState("");
   const [spendMoney, setSpendMoney] = useState<SpendMoneyLevel>("medium");
   const [tripName, setTripName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -264,15 +297,11 @@ function CreateTripForm({
   const [nameTouched, setNameTouched] = useState(false);
   const [mapResolving, setMapResolving] = useState(false);
 
+  const atDestinationLimit = destinations.length >= MAX_TRIP_DESTINATIONS;
   const showAdvancedPicker =
     createMode === "advanced" &&
+    !atDestinationLimit &&
     (addingDestination || destinations.length === 0);
-  const createCost =
-    createMode === "advanced"
-      ? AI_CREDIT_COSTS.createTripAdvanced
-      : AI_CREDIT_COSTS.createTripOrdinary;
-  const aiCreditsBalance = profile?.aiCreditsBalance ?? 0;
-
   useEffect(() => {
     const pickerOpen =
       createMode === "ordinary" || showAdvancedPicker;
@@ -311,15 +340,39 @@ function CreateTripForm({
     []
   );
 
+  const hasSaudiDestination = useMemo(() => {
+    if (createMode === "ordinary") {
+      if (!destination) return false;
+      return isSaudiArabiaCountry({
+        countryCode: destination.countryCode,
+        countryName: destination.countryName,
+      });
+    }
+    return destinations.some((item) =>
+      isSaudiArabiaCountry({
+        countryCode: item.place.countryCode,
+        countryName: item.place.countryName,
+      })
+    );
+  }, [createMode, destination, destinations]);
+
   const leisureOptions = useMemo(
     () =>
-      LEISURE_TYPE_OPTIONS.map((option) => ({
+      LEISURE_TYPE_OPTIONS.filter(
+        (option) => option.value !== "umrah" || hasSaudiDestination
+      ).map((option) => ({
         value: option.value,
         label: option.label,
         description: option.description,
       })),
-    []
+    [hasSaudiDestination]
   );
+
+  useEffect(() => {
+    if (leisureType === "umrah" && !hasSaudiDestination) {
+      setLeisureType("mixed");
+    }
+  }, [leisureType, hasSaudiDestination]);
 
   const destinationGroups = useMemo(
     () => groupDestinationsByCountry(destinations),
@@ -340,7 +393,7 @@ function CreateTripForm({
     savedKey?: string | null
   ) {
     applyOrdinaryDestination(place, savedKey);
-    const photos = await fetchDestinationPhotos(place);
+    const photos = (await fetchDestinationPhotos(place)).slice(0, 1);
     if (photos.length === 0) return;
     setDestination((prev) => {
       if (!prev) return prev;
@@ -357,6 +410,17 @@ function CreateTripForm({
   }
 
   function addAdvancedDestination(place: GeocodedPlace, savedKey?: string | null) {
+    if (!pendingStopType) {
+      setError("Choose Destination or Transit before adding a city.");
+      return;
+    }
+    if (destinations.length >= MAX_TRIP_DESTINATIONS) {
+      setError(
+        `You can add up to ${MAX_TRIP_DESTINATIONS} cities (destinations and transit).`
+      );
+      return;
+    }
+
     const fingerprint = placeFingerprint(place);
     if (destinations.some((d) => placeFingerprint(d.place) === fingerprint)) {
       setError("That city is already added.");
@@ -371,10 +435,12 @@ function CreateTripForm({
         place,
         savedKey: savedKey ?? null,
         dateRange: {},
+        stopType: pendingStopType,
       },
     ];
     setDestinations(next);
     setAddingDestination(false);
+    setPendingStopType(null);
     setSearchQuery("");
     setSearchResults([]);
     setError(null);
@@ -384,10 +450,11 @@ function CreateTripForm({
 
     if (!place.photos?.length && savedKey == null) {
       void fetchDestinationPhotos(place).then((photos) => {
-        if (photos.length === 0) return;
+        const one = photos.slice(0, 1);
+        if (one.length === 0) return;
         setDestinations((prev) =>
           prev.map((d) =>
-            d.id === id ? { ...d, place: { ...d.place, photos } } : d
+            d.id === id ? { ...d, place: { ...d.place, photos: one } } : d
           )
         );
       });
@@ -462,11 +529,14 @@ function CreateTripForm({
             place: destination,
             savedKey: selectedSavedKey,
             dateRange: {},
+            stopType: "destination",
           },
         ]);
         setAddingDestination(false);
+        setPendingStopType(null);
       } else if (destinations.length === 0) {
         setAddingDestination(true);
+        setPendingStopType(null);
       }
     } else if (!destination && destinations[0]) {
       applyOrdinaryDestination(
@@ -506,6 +576,13 @@ function CreateTripForm({
     fromCity: string,
     fromCountry: string
   ): Promise<EnglishPlaceIds | null> {
+    const fromNames = englishPlaceIdsFromNames(
+      fromCity,
+      fromCountry,
+      resolveCountryCode(fromCountry) || undefined
+    );
+    if (fromNames) return fromNames;
+
     if (
       typeof profile?.lat === "number" &&
       typeof profile?.lon === "number" &&
@@ -542,6 +619,13 @@ function CreateTripForm({
       };
     }
 
+    const fromNames = englishPlaceIdsFromNames(
+      place.cityName,
+      place.countryName,
+      place.countryCode || resolveCountryCode(place.countryName) || undefined
+    );
+    if (fromNames) return fromNames;
+
     if (
       typeof place.lat === "number" &&
       typeof place.lon === "number" &&
@@ -555,6 +639,43 @@ function CreateTripForm({
     return resolveEnglishPlaceIdsFromAddress(
       [place.cityName, place.countryName].filter(Boolean).join(", ")
     );
+  }
+
+  async function resolveCoordsForLabel(
+    label: string
+  ): Promise<{ lat: number; lon: number } | null> {
+    const trimmed = label.trim();
+    if (!trimmed) return null;
+    try {
+      const results = await geocodeByAddress(trimmed, { language: "en" });
+      const location = results[0]?.geometry?.location;
+      if (!location) return null;
+      const lat = location.lat();
+      const lon = location.lng();
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+      return { lat, lon };
+    } catch {
+      return null;
+    }
+  }
+
+  async function resolveTimezoneForCoords(
+    lat?: number,
+    lon?: number
+  ): Promise<string | undefined> {
+    if (
+      typeof lat !== "number" ||
+      typeof lon !== "number" ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon)
+    ) {
+      return undefined;
+    }
+    try {
+      return (await resolveTimezoneFromCoords(lat, lon))?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async function buildDestinationPayload(
@@ -584,18 +705,33 @@ function CreateTripForm({
 
     if (!isAsciiId(destCountryId) || !destCityId) return null;
 
-    const photos = place.photos ?? [];
+    const photos = (place.photos ?? []).slice(0, 1);
+    let lat =
+      typeof place.lat === "number" && Number.isFinite(place.lat)
+        ? place.lat
+        : undefined;
+    let lon =
+      typeof place.lon === "number" && Number.isFinite(place.lon)
+        ? place.lon
+        : undefined;
+    if (lat == null || lon == null) {
+      const geocoded = await resolveCoordsForLabel(
+        [place.cityName, place.countryName].filter(Boolean).join(", ")
+      );
+      if (geocoded) {
+        lat = geocoded.lat;
+        lon = geocoded.lon;
+      }
+    }
+    const timezone = await resolveTimezoneForCoords(lat, lon);
+
     return {
       cityName: place.cityName,
       cityId: destCityId,
       countryName: place.countryName,
       countryId: destCountryId,
-      ...(typeof place.lat === "number" && Number.isFinite(place.lat)
-        ? { lat: place.lat }
-        : {}),
-      ...(typeof place.lon === "number" && Number.isFinite(place.lon)
-        ? { lon: place.lon }
-        : {}),
+      ...(lat != null && lon != null ? { lat, lon } : {}),
+      ...(timezone ? { timezone } : {}),
       ...(photos.length ? { photos } : {}),
     };
   }
@@ -624,6 +760,7 @@ function CreateTripForm({
                 place: destination,
                 savedKey: selectedSavedKey,
                 dateRange: {},
+                stopType: "destination",
               },
             ]
           : [];
@@ -636,6 +773,22 @@ function CreateTripForm({
       );
       return;
     }
+    if (
+      createMode === "advanced" &&
+      selectedPlaces.length > MAX_TRIP_DESTINATIONS
+    ) {
+      setError(
+        `You can add up to ${MAX_TRIP_DESTINATIONS} cities (destinations and transit).`
+      );
+      return;
+    }
+    if (
+      createMode === "advanced" &&
+      selectedPlaces.some((item) => !item.stopType)
+    ) {
+      setError("Each city needs a type: Destination or Transit.");
+      return;
+    }
     if (!dateRange.from || !dateRange.to) {
       setError("Select start and end dates.");
       return;
@@ -644,8 +797,21 @@ function CreateTripForm({
       setError("End date must be after start date.");
       return;
     }
+    if (
+      tripDayCount(
+        timestampFromDate(dateRange.from),
+        timestampFromDate(dateRange.to)
+      ) > MAX_TRIP_DAYS
+    ) {
+      setError(`Trip can be at most ${MAX_TRIP_DAYS} days.`);
+      return;
+    }
     if (!currencyCode) {
       setError("Select a currency.");
+      return;
+    }
+    if (leisureType === "custom" && !leisureCustom.trim()) {
+      setError("Describe the activities you want for Custom leisure.");
       return;
     }
 
@@ -677,13 +843,6 @@ function CreateTripForm({
       return;
     }
 
-    if (aiCreditsBalance < createCost) {
-      setError(
-        `Not enough AI credits. Need ${createCost}, you have ${aiCreditsBalance}.`
-      );
-      return;
-    }
-
     const name =
       tripName.trim() ||
       suggestTripName(selectedPlaces.map((d) => d.place));
@@ -701,7 +860,7 @@ function CreateTripForm({
             (!place.photos || place.photos.length === 0) &&
             item.savedKey == null
           ) {
-            const photos = await fetchDestinationPhotos(place);
+            const photos = (await fetchDestinationPhotos(place)).slice(0, 1);
             if (photos.length > 0) place = { ...place, photos };
           }
           const savedCity =
@@ -726,11 +885,28 @@ function CreateTripForm({
         const to = row.item.dateRange.to;
         return {
           ...base,
+          stopType: row.item.stopType,
           ...(from ? { startDate: timestampFromDate(from) } : {}),
           ...(to ? { endDate: timestampFromDate(to) } : {}),
         };
       });
-      const primary = destinationStops[0]!;
+      if (
+        createMode === "advanced" &&
+        destinationStops.some((stop) => !stop.stopType)
+      ) {
+        setError("Each city needs a type: Destination or Transit.");
+        return;
+      }
+      if (
+        createMode === "advanced" &&
+        !destinationStops.some((stop) => stop.stopType === "destination")
+      ) {
+        setError("Add at least one Destination city (not only Transit).");
+        return;
+      }
+      const primary =
+        destinationStops.find((stop) => stop.stopType === "destination") ??
+        destinationStops[0]!;
 
       const englishFromIds = await resolveFromIds(
         fromCity.trim(),
@@ -764,6 +940,25 @@ function CreateTripForm({
         return;
       }
 
+      let fromLat =
+        typeof profile?.lat === "number" && Number.isFinite(profile.lat)
+          ? profile.lat
+          : undefined;
+      let fromLon =
+        typeof profile?.lon === "number" && Number.isFinite(profile.lon)
+          ? profile.lon
+          : undefined;
+      if (fromLat == null || fromLon == null) {
+        const geocoded = await resolveCoordsForLabel(
+          [fromCityName, fromCountry.trim()].filter(Boolean).join(", ")
+        );
+        if (geocoded) {
+          fromLat = geocoded.lat;
+          fromLon = geocoded.lon;
+        }
+      }
+      const fromTimezone = await resolveTimezoneForCoords(fromLat, fromLon);
+
       const preparationItems = buildDefaultPreparationItems({
         destinations: destinationStops.map((stop) => ({
           cityName: stop.cityName,
@@ -794,19 +989,12 @@ function CreateTripForm({
           countryId: fromCountryId,
           cityName: fromCityName || undefined,
           ...(fromCityId ? { cityId: fromCityId } : {}),
-          lat: profile?.lat,
-          lon: profile?.lon,
+          ...(fromLat != null && fromLon != null
+            ? { lat: fromLat, lon: fromLon }
+            : {}),
+          ...(fromTimezone ? { timezone: fromTimezone } : {}),
         },
-        destination: {
-          cityName: primary.cityName,
-          cityId: primary.cityId,
-          countryName: primary.countryName,
-          countryId: primary.countryId,
-          ...(typeof primary.lat === "number" ? { lat: primary.lat } : {}),
-          ...(typeof primary.lon === "number" ? { lon: primary.lon } : {}),
-          ...(primary.photos?.length ? { photos: primary.photos } : {}),
-        },
-        ...(createMode === "advanced" ? { destinations: destinationStops } : {}),
+        destinations: destinationStops,
         startDate,
         endDate,
         status: "planning",
@@ -816,35 +1004,26 @@ function CreateTripForm({
           symbol: currencySymbolForCode(currencyCode),
         },
         leisureType,
+        ...(leisureType === "custom" && leisureCustom.trim()
+          ? {
+              leisureCustom: leisureCustom
+                .trim()
+                .slice(0, LEISURE_CUSTOM_MAX_LENGTH),
+            }
+          : {}),
         spendMoney,
         createMode,
         preparation: { items: preparationItems },
-        tripEssentials: { flights: [], accommodation: [], documents: [] },
         savedPlaceIds: matchingPlaceIds,
         cityIntelligence: { status: "pending" },
         itinerary: { status: "empty", days: [] },
       });
 
-      try {
-        await chargeCreateTrip({ tripId, mode: createMode });
-      } catch (chargeErr) {
-        try {
-          await deleteTrip(userId, tripId);
-        } catch {
-          // Trip remains; chargeCreateTrip is idempotent on retry.
-        }
-        throw chargeErr;
-      }
-
       onCreated?.(tripId);
       onClose();
       router.push(`/trip-planner/${tripId}?step=preparation&new=1`);
     } catch (err) {
-      if (isInsufficientAICreditsError(err)) {
-        setError(formatInsufficientCreditsMessage(err));
-      } else {
-        setError(err instanceof Error ? err.message : "Could not create trip.");
-      }
+      setError(err instanceof Error ? err.message : "Could not create trip.");
     } finally {
       setSaving(false);
     }
@@ -880,106 +1059,148 @@ function CreateTripForm({
     />
   );
 
+  const ordinaryCountryCode =
+    destination?.countryCode?.trim() ||
+    (destination
+      ? resolveCountryCode(destination.countryName) || ""
+      : "");
+  const ordinaryFlag = ordinaryCountryCode
+    ? getFlagEmoji(ordinaryCountryCode)
+    : "";
+  const ordinaryPhoto = destination?.photos?.[0];
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="relative shrink-0 border-b border-divider px-5 pb-4 pt-5">
+      <div className="relative shrink-0 overflow-hidden border-b border-divider px-5 pb-5 pt-5">
+        <div
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--color-primary-tint)_0%,_transparent_55%)]"
+          aria-hidden
+        />
         <button
           type="button"
           aria-label="Close"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-lg p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text"
+          className="absolute right-4 top-4 z-10 rounded-full p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text"
         >
           <X className="h-5 w-5" />
         </button>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-          Create a new trip
-        </p>
-        <h2 className="mt-1.5 pr-10 text-2xl font-semibold tracking-tight text-text">
-          Where are you going?
-        </h2>
-        <p className="mt-1.5 max-w-md text-sm text-text-secondary">
-          Add a few details to create your trip and start planning.
-        </p>
-        <div
-          role="tablist"
-          aria-label="Create trip mode"
-          className="mt-4 flex gap-1 rounded-full bg-surface p-1"
-        >
-          {CREATE_MODE_TABS.map((item) => {
-            const selected = createMode === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => switchCreateMode(item.id)}
-                className={cx(
-                  "flex-1 rounded-full px-3 py-2 text-sm font-medium transition-colors",
-                  selected
-                    ? "bg-surface-elevated text-text shadow-sm"
-                    : "text-text-secondary hover:text-text"
-                )}
-              >
-                {item.label}
-              </button>
-            );
-          })}
+        <div className="relative">
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-tint px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
+            <Sparkles className="h-3 w-3" aria-hidden />
+            New trip
+          </div>
+          <h2 className="mt-3 pr-10 font-[family-name:var(--font-lobster)] text-3xl tracking-tight text-text">
+            Where are you going?
+          </h2>
+          <p className="mt-1.5 max-w-md text-sm leading-relaxed text-text-secondary">
+            Pick your places, dates, and style — then let planning begin.
+          </p>
+          <div
+            role="tablist"
+            aria-label="Create trip mode"
+            className="mt-4 grid grid-cols-2 gap-2"
+          >
+            {CREATE_MODE_TABS.map((item) => {
+              const selected = createMode === item.id;
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => switchCreateMode(item.id)}
+                  className={cx(
+                    "flex items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition-all",
+                    selected
+                      ? "border-primary bg-primary-tint shadow-sm ring-1 ring-primary/20"
+                      : "border-border bg-surface-elevated hover:border-primary/30"
+                  )}
+                >
+                  <span
+                    className={cx(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
+                      selected
+                        ? "bg-primary text-white"
+                        : "bg-surface text-text-muted"
+                    )}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0">
+                    <span
+                      className={cx(
+                        "block text-sm font-semibold",
+                        selected ? "text-primary" : "text-text"
+                      )}
+                    >
+                      {item.label}
+                    </span>
+                    <span className="block text-[11px] text-text-muted">
+                      {item.hint}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        <section>
-          <FieldLabel icon={Tag} required>
-            Trip name
-          </FieldLabel>
-          <div className="relative mt-2">
-            <TextInput
-              value={tripName}
-              onChange={(e) => {
-                setNameTouched(true);
-                setTripName(e.target.value);
-              }}
-              placeholder="Istanbul Trip"
-              className="!pr-9"
-            />
-            {tripName ? (
-              <button
-                type="button"
-                aria-label="Clear trip name"
-                onClick={() => {
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
+        <section className="space-y-4">
+          <section>
+            <FieldLabel icon={Tag} required>
+              Trip name
+            </FieldLabel>
+            <div className="relative mt-2">
+              <TextInput
+                value={tripName}
+                onChange={(e) => {
                   setNameTouched(true);
-                  setTripName("");
+                  setTripName(e.target.value);
                 }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-        </section>
+                placeholder="Istanbul Trip"
+                className="!pr-9"
+              />
+              {tripName ? (
+                <button
+                  type="button"
+                  aria-label="Clear trip name"
+                  onClick={() => {
+                    setNameTouched(true);
+                    setTripName("");
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          </section>
 
-        <section>
-          <FieldLabel icon={Plane}>From</FieldLabel>
-          <div className="relative mt-2">
-            <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <TextInput
-              value={fromValue}
-              onChange={(e) => setFromValue(e.target.value)}
-              placeholder="City, Country"
-              className="!pl-9 !pr-9"
-            />
-            {fromValue ? (
-              <button
-                type="button"
-                aria-label="Clear from"
-                onClick={() => setFromValue("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
+          <section>
+            <FieldLabel icon={Plane}>From</FieldLabel>
+            <div className="relative mt-2">
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted p-2 border-1 border-accent" />
+              <TextInput
+                value={fromValue}
+                onChange={(e) => setFromValue(e.target.value)}
+                placeholder="City, Country"
+                className="!pl-9 !pr-9"
+              />
+              {fromValue ? (
+                <button
+                  type="button"
+                  aria-label="Clear from"
+                  onClick={() => setFromValue("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          </section>
         </section>
 
         {createMode === "ordinary" ? (
@@ -987,13 +1208,64 @@ function CreateTripForm({
             <FieldLabel icon={MapPin} required>
               Destination
             </FieldLabel>
-            {picker}
+            {destination ? (
+              <div className="relative mt-2 overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm">
+                <div className="relative aspect-[2.2/1] bg-surface">
+                  {ordinaryPhoto ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={ordinaryPhoto}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary-tint to-surface">
+                      <MapPin className="h-8 w-8 text-primary/50" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-lg font-semibold text-white drop-shadow-sm">
+                        {ordinaryFlag ? `${ordinaryFlag} ` : ""}
+                        {destination.cityName}
+                      </p>
+                      <p className="truncate text-sm text-white/85">
+                        {destination.countryName}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Change destination"
+                      onClick={() => {
+                        setDestination(null);
+                        setSelectedSavedKey(null);
+                        setSearchQuery("");
+                        setSearchResults([]);
+                      }}
+                      className="shrink-0 rounded-full bg-white/95 px-3 py-1.5 text-xs font-medium text-text shadow-sm backdrop-blur-sm hover:bg-white"
+                    >
+                      Change
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              picker
+            )}
           </section>
         ) : (
           <section>
-            <FieldLabel icon={MapPin} required>
-              Destinations
-            </FieldLabel>
+            <div className="flex items-end justify-between gap-3">
+              <FieldLabel icon={MapPin} required>
+                Destinations
+              </FieldLabel>
+              {destinations.length > 0 ? (
+                <p className="text-[11px] font-medium text-text-muted">
+                  {destinations.length}/{MAX_TRIP_DESTINATIONS}
+                </p>
+              ) : null}
+            </div>
             {destinationGroups.length > 0 ? (
               <div className="mt-2 space-y-3">
                 {destinationGroups.map((group) => {
@@ -1003,27 +1275,94 @@ function CreateTripForm({
                   return (
                     <div
                       key={group.countryKey}
-                      className="rounded-2xl border border-border bg-surface-elevated px-3 py-3"
+                      className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm"
                     >
-                      <p className="text-sm font-semibold text-text">
-                        {flag ? `${flag} ` : ""}
-                        {group.countryName}
-                      </p>
-                      <ul className="mt-2 space-y-2 pl-2">
+                      <div className="flex items-center gap-2 border-b border-divider bg-surface/80 px-3.5 py-2.5">
+                        {flag ? (
+                          <span className="text-base leading-none" aria-hidden>
+                            {flag}
+                          </span>
+                        ) : (
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-surface-elevated text-text-muted ring-1 ring-border/70">
+                            <MapPin className="h-3.5 w-3.5" aria-hidden />
+                          </span>
+                        )}
+                        <p className="text-sm font-semibold text-text">
+                          {group.countryName}
+                        </p>
+                        <span className="ml-auto rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted ring-1 ring-border/70">
+                          {group.cities.length}{" "}
+                          {group.cities.length === 1 ? "city" : "cities"}
+                        </span>
+                      </div>
+                      <ul className="divide-y divide-divider">
                         {group.cities.map((city) => {
                           const datesLabel = formatCityDates(city.dateRange);
                           const datesSet = Boolean(
                             city.dateRange.from && city.dateRange.to
                           );
                           const dateOpen = openCityDateId === city.id;
+                          const thumb = city.place.photos?.[0];
+                          const stopOrder =
+                            destinations.findIndex((d) => d.id === city.id) + 1;
                           return (
-                            <li key={city.id}>
-                              <div className="flex items-start gap-2">
+                            <li key={city.id} className="px-3 py-3">
+                              <div className="flex items-start gap-3">
+                                <div className="relative mt-0.5 h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-primary-tint ring-1 ring-border/60">
+                                  {thumb ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={thumb}
+                                      alt=""
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <MapPin className="absolute inset-0 m-auto h-4 w-4 text-primary/60" />
+                                  )}
+                                  <span className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-text text-[10px] font-semibold text-white shadow-sm">
+                                    {stopOrder}
+                                  </span>
+                                </div>
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate text-sm text-text">
+                                  <p className="truncate text-sm font-semibold text-text">
                                     {city.place.cityName}
                                   </p>
-                                  <div className="mt-0.5 flex items-center gap-1">
+                                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                    {TRIP_STOP_TYPE_OPTIONS.map((option) => {
+                                      const selected =
+                                        city.stopType === option.id;
+                                      return (
+                                        <button
+                                          key={option.id}
+                                          type="button"
+                                          aria-label={`${city.place.cityName}: ${option.label}`}
+                                          onClick={() =>
+                                            setDestinations((prev) =>
+                                              prev.map((d) =>
+                                                d.id === city.id
+                                                  ? {
+                                                      ...d,
+                                                      stopType: option.id,
+                                                    }
+                                                  : d
+                                              )
+                                            )
+                                          }
+                                          className={cx(
+                                            "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                            selected
+                                              ? option.id === "transit"
+                                                ? "bg-text text-white"
+                                                : "bg-primary text-white"
+                                              : "bg-surface text-text-secondary hover:bg-divider hover:text-text"
+                                          )}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="mt-2 flex items-center gap-1.5">
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -1032,12 +1371,13 @@ function CreateTripForm({
                                         )
                                       }
                                       className={cx(
-                                        "text-xs",
+                                        "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors",
                                         datesSet
-                                          ? "text-text-secondary hover:text-text"
-                                          : "text-text-muted hover:text-text-secondary"
+                                          ? "bg-surface text-text-secondary hover:text-text"
+                                          : "text-text-muted hover:bg-surface hover:text-text-secondary"
                                       )}
                                     >
+                                      <CalendarDays className="h-3 w-3" />
                                       {datesLabel}
                                     </button>
                                     {datesSet ? (
@@ -1064,18 +1404,19 @@ function CreateTripForm({
                                   type="button"
                                   aria-label={`Remove ${city.place.cityName}`}
                                   onClick={() => removeDestination(city.id)}
-                                  className="rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+                                  className="rounded-full p-1.5 text-text-muted hover:bg-error-background hover:text-error"
                                 >
                                   <X className="h-3.5 w-3.5" />
                                 </button>
                               </div>
                               {dateOpen ? (
-                                <div className="mt-2">
+                                <div className="mt-3 rounded-xl border border-border bg-surface p-2">
                                   <DateRangePicker
                                     key={`${city.id}-${city.dateRange.from?.getTime() ?? 0}-${city.dateRange.to?.getTime() ?? 0}`}
                                     value={city.dateRange}
                                     disabled={saving}
                                     minDate={dateRange.from ?? null}
+                                    maxSpanDays={MAX_TRIP_DAYS}
                                     onCancel={() => setOpenCityDateId(null)}
                                     onApply={(next) => {
                                       setDestinations((prev) =>
@@ -1103,32 +1444,90 @@ function CreateTripForm({
             {showAdvancedPicker ? (
               <div
                 className={cx(
-                  destinations.length > 0 &&
-                    "mt-3 rounded-2xl border border-border px-3 pb-3 pt-2"
+                  "mt-3 rounded-2xl border border-dashed border-primary/25 bg-primary-tint/40 px-3 pb-3 pt-2.5",
+                  destinations.length === 0 && "mt-2 border-solid bg-surface"
                 )}
               >
                 {destinations.length > 0 ? (
-                  <div className="mb-1 flex justify-end">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-primary">
+                      Add another city
+                    </p>
                     <button
                       type="button"
-                      onClick={() => setAddingDestination(false)}
+                      onClick={() => {
+                        setAddingDestination(false);
+                        setPendingStopType(null);
+                      }}
                       className="text-xs font-medium text-text-secondary hover:text-text"
                     >
                       Cancel
                     </button>
                   </div>
                 ) : null}
-                {picker}
+
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-text-secondary">
+                    City type <span className="text-error">*</span>
+                  </p>
+                  <div className="mt-1.5 grid grid-cols-2 gap-2">
+                    {TRIP_STOP_TYPE_OPTIONS.map((option) => {
+                      const selected = pendingStopType === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            setPendingStopType(option.id);
+                            setError(null);
+                          }}
+                          className={cx(
+                            "rounded-xl border px-3 py-2.5 text-left transition-all",
+                            selected
+                              ? "border-primary bg-surface-elevated text-primary shadow-sm ring-1 ring-primary/15"
+                              : "border-border bg-surface-elevated text-text hover:border-primary/30"
+                          )}
+                        >
+                          <span className="block text-sm font-medium">
+                            {option.label}
+                          </span>
+                          <span
+                            className={cx(
+                              "mt-0.5 block text-[11px] leading-snug",
+                              selected ? "text-primary/80" : "text-text-muted"
+                            )}
+                          >
+                            {option.description}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {pendingStopType ? (
+                  picker
+                ) : (
+                  <p className="rounded-xl border border-border/70 bg-surface-elevated px-3 py-3 text-sm text-text-secondary">
+                    Select Destination or Transit, then choose a city.
+                  </p>
+                )}
               </div>
+            ) : atDestinationLimit ? (
+              <p className="mt-3 rounded-xl bg-surface px-3 py-2.5 text-center text-xs text-text-muted">
+                Maximum {MAX_TRIP_DESTINATIONS} cities (destinations and
+                transit).
+              </p>
             ) : (
               <button
                 type="button"
                 onClick={() => {
                   setSearchQuery("");
                   setSearchResults([]);
+                  setPendingStopType(null);
                   setAddingDestination(true);
                 }}
-                className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm font-medium text-primary hover:border-primary/40 hover:bg-primary-tint"
+                className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary/35 bg-primary-tint/30 px-3 py-3 text-sm font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary-tint"
               >
                 <Plus className="h-4 w-4" />
                 Add destination
@@ -1141,72 +1540,107 @@ function CreateTripForm({
           label="Trip dates"
           value={dateRange}
           onChange={setDateRange}
+          maxSpanDays={MAX_TRIP_DAYS}
           disabled={saving}
         />
 
-        <section>
-          <FieldLabel icon={Compass}>Type of leisure</FieldLabel>
-          <div className="mt-2">
-            <SearchableSelect
-              value={leisureType}
-              onChange={(value) => {
-                if ((LEISURE_TYPES as readonly string[]).includes(value)) {
-                  setLeisureType(value as LeisureType);
-                }
-              }}
-              options={leisureOptions}
-              placeholder="Select leisure type…"
-              searchPlaceholder="Search leisure types…"
-              clearable={false}
-            />
-          </div>
-        </section>
+        <section className="space-y-4 rounded-2xl border border-border bg-surface/50 p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Preferences
+          </p>
 
-        <section>
-          <FieldLabel icon={Wallet}>Spend money</FieldLabel>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {SPEND_MONEY_OPTIONS.map((option) => {
-              const selected = spendMoney === option.id;
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setSpendMoney(option.id)}
-                  className={cx(
-                    "rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors",
-                    selected
-                      ? "border-primary bg-primary-tint text-primary"
-                      : "border-border text-text-secondary hover:border-primary/30 hover:text-text"
-                  )}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </section>
+          <section>
+            <FieldLabel icon={Compass}>Type of leisure</FieldLabel>
+            <div className="mt-2">
+              <SearchableSelect
+                value={leisureType}
+                onChange={(value) => {
+                  if ((LEISURE_TYPES as readonly string[]).includes(value)) {
+                    setLeisureType(value as LeisureType);
+                  }
+                }}
+                options={leisureOptions}
+                placeholder="Select leisure type…"
+                searchPlaceholder="Search leisure types…"
+                clearable={false}
+              />
+            </div>
+            {leisureType === "custom" ? (
+              <div className="mt-2">
+                <TextInput
+                  value={leisureCustom}
+                  onChange={(e) =>
+                    setLeisureCustom(
+                      e.target.value.slice(0, LEISURE_CUSTOM_MAX_LENGTH)
+                    )
+                  }
+                  placeholder="e.g. surfing, diving, parachute jump"
+                  maxLength={LEISURE_CUSTOM_MAX_LENGTH}
+                  disabled={saving}
+                />
+                <p className="mt-1.5 text-xs text-text-muted">
+                  Tell us what you want to do — we’ll prioritize those activities.
+                </p>
+              </div>
+            ) : null}
+          </section>
 
-        <section>
-          <FieldLabel icon={CircleDollarSign}>Currency</FieldLabel>
-          <div className="mt-2">
-            <SearchableSelect
-              value={currencyCode}
-              onChange={setCurrencyCode}
-              options={currencyOptions}
-              placeholder="Select currency…"
-              searchPlaceholder="Search currencies…"
-            />
-          </div>
+          <section>
+            <FieldLabel icon={Wallet}>Spend money</FieldLabel>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {SPEND_MONEY_OPTIONS.map((option) => {
+                const selected = spendMoney === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSpendMoney(option.id)}
+                    className={cx(
+                      "rounded-xl border px-2.5 py-2.5 text-center transition-all",
+                      selected
+                        ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/15"
+                        : "border-border bg-surface-elevated text-text-secondary hover:border-primary/30 hover:text-text"
+                    )}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {option.label}
+                    </span>
+                    <span
+                      className={cx(
+                        "mt-0.5 block text-[10px] leading-snug",
+                        selected ? "text-primary/75" : "text-text-muted"
+                      )}
+                    >
+                      {SPEND_HINTS[option.id]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section>
+            <FieldLabel icon={CircleDollarSign}>Currency</FieldLabel>
+            <div className="mt-2">
+              <SearchableSelect
+                value={currencyCode}
+                onChange={setCurrencyCode}
+                options={currencyOptions}
+                placeholder="Select currency…"
+                searchPlaceholder="Search currencies…"
+              />
+            </div>
+          </section>
         </section>
 
         {error ? (
-          <p className="rounded-xl bg-error-background px-3 py-2 text-sm text-error">
+          <p className="rounded-xl border border-error/20 bg-error-background px-3 py-2.5 text-sm text-error">
             {error}
           </p>
         ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-divider bg-surface-elevated px-5 py-4">
+      <div className="shrink-0 border-t border-divider bg-surface-elevated/95 px-5 py-4 backdrop-blur-sm">
         <div className="grid grid-cols-2 gap-3">
           <Button variant="secondary" onClick={onClose} className="w-full">
             Cancel
@@ -1216,7 +1650,7 @@ function CreateTripForm({
             onClick={() => void handleCreate()}
             className="w-full"
           >
-            Create trip ({createCost} AI credits)
+            Create trip
           </Button>
         </div>
       </div>
@@ -1235,7 +1669,9 @@ function FieldLabel({
 }) {
   return (
     <div className="flex items-center gap-1.5 text-sm font-medium text-text">
-      <Icon className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-surface text-text-muted">
+        <Icon className="h-3.5 w-3.5" aria-hidden />
+      </span>
       <span>{children}</span>
       {required ? (
         <span className="text-error" aria-hidden>

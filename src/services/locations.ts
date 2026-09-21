@@ -343,16 +343,24 @@ export async function deleteUserLocation(
   locationId: string
 ): Promise<void> {
   const ref = locationRef(userId, locationId);
-  const cached = getCachedLocation(userId, locationId);
-  let data = cached as UserLocation | undefined;
 
-  if (!data) {
-    const snap = await getDocCacheFirst(ref);
+  // Prefer server truth for the soft-vs-hard decision — memory cache can lag
+  // behind Travel Intelligence aggregation writes.
+  let data: UserLocation | undefined;
+  try {
+    const snap = await getDocCacheFirst(ref, { forceServer: true });
     if (!snap.exists()) {
       removeLocationFromCache(userId, locationId);
       return;
     }
     data = snap.data() as UserLocation;
+  } catch {
+    const cached = getCachedLocation(userId, locationId);
+    data = cached as UserLocation | undefined;
+    if (!data) {
+      removeLocationFromCache(userId, locationId);
+      return;
+    }
   }
 
   const needsReversal =

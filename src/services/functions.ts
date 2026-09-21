@@ -8,6 +8,7 @@ import type {
 import { getConfidenceLevel } from "@/types/ai";
 import type {
   GetCityIntelligenceRequest,
+  GetCityIntelligenceBatchResult,
   CityIntelligenceResult,
 } from "@/types/city-intelligence";
 import {
@@ -23,15 +24,20 @@ import type {
   CompleteReferralResult,
   CreateReferralResult,
 } from "@/types/referral";
-import type { PlanTripRequest, PlanTripResult } from "@/types/trip-plan";
+import type { PlanTripRequest } from "@/types/trip-plan";
 import type {
-  ChargeCreateTripRequest,
-  ChargeCreateTripResult,
-} from "@/types/credits";
+  FillTripPlannerAiPlacesRequest,
+  FillTripPlannerAiPlacesResult,
+  PlanTripAiResult,
+} from "@/types/trip-planner-ai-request";
 import type {
   GetTripWeatherRequest,
   GetTripWeatherResult,
 } from "@/types/weather";
+import type {
+  ResolveCityAirportsRequest,
+  ResolveCityAirportsResult,
+} from "@/types/airports";
 
 let functions: Functions | undefined;
 
@@ -49,12 +55,13 @@ export type FindPlaceResponse =
   | InsufficientAICreditsError;
 
 export type GetCityIntelligenceResponse =
-  | CityIntelligenceResult
+  | GetCityIntelligenceBatchResult
   | InsufficientAICreditsError;
 
-export type PlanTripResponse = PlanTripResult | InsufficientAICreditsError;
-export type ChargeCreateTripResponse =
-  | ChargeCreateTripResult
+export type PlanTripResponse = PlanTripAiResult | InsufficientAICreditsError;
+
+export type ResolveCityAirportsResponse =
+  | ResolveCityAirportsResult
   | InsufficientAICreditsError;
 
 function normalizeFindPlaceResult(
@@ -102,7 +109,7 @@ export const analyzeLocation = findPlace;
 
 export async function getCityIntelligence(
   request: GetCityIntelligenceRequest
-): Promise<CityIntelligenceResult> {
+): Promise<GetCityIntelligenceBatchResult> {
   const callable = httpsCallable<
     GetCityIntelligenceRequest,
     GetCityIntelligenceResponse
@@ -114,14 +121,47 @@ export async function getCityIntelligence(
   return result.data;
 }
 
+/** Convenience: fetch intelligence for a single city. */
+export async function getCityIntelligenceForPlace(input: {
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+  cityId?: string;
+  countryId?: string;
+  userCountry?: string;
+  userCurrency?: string;
+  language?: string;
+}): Promise<CityIntelligenceResult> {
+  const batch = await getCityIntelligence({
+    cities: [
+      {
+        city: input.city,
+        country: input.country,
+        lat: input.lat,
+        lon: input.lon,
+        cityId: input.cityId,
+        countryId: input.countryId,
+      },
+    ],
+    userCountry: input.userCountry,
+    userCurrency: input.userCurrency,
+    language: input.language,
+  });
+  const first = batch.results[0];
+  if (!first) {
+    throw new Error("City intelligence returned no results.");
+  }
+  return first;
+}
+
 /**
- * AI itinerary for empty days, shaped by leisure type (purpose and intensity).
- * First generate is included. Recreate charges ordinary 10 / advanced 30
- * (enforced server-side from the trip's createMode).
+ * Trip Planner AI — server builds request + fills routes/places.
+ * Client sends only tripId, language, temperatureType.
  */
 export async function planTrip(
   request: PlanTripRequest
-): Promise<PlanTripResult> {
+): Promise<PlanTripAiResult> {
   const callable = httpsCallable<PlanTripRequest, PlanTripResponse>(
     getCloudFunctions(),
     "planTrip"
@@ -134,20 +174,17 @@ export async function planTrip(
 }
 
 /**
- * Deduct Create Trip credits (ordinary 20 / advanced 75).
- * Enforced on the server; never write aiCreditsBalance from the client.
+ * Fill free-time city slots: keep saved `{ locationId }` first, then AI new
+ * places using the locations subcollection shape (no googlePhotoUrl).
  */
-export async function chargeCreateTrip(
-  request: ChargeCreateTripRequest
-): Promise<ChargeCreateTripResult> {
+export async function fillTripPlannerAiPlaces(
+  request: FillTripPlannerAiPlacesRequest
+): Promise<FillTripPlannerAiPlacesResult> {
   const callable = httpsCallable<
-    ChargeCreateTripRequest,
-    ChargeCreateTripResponse
-  >(getCloudFunctions(), "chargeCreateTrip");
+    FillTripPlannerAiPlacesRequest,
+    FillTripPlannerAiPlacesResult
+  >(getCloudFunctions(), "fillTripPlannerAiPlaces");
   const result = await callable(request);
-  if (isInsufficientAICreditsError(result.data)) {
-    throw Object.assign(new Error(result.data.message), result.data);
-  }
   return result.data;
 }
 
@@ -163,6 +200,24 @@ export async function getTripWeather(
     "getTripWeather"
   );
   const result = await callable(request);
+  return result.data;
+}
+
+/**
+ * Map trip cities → primary IATA airports (+ lat/lon). Cached server-side.
+ * Costs 1 credit on cache miss.
+ */
+export async function resolveCityAirports(
+  request: ResolveCityAirportsRequest
+): Promise<ResolveCityAirportsResult> {
+  const callable = httpsCallable<
+    ResolveCityAirportsRequest,
+    ResolveCityAirportsResponse
+  >(getCloudFunctions(), "resolveCityAirports");
+  const result = await callable(request);
+  if (isInsufficientAICreditsError(result.data)) {
+    throw Object.assign(new Error(result.data.message), result.data);
+  }
   return result.data;
 }
 

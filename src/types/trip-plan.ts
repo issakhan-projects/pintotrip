@@ -13,10 +13,14 @@ export const LEISURE_TYPES = [
   "adventure",
   "family",
   "mixed",
+  "custom",
   "umrah",
 ] as const;
 
 export type LeisureType = (typeof LEISURE_TYPES)[number];
+
+/** Max length for free-text leisure when leisureType is "custom". */
+export const LEISURE_CUSTOM_MAX_LENGTH = 120;
 
 export const PLACE_CATEGORIES = [
   "attraction",
@@ -111,6 +115,11 @@ export const LEISURE_TYPE_OPTIONS: Array<{
     description: "Culture, food, and local favorites",
   },
   {
+    value: "custom",
+    label: "Custom",
+    description: "Describe what you want — surfing, diving, skydiving, etc.",
+  },
+  {
     value: "umrah",
     label: "Umrah planner",
     description: "Worship-first plan for Makkah & Madinah, with rest and optional ziyarat",
@@ -119,6 +128,7 @@ export const LEISURE_TYPE_OPTIONS: Array<{
 
 export type PlanTripMode = "generate" | "regenerate";
 
+/** Still used by PlanTripSheet UI for empty-day preview before the callable. */
 export interface PlanTripExistingDay {
   day: number;
   date: string;
@@ -126,68 +136,15 @@ export interface PlanTripExistingDay {
   placeTitles: string[];
 }
 
-export interface PlanTripSavedPlace {
-  locationId: string;
-  title: string;
-  lat: number;
-  lon: number;
-  cityName: string;
-  countryName: string;
-  cityId?: string;
-  countryId?: string;
-  status: string;
-  category?: string;
-}
-
-export interface PlanTripWeatherDay {
-  date: string;
-  cityName?: string;
-  available: boolean;
-  tempMin?: number;
-  tempMax?: number;
-  temp?: number;
-  description?: string;
-  icon?: string;
-  humidity?: number;
-  windSpeed?: number;
-  precipitationChance?: number;
-  units?: "metric" | "imperial";
-}
-
-export interface PlanTripDestination {
-  cityName: string;
-  countryName: string;
-  countryId?: string;
-  cityId?: string;
-  lat?: number;
-  lon?: number;
-  /** YYYY-MM-DD when the traveler set city dates. */
-  startDate?: string;
-  endDate?: string;
-}
-
+/** Client → planTrip callable. Server loads trip, routes, places, weather. */
 export interface PlanTripRequest {
   tripId: string;
-  destination: {
-    cityName: string;
-    countryName: string;
-    /** ISO alpha-2 lowercase when known (e.g. "sa"). */
-    countryId?: string;
-    cityId?: string;
-    lat?: number;
-    lon?: number;
-  };
-  startDate: string;
-  endDate: string;
-  leisureType: LeisureType;
-  mode?: PlanTripMode;
   language?: string;
-  /** ISO 4217 currency for per-place price estimates (trip currency). */
-  currency?: string;
-  existingDays: PlanTripExistingDay[];
-  destinations?: PlanTripDestination[];
-  savedPlaces?: PlanTripSavedPlace[];
-  weather?: PlanTripWeatherDay[];
+  /** User temperature preference — drives OpenWeather metric/imperial. */
+  temperatureType?: "celsius" | "fahrenheit";
+  /** @deprecated Prefer temperatureType. */
+  temperatureUnit?: "celsius" | "fahrenheit";
+  mode?: PlanTripMode;
 }
 
 export interface PlannedPlaceSuggestion {
@@ -233,10 +190,62 @@ export interface PlannedDaySuggestion {
   places: PlannedPlaceSuggestion[];
 }
 
+/**
+ * Transport route in the planTrip response.
+ * Includes preserved user routes AND AI-generated missing/local legs.
+ * Persisted to the existing TripRoute collection (new legs only).
+ */
+export interface PlannedRouteSuggestion {
+  day: number;
+  date: string;
+  /** 0 = before first place; places.length = after last place. */
+  insertAt: number;
+  from: {
+    name: string;
+    city: string;
+    country?: string;
+    placeId?: string;
+    code?: string;
+    location?: { lat: number; lon: number };
+  };
+  to: {
+    name: string;
+    city: string;
+    country?: string;
+    placeId?: string;
+    code?: string;
+    location?: { lat: number; lon: number };
+  };
+  transport:
+    | "flight"
+    | "train"
+    | "bus"
+    | "metro"
+    | "taxi"
+    | "airport_transfer"
+    | "car"
+    | "ferry"
+    | "other";
+  departure?: { datetime: string; timezone: string; timeKnown?: boolean };
+  arrival?: { datetime: string; timezone: string; timeKnown?: boolean };
+  durationMinutes?: number;
+  durationApproximate?: boolean;
+  note?: string;
+  priceAmount?: number;
+  priceCurrency?: string;
+  priceLabel?: string;
+  link?: string;
+  /** user = existing TripRoute; intercity = missing connection; local_transfer = secondary. */
+  role?: "user" | "intercity" | "local_transfer";
+  /** When role=user — existing route id; client must not create a duplicate. */
+  existingRouteId?: string;
+}
+
 export interface PlanTripResult {
   success: true;
   leisureType: LeisureType;
   days: PlannedDaySuggestion[];
+  routes: PlannedRouteSuggestion[];
   creditsCharged: number;
   remainingCredits: number;
   model: string;

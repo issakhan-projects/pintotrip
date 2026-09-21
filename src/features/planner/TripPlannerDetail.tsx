@@ -10,6 +10,8 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  Upload,
+  WifiOff,
 } from "lucide-react";
 import type { User } from "firebase/auth";
 import { Timestamp } from "firebase/firestore";
@@ -18,23 +20,28 @@ import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { getCityIntelligence } from "@/services/functions";
 import { deleteTrip } from "@/services/trip-planner";
+import { uploadTripCover } from "@/services/storage";
+import {
+  IMAGE_FILE_ACCEPT,
+  imageUploadErrorMessage,
+  prepareClientImage,
+} from "@/lib/images";
 import {
   formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import type {
   PreparationItem,
-  TripAccommodation,
-  TripEssentials,
   TripItinerary,
   TripPlannerDoc,
   TripPlannerStep,
 } from "@/types/trip-planner";
 import type { LocationStatus } from "@/types/location";
 import { tripDayCount } from "@/services/trip-planner";
-import { Button, ConfirmModal } from "@/components/ui";
+import { Button, DeleteConfirmModal } from "@/components/ui";
 import { getPublicEnv } from "@/lib/env";
 import { cx } from "@/lib/utils";
+import { isBrowserOffline } from "@/lib/planner/offline-store";
 import {
   formatTripHeroDates,
   overallTripProgress,
@@ -43,10 +50,12 @@ import {
   tripChecklistProgress,
 } from "./tripUtils";
 import { newCustomPreparationId } from "./buildPreparation";
+import { listTripDestinations, primaryTripDestination } from "./tripDestinations";
 import { TripStepNav } from "./TripStepNav";
 import { TripDetailsStep } from "./TripDetailsStep";
 import { BeforeYouGoStep } from "./BeforeYouGoStep";
 import { PlacesStep } from "./PlacesStep";
+import { RoutesStep } from "./RoutesStep";
 import { EditTripSheet } from "./EditTripSheet";
 
 interface TripPlannerDetailProps {
@@ -54,8 +63,30 @@ interface TripPlannerDetailProps {
   tripId: string;
 }
 
+function useOfflineBanner(): boolean {
+  const [offline, setOffline] = useState(() => isBrowserOffline());
+
+  useEffect(() => {
+    const sync = () => setOffline(isBrowserOffline());
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    sync();
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+
+  return offline;
+}
+
 function parseStep(value: string | null): TripPlannerStep {
-  if (value === "details" || value === "preparation" || value === "places") {
+  if (
+    value === "details" ||
+    value === "preparation" ||
+    value === "routes" ||
+    value === "places"
+  ) {
     return value;
   }
   return "details";
@@ -83,6 +114,7 @@ function destinationStaticMapUrl(
 export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const offline = useOfflineBanner();
   const { trip, loading, error, patchTrip, setTrip } = useTrip(
     tripId,
     user.uid
@@ -98,20 +130,26 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   );
   const [intelBusy, setIntelBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [coverMenuOpen, setCoverMenuOpen] = useState(false);
   const [coverIndex, setCoverIndex] = useState(0);
+  const [coverUploading, setCoverUploading] = useState(false);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const coverMenuRef = useRef<HTMLDivElement>(null);
+  const coverFileRef = useRef<HTMLInputElement>(null);
 
   const fetchCityIntelligence = useCallback(async () => {
     if (!trip || intelBusy) return;
-    const { destination } = trip;
-    if (
-      destination.lat == null ||
-      destination.lon == null ||
-      !destination.cityName
-    ) {
+    const destinations = listTripDestinations(trip).filter(
+      (d) =>
+        Boolean(d.cityName?.trim()) &&
+        typeof d.lat === "number" &&
+        typeof d.lon === "number"
+    );
+    if (destinations.length === 0) {
       await patchTrip({
         cityIntelligence: {
           status: "error",
@@ -131,11 +169,15 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     });
 
     try {
-      const result = await getCityIntelligence({
-        city: destination.cityName,
-        country: destination.countryName,
-        lat: destination.lat,
-        lon: destination.lon,
+      const batch = await getCityIntelligence({
+        cities: destinations.map((d) => ({
+          city: d.cityName,
+          country: d.countryName,
+          lat: d.lat!,
+          lon: d.lon!,
+          cityId: d.cityId,
+          countryId: d.countryId,
+        })),
         userCountry: profile?.citizenship || trip.from.countryName,
         userCurrency: trip.currency.code || profile?.currency,
         language: profile?.preferences?.language,
@@ -144,7 +186,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       await patchTrip({
         cityIntelligence: {
           status: "ready",
-          result,
+          results: batch.results,
           lastUpdatedAt: Timestamp.now(),
         },
       });
@@ -196,6 +238,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     if (!trip) return [] as string[];
     const urls: string[] = [];
     const seen = new Set<string>();
+    const primary = primaryTripDestination(trip);
 
     const push = (url?: string) => {
       if (!url || seen.has(url)) return;
@@ -203,7 +246,8 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       urls.push(url);
     };
 
-    trip.destination.photos?.forEach((url) => push(url));
+    push(trip.photoUrl);
+    primary.photos?.forEach((url) => push(url));
 
     const byId = new Map(locations.map((l) => [l.id, l]));
     for (const id of trip.savedPlaceIds) {
@@ -211,8 +255,8 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       place?.images.forEach((img) => push(img.url));
     }
 
-    const destCity = trip.destination.cityName?.toLowerCase();
-    const destCountry = trip.destination.countryName?.toLowerCase();
+    const destCity = primary.cityName?.toLowerCase();
+    const destCountry = primary.countryName?.toLowerCase();
     for (const place of locations) {
       if (
         destCity &&
@@ -223,11 +267,8 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       }
     }
 
-    if (trip.destination.lat != null && trip.destination.lon != null) {
-      push(
-        destinationStaticMapUrl(trip.destination.lat, trip.destination.lon) ??
-          undefined
-      );
+    if (primary.lat != null && primary.lon != null) {
+      push(destinationStaticMapUrl(primary.lat, primary.lon) ?? undefined);
     }
 
     return urls;
@@ -253,6 +294,41 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!coverMenuOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!coverMenuRef.current?.contains(event.target as Node)) {
+        setCoverMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [coverMenuOpen]);
+
+  async function handleCoverFileChange(file: File | undefined) {
+    if (!file || !trip) return;
+    setCoverUploading(true);
+    setCoverUploadError(null);
+    setCoverMenuOpen(false);
+    try {
+      const prepared = await prepareClientImage(file, {
+        maxSides: [1920, 1600, 1280, 1024],
+        qualities: [0.82, 0.7, 0.55, 0.42],
+        maxDataUrlChars: 1_400_000,
+      });
+      const url = await uploadTripCover(user.uid, trip.id, prepared.blob, {
+        contentType: "image/jpeg",
+      });
+      await patchTrip({ photoUrl: url });
+      setCoverIndex(0);
+    } catch (err) {
+      setCoverUploadError(imageUploadErrorMessage(err));
+    } finally {
+      setCoverUploading(false);
+      if (coverFileRef.current) coverFileRef.current.value = "";
+    }
+  }
 
   async function togglePrepItem(itemId: string, completedFlag: boolean) {
     if (!trip) return;
@@ -309,41 +385,6 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     await patchTrip({ preparation: { ...trip.preparation, items } });
   }
 
-  async function updatePreparationField<
-    K extends "documents" | "visa",
-  >(
-    field: K,
-    value: NonNullable<TripPlannerDoc["preparation"][K]> | null
-  ) {
-    if (!trip) return;
-    const preparation = {
-      ...trip.preparation,
-      [field]: value,
-    };
-    setTrip({ ...trip, preparation });
-    await patchTrip({ preparation });
-  }
-
-  async function updateAccommodation(value: TripAccommodation | null) {
-    if (!trip) return;
-    const previous = trip.tripEssentials ?? emptyTripEssentials();
-    const accommodation = value
-      ? upsertAccommodation(previous.accommodation ?? [], value)
-      : [];
-    const tripEssentials: TripEssentials = {
-      flights: previous.flights ?? [],
-      accommodation,
-      documents: previous.documents ?? [],
-    };
-    // Prefer tripEssentials going forward; clear legacy single stay field.
-    const preparation = {
-      ...trip.preparation,
-      accommodation: null,
-    };
-    setTrip({ ...trip, tripEssentials, preparation });
-    await patchTrip({ tripEssentials, preparation });
-  }
-
   async function handleDelete() {
     if (!trip) return;
     setDeleting(true);
@@ -391,7 +432,8 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   const places = placesProgress(trip, locations);
   const prep = preparationProgress(trip.preparation.items);
   const checklist = tripChecklistProgress(trip, locations);
-  const destLabel = [trip.destination.cityName, trip.destination.countryName]
+  const primaryDest = primaryTripDestination(trip);
+  const destLabel = [primaryDest.cityName, primaryDest.countryName]
     .filter(Boolean)
     .join(", ");
   const coverUrl =
@@ -400,7 +442,18 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     ] ?? null;
 
   return (
-    <main className="relative flex min-h-0 flex-1 flex-col bg-surface">
+    <main className="relative flex min-h-0 flex-1 flex-col">
+      {offline ? (
+        <div
+          role="status"
+          className="sticky top-0 z-30 border-b border-warning/30 bg-warning-background px-4 py-2.5 text-center sm:px-6"
+        >
+          <p className="inline-flex items-center justify-center gap-2 text-sm font-medium text-warning">
+            <WifiOff className="h-4 w-4 shrink-0" aria-hidden />
+            You’re offline — showing the saved copy on this device.
+          </p>
+        </div>
+      ) : null}
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-10 pt-4 sm:px-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <button
@@ -480,24 +533,70 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 </p>
               </div>
 
-              {coverCandidates.length > 1 ? (
+              <div className="relative shrink-0" ref={coverMenuRef}>
+                <input
+                  ref={coverFileRef}
+                  type="file"
+                  accept={IMAGE_FILE_ACCEPT}
+                  className="sr-only"
+                  onChange={(e) =>
+                    void handleCoverFileChange(e.target.files?.[0])
+                  }
+                />
                 <button
                   type="button"
-                  onClick={() =>
-                    setCoverIndex((i) => (i + 1) % coverCandidates.length)
-                  }
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-black/45 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm hover:bg-black/55"
+                  disabled={coverUploading}
+                  onClick={() => setCoverMenuOpen((v) => !v)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-black/45 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm hover:bg-black/55 disabled:opacity-60"
                 >
-                  <ImageIcon className="h-3.5 w-3.5" />
-                  Change cover
+                  {coverUploading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ImageIcon className="h-3.5 w-3.5" />
+                  )}
+                  {coverUploading ? "Uploading…" : "Change cover"}
                 </button>
-              ) : null}
+                {coverMenuOpen ? (
+                  <div className="absolute bottom-full right-0 mb-2 min-w-[11.5rem] overflow-hidden rounded-xl border border-white/15 bg-black/80 py-1 shadow-lg backdrop-blur-md">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                      onClick={() => coverFileRef.current?.click()}
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Upload photo
+                    </button>
+                    {coverCandidates.length > 1 ? (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                        onClick={() => {
+                          setCoverIndex(
+                            (i) => (i + 1) % coverCandidates.length
+                          );
+                          setCoverMenuOpen(false);
+                        }}
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        Next photo
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {coverUploadError ? (
+                  <p className="absolute right-0 top-full mt-1 max-w-[14rem] rounded-lg bg-error px-2 py-1 text-[11px] text-white shadow">
+                    {coverUploadError}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="mt-4 rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm">
+        {/* <section className="mt-4 rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
+            
+            
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-semibold text-text">
@@ -538,12 +637,32 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               />
             </div>
           </div>
-        </section>
+        </section> */}
+
+
+<section className="mt-4">
+              <TripStepNav
+                active={step}
+                completed={completed}
+                onChange={setStep}
+                progress={{
+                  preparation: {
+                    completed: prep.completed,
+                    total: prep.total,
+                  },
+                  places: {
+                    completed: places.visited,
+                    total: places.total,
+                  },
+                }}
+              />
+            </section>
 
         <div className="mt-6 min-h-0 flex-1 pb-4">
           {step === "details" ? (
             <TripDetailsStep
               trip={trip}
+              userId={user.uid}
               galleryImages={galleryImages}
               locations={locations}
               onEdit={openEditTrip}
@@ -553,23 +672,60 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
             />
           ) : null}
 
+          {step === "routes" ? (
+            <RoutesStep
+              trip={trip}
+              userId={user.uid}
+              locations={locations}
+              onMarkPlaceStatus={async (locationId, status: LocationStatus) => {
+                await patchLocation(locationId, { status });
+                if (trip.itinerary.days.length === 0) return;
+                if (status === "cancelled") {
+                  const days = trip.itinerary.days.map((day) => ({
+                    ...day,
+                    places: day.places
+                      .filter((p) => p.locationId !== locationId)
+                      .map((p, order) => ({ ...p, order })),
+                  }));
+                  await patchTrip({
+                    itinerary: { status: "edited", days },
+                  });
+                  return;
+                }
+                const nextDays = trip.itinerary.days.map((day) => ({
+                  ...day,
+                  places: day.places.map((p) =>
+                    p.locationId === locationId ? { ...p, status } : p
+                  ),
+                }));
+                await patchTrip({
+                  itinerary: {
+                    status:
+                      trip.itinerary.status === "empty"
+                        ? "edited"
+                        : trip.itinerary.status,
+                    days: nextDays,
+                  },
+                });
+              }}
+              onSavePlaceNote={async (locationId, note) => {
+                await patchLocation(locationId, { note });
+              }}
+            />
+          ) : null}
+
           {step === "preparation" ? (
             <BeforeYouGoStep
               trip={trip}
               userId={user.uid}
               homeCurrency={
                 profile?.currency ||
-                trip.cityIntelligence.result?.exchangeRate?.from
+                trip.cityIntelligence.results?.[0]?.exchangeRate?.from
               }
               onToggleItem={(id, value) => void togglePrepItem(id, value)}
               onAddItem={(title, link) => void addPrepItem(title, link)}
               onDeleteItem={(id) => void deletePrepItem(id)}
               onSyncItems={(items) => void syncPrepItems(items)}
-              onUpdateAccommodation={(value) => updateAccommodation(value)}
-              onUpdateDocuments={(value) =>
-                updatePreparationField("documents", value)
-              }
-              onUpdateVisa={(value) => updatePreparationField("visa", value)}
               onGoToDetails={() => setStep("details")}
               onGoToPlaces={() => setStep("places")}
               onViewGuide={() => setStep("details")}
@@ -648,13 +804,10 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         }}
       />
 
-      <ConfirmModal
+      <DeleteConfirmModal
         open={confirmDeleteOpen}
-        title="Delete this trip?"
+        entity="trip"
         description="This removes the trip and its itinerary. This can’t be undone."
-        confirmLabel="Delete"
-        cancelLabel="Keep"
-        tone="danger"
         loading={deleting}
         onCancel={() => {
           if (!deleting) setConfirmDeleteOpen(false);
@@ -665,30 +818,3 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   );
 }
 
-function emptyTripEssentials(): TripEssentials {
-  return {
-    flights: [],
-    accommodation: [],
-    documents: [],
-  };
-}
-
-function upsertAccommodation(
-  list: TripAccommodation[],
-  value: TripAccommodation
-): TripAccommodation[] {
-  const id = value.id?.trim() || crypto.randomUUID();
-  const next: TripAccommodation = { ...value, id };
-  const index = list.findIndex((item) => item.id && item.id === id);
-  if (index >= 0) {
-    const copy = [...list];
-    copy[index] = next;
-    return copy;
-  }
-  // Single-stay UI: replace the only entry when it had no id (legacy).
-  if (list.length === 1 && !list[0]?.id) {
-    return [next];
-  }
-  if (list.length === 0) return [next];
-  return [...list, next];
-}

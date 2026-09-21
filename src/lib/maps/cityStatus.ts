@@ -1,5 +1,6 @@
 import type { LocationCity, LocationCountry, LocationStatus } from "@/types/location";
 import { looksLikeGooglePlaceId } from "./cityPlaceId";
+import { hasUsableMapCoords } from "./geocode";
 
 /** Highlightable city status — cancelled-only cities are omitted. */
 export type CityHighlightStatus = "visited" | "planned";
@@ -93,16 +94,13 @@ export function getCityStatuses(
       entry.locationIdsMissingPlaceId.push(loc.id);
     }
 
-    if (
-      typeof loc.lat === "number" &&
-      typeof loc.lon === "number" &&
-      Number.isFinite(loc.lat) &&
-      Number.isFinite(loc.lon)
-    ) {
-      entry.points.push({ lat: loc.lat, lon: loc.lon });
+    if (hasUsableMapCoords(loc.lat, loc.lon)) {
+      const lat = loc.lat as number;
+      const lon = loc.lon as number;
+      entry.points.push({ lat, lon });
       if (entry.lat == null) {
-        entry.lat = loc.lat;
-        entry.lon = loc.lon;
+        entry.lat = lat;
+        entry.lon = lon;
       }
     }
   }

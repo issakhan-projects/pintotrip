@@ -29,7 +29,7 @@ import type { AnalyzeLocationResult } from "@/types/ai";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { slugifyId, countryIdFromParts, isAsciiId, formatConfidenceCopy, cx } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
-import { withCityGooglePlaceId, resolveEnglishPlaceIds } from "@/lib/maps";
+import { withCityGooglePlaceId, resolveEnglishPlaceIds, englishPlaceIdsFromNames } from "@/lib/maps";
 import {
   IMAGE_FILE_ACCEPT,
   imageUploadErrorMessage,
@@ -51,6 +51,12 @@ type AddStep =
   | "error"
   | "search"
   | "search-confirm";
+
+/**
+ * Temporary: Google Places Text Search for "Search by name" is disabled
+ * to cut Places API cost. Flip to true after optimization / caching.
+ */
+const ENABLE_ADD_PLACE_NAME_SEARCH = false;
 
 interface AddPlaceSheetProps {
   open: boolean;
@@ -121,7 +127,16 @@ export function AddPlaceSheet({
     }
   }, [open]);
 
+  // Name search temporarily disabled — never stay on Places-backed steps.
   useEffect(() => {
+    if (ENABLE_ADD_PLACE_NAME_SEARCH) return;
+    if (step === "search" || step === "search-confirm") {
+      setStep("menu");
+    }
+  }, [step]);
+
+  useEffect(() => {
+    if (!ENABLE_ADD_PLACE_NAME_SEARCH) return;
     if (step !== "search") return;
     if (!isPro) {
       setStep("menu");
@@ -321,7 +336,11 @@ export function AddPlaceSheet({
     setManualNote("");
     setError(null);
     setStep("search-confirm");
-    void fetchPlacePhotoUrl(place.placeId).then((photoUrl) => {
+    void fetchPlacePhotoUrl({
+      title: place.title,
+      cityName: place.cityName,
+      countryName: place.countryName,
+    }).then((photoUrl) => {
       if (!photoUrl) return;
       setSelectedPlace((prev) =>
         prev?.placeId === place.placeId ? { ...prev, photoUrl } : prev
@@ -341,10 +360,23 @@ export function AddPlaceSheet({
       const countryName = manualCountry.trim();
       const cityName = manualCity.trim();
       const [englishIds, photoUrl] = await Promise.all([
-        resolveEnglishPlaceIds(selectedPlace.lat, selectedPlace.lon),
+        (async () =>
+          englishPlaceIdsFromNames(
+            cityName,
+            countryName,
+            resolveCountryCode(countryName) || undefined
+          ) ??
+          (await resolveEnglishPlaceIds(
+            selectedPlace.lat,
+            selectedPlace.lon
+          )))(),
         selectedPlace.photoUrl
           ? Promise.resolve(selectedPlace.photoUrl)
-          : fetchPlacePhotoUrl(selectedPlace.placeId),
+          : fetchPlacePhotoUrl({
+              title: manualTitle.trim() || selectedPlace.title,
+              cityName: cityName,
+              countryName: countryName,
+            }),
       ]);
       const countryCode =
         englishIds?.countryCode ||
@@ -474,40 +506,42 @@ export function AddPlaceSheet({
             visual={<LinkInputVisual />}
             onClick={() => setStep("link")}
           />
-          <MenuOptionCard
-            variant="link"
-            icon={
-              isPro ? (
-                <Search className="h-5 w-5" />
-              ) : (
-                <Lock className="h-5 w-5" />
-              )
-            }
-            title="Search by name"
-            subtitle={
-              isPro
-                ? "Find a place on Google Maps"
-                : "Pro plan — find places on Google Maps"
-            }
-            tags={
-              isPro
-                ? [
-                    { label: "Landmarks" },
-                    { label: "Cities" },
-                    { label: "Restaurants" },
-                  ]
-                : [{ label: "Pro" }]
-            }
-            visual={<SearchInputVisual />}
-            onClick={() => {
-              if (isPro) {
-                setStep("search");
-                return;
+          {ENABLE_ADD_PLACE_NAME_SEARCH ? (
+            <MenuOptionCard
+              variant="link"
+              icon={
+                isPro ? (
+                  <Search className="h-5 w-5" />
+                ) : (
+                  <Lock className="h-5 w-5" />
+                )
               }
-              handleClose();
-              router.push("/pricing");
-            }}
-          />
+              title="Search by name"
+              subtitle={
+                isPro
+                  ? "Find a place on Google Maps"
+                  : "Pro plan — find places on Google Maps"
+              }
+              tags={
+                isPro
+                  ? [
+                      { label: "Landmarks" },
+                      { label: "Cities" },
+                      { label: "Restaurants" },
+                    ]
+                  : [{ label: "Pro" }]
+              }
+              visual={<SearchInputVisual />}
+              onClick={() => {
+                if (isPro) {
+                  setStep("search");
+                  return;
+                }
+                handleClose();
+                router.push("/pricing");
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
 

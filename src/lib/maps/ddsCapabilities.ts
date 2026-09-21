@@ -16,6 +16,8 @@
  * DEMO_MAP_ID supports Advanced Markers but NOT DDS Feature Layers.
  */
 
+import { devLog } from "@/lib/devLog";
+
 export const DEMO_MAP_ID = "DEMO_MAP_ID";
 
 export type DdsFeatureType =
@@ -41,9 +43,9 @@ export interface DdsCapabilityReport {
 
 function logError(message: string, detail?: unknown): void {
   if (detail !== undefined) {
-    console.error(`[PinToTrip DDS] ${message}`, detail);
+    devLog.error(`[PinToTrip DDS] ${message}`, detail);
   } else {
-    console.error(`[PinToTrip DDS] ${message}`);
+    devLog.error(`[PinToTrip DDS] ${message}`);
   }
 }
 
@@ -94,7 +96,7 @@ function tryGetLayer(
 }
 
 export interface VerifyDdsOptions {
-  /** When true, skip console.error (used for quiet re-checks). */
+  /** When true, skip console output (used for quiet re-checks). */
   silent?: boolean;
 }
 
@@ -160,7 +162,7 @@ export async function verifyDdsPrerequisites(
       admin2.available);
 
   if (!silent && ok) {
-    console.info("[PinToTrip DDS] Prerequisites OK — feature layers:", {
+    devLog.info("[PinToTrip DDS] Prerequisites OK — feature layers:", {
       COUNTRY: country.available,
       LOCALITY: locality.available,
       ADMINISTRATIVE_AREA_LEVEL_1: admin1.available,

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Button } from "@/components/ui";
+import { Button, ConfirmModal } from "@/components/ui";
 import {
   Check,
   ChevronDown,
@@ -20,8 +20,10 @@ import {
   MapPin,
   MoreHorizontal,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
+  TrainFront,
 } from "lucide-react";
 import { TravelMap } from "@/features/map/TravelMap";
 import { PlaceDetailSheet } from "@/features/places/PlaceDetailSheet";
@@ -33,10 +35,13 @@ import type {
   ItineraryPlace,
   TripItinerary,
   TripPlannerDoc,
+  TripRoute,
 } from "@/types/trip-planner";
 import type { LocationPrice, LocationStatus } from "@/types/location";
 import { getBrowserCoords, type MapMarkerInput } from "@/lib/maps";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
+import { planTripRegenerateCost } from "@/types/credits";
+import { formatAvailableDuration } from "./timelineHelpers";
 import { cx } from "@/lib/utils";
 import { distanceKm } from "./clusterPlaces";
 import {
@@ -44,8 +49,18 @@ import {
   sortLocationsForDestination,
 } from "./matchTripPlaces";
 import { PlanTripSheet } from "./PlanTripSheet";
+import { TripSetupChecklist } from "./TripSetupChecklist";
 import { listTripDestinations, toIsoDate } from "./tripDestinations";
+import { listTripAccommodations } from "./essentialsHelpers";
 import { isWeatherFresh, weatherForTrip } from "./tripWeather";
+import { subscribeTripRoutes } from "@/services/trip-routes";
+import {
+  formatRouteDuration,
+} from "./routeHelpers";
+import {
+  ROUTE_TRANSPORT_ICON,
+  ROUTE_TRANSPORT_LABEL,
+} from "./RouteLegCard";
 
 type Coords = { lat: number; lon: number };
 
@@ -63,6 +78,8 @@ function isActiveItinerarySlot(
   byId: Map<string, SavedLocation>
 ): boolean {
   if (slot.status === "cancelled") return false;
+  // Gap / route blocks are itinerary metadata (no saved location doc).
+  if (slot.type === "gap" || slot.type === "route") return true;
   return byId.get(slot.locationId)?.status !== "cancelled";
 }
 
@@ -119,12 +136,21 @@ export function PlacesStep({
   const [addOpen, setAddOpen] = useState(false);
   const [addDayIndex, setAddDayIndex] = useState<number | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
+  const [planIntent, setPlanIntent] = useState<"generate" | "regenerate">(
+    "generate"
+  );
+  const [planSetupConfirmOpen, setPlanSetupConfirmOpen] = useState(false);
+  const [pendingPlanIntent, setPendingPlanIntent] = useState<
+    "generate" | "regenerate"
+  >("generate");
   const [detail, setDetail] = useState<SavedLocation | null>(null);
+  const recreateCost = planTripRegenerateCost(trip.createMode);
 
   const tripPlaces = useMemo(() => {
     const ids = new Set(trip.savedPlaceIds);
     for (const day of trip.itinerary.days) {
       for (const place of day.places) {
+        if (place.type === "gap" || place.type === "route") continue;
         ids.add(place.locationId);
       }
     }
@@ -132,6 +158,15 @@ export function PlacesStep({
       (l) => ids.has(l.id) && l.status !== "cancelled"
     );
   }, [locations, trip.savedPlaceIds, trip.itinerary.days]);
+
+  const [tripRoutes, setTripRoutes] = useState<TripRoute[]>([]);
+  useEffect(() => {
+    return subscribeTripRoutes(userId, trip.id, setTripRoutes);
+  }, [userId, trip.id]);
+  const routesById = useMemo(
+    () => new Map(tripRoutes.map((route) => [route.id, route])),
+    [tripRoutes]
+  );
 
   const byId = useMemo(
     () => new Map(locations.map((l) => [l.id, l])),
@@ -146,11 +181,10 @@ export function PlacesStep({
       title: place.title,
       status: place.status,
       kind: "place" as const,
+      googlePlaceId: place.city.googlePlaceId,
     }));
 
-    const stayMarkers: MapMarkerInput[] = (
-      trip.tripEssentials?.accommodation ?? []
-    )
+    const stayMarkers: MapMarkerInput[] = listTripAccommodations(trip)
       .filter(
         (stay) =>
           typeof stay.lat === "number" &&
@@ -166,7 +200,62 @@ export function PlacesStep({
         kind: "stay" as const,
       }));
 
-    const combined = [...placeMarkers, ...stayMarkers];
+    const seenArrival = new Set<string>();
+    const airportMarkers: MapMarkerInput[] = [];
+
+    const pushArrival = (
+      arrival: {
+        code?: string | null;
+        name?: string;
+        cityName?: string;
+        lat?: number;
+        lon?: number;
+      },
+      idSuffix: string
+    ) => {
+      if (
+        typeof arrival.lat !== "number" ||
+        !Number.isFinite(arrival.lat) ||
+        typeof arrival.lon !== "number" ||
+        !Number.isFinite(arrival.lon)
+      ) {
+        return;
+      }
+      const code = arrival.code?.trim().toUpperCase() || "";
+      const dedupeKey =
+        code || `${arrival.lat.toFixed(4)},${arrival.lon.toFixed(4)}`;
+      if (seenArrival.has(dedupeKey)) return;
+      seenArrival.add(dedupeKey);
+
+      const label = [code, arrival.name?.trim() || arrival.cityName?.trim()]
+        .filter(Boolean)
+        .join(" · ");
+      airportMarkers.push({
+        id: `__airport__${idSuffix}`,
+        lat: arrival.lat,
+        lon: arrival.lon,
+        title: label || "Destination airport",
+        kind: "airport" as const,
+      });
+    };
+
+    const destinationAirports = listTripDestinations(trip).flatMap(
+      (dest, destIndex) =>
+        (dest.transport?.airports ?? []).map((airport, airportIndex) => ({
+          code: airport.iataCode,
+          name: airport.name,
+          cityName: dest.cityName,
+          lat: airport.location?.lat,
+          lon: airport.location?.lon,
+          id: `${dest.cityId || destIndex}-${airport.placeId || airportIndex}`,
+        }))
+    );
+
+    for (const airport of destinationAirports) {
+      pushArrival(airport, airport.id);
+    }
+
+    const combined = [...placeMarkers, ...stayMarkers, ...airportMarkers];
     if (combined.length > 0) return combined;
 
     return listTripDestinations(trip)
@@ -184,20 +273,29 @@ export function PlacesStep({
         title: dest.cityName,
         kind: "city" as const,
       }));
-  }, [tripPlaces, trip, trip.tripEssentials?.accommodation]);
+  }, [tripPlaces, trip, trip.destinations]);
 
-  const hasStayPins = useMemo(
-    () =>
-      (trip.tripEssentials?.accommodation ?? []).some(
-        (stay) =>
-          typeof stay.lat === "number" &&
-          Number.isFinite(stay.lat) &&
-          typeof stay.lon === "number" &&
-          Number.isFinite(stay.lon)
-      ),
-    [trip.tripEssentials?.accommodation]
-  );
+  const hasStayPins = useMemo(() => {
+    return listTripAccommodations(trip).some(
+      (stay) =>
+        typeof stay.lat === "number" &&
+        Number.isFinite(stay.lat) &&
+        typeof stay.lon === "number" &&
+        Number.isFinite(stay.lon)
+    );
+  }, [trip.destinations, trip]);
 
+  const hasAirportPins = useMemo(() => {
+    return listTripDestinations(trip).some((dest) =>
+      (dest.transport?.airports ?? []).some(
+        (airport) =>
+          typeof airport.location?.lat === "number" &&
+          Number.isFinite(airport.location.lat) &&
+          typeof airport.location?.lon === "number" &&
+          Number.isFinite(airport.location.lon)
+      )
+    );
+  }, [trip]);
   const availableToAdd = useMemo(() => {
     const taken = new Set(trip.savedPlaceIds);
     for (const day of trip.itinerary.days) {
@@ -296,9 +394,36 @@ export function PlacesStep({
     setAddOpen(true);
   }
 
-  function openPlanSheet() {
+  function openPlanSheet(intent: "generate" | "regenerate" = "generate") {
+    setPlanIntent(intent);
     setPlanOpen(true);
   }
+
+  const hasRoutes = tripRoutes.length > 0;
+  const hasAccommodation = listTripAccommodations(trip).length > 0;
+  const missingSetupDetails = !hasRoutes || !hasAccommodation;
+
+  function requestPlanSheet(intent: "generate" | "regenerate" = "generate") {
+    if (missingSetupDetails) {
+      setPendingPlanIntent(intent);
+      setPlanSetupConfirmOpen(true);
+      return;
+    }
+    openPlanSheet(intent);
+  }
+
+  function planSetupWarningDescription(): string {
+    if (!hasRoutes && !hasAccommodation) {
+      return "You haven’t added flight or accommodation details. Your trip plan might be inaccurate. Do you confirm?";
+    }
+    if (!hasRoutes) {
+      return "You haven’t added flight details. Your trip plan might be inaccurate. Do you confirm?";
+    }
+    return "You haven’t added accommodation details. Your trip plan might be inaccurate. Do you confirm?";
+  }
+
+  const hasItinerary =
+    trip.itinerary.status !== "empty" && trip.itinerary.days.length > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5">
@@ -312,6 +437,16 @@ export function PlacesStep({
             you visit.
           </p>
         </div>
+        {hasItinerary ? (
+          <Button
+            icon={RefreshCw}
+            variant="secondary"
+            onClick={() => requestPlanSheet("regenerate")}
+            className="h-11 shrink-0 !border-border !bg-surface-elevated !text-text"
+          >
+            Regenerate ({recreateCost} AI credits)
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 rounded-xl bg-surface p-1">
@@ -337,13 +472,17 @@ export function PlacesStep({
             fitToMarkers
             centerOnCurrentLocation={false}
             onMarkerSelect={(id) => {
-              if (id.startsWith("__destination__") || id.startsWith("__stay__"))
+              if (
+                id.startsWith("__destination__") ||
+                id.startsWith("__stay__") ||
+                id.startsWith("__airport__")
+              )
                 return;
               const place = byId.get(id) ?? null;
               setDetail(place);
             }}
           />
-          {tripPlaces.length === 0 && !hasStayPins ? (
+          {tripPlaces.length === 0 && !hasStayPins && !hasAirportPins ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/55 to-transparent px-4 pb-4 pt-10">
               <div className="pointer-events-auto rounded-xl bg-surface-elevated/95 px-3 py-3 shadow-sm ring-1 ring-border backdrop-blur-sm">
                 <p className="text-sm font-medium text-text">No places yet</p>
@@ -366,12 +505,13 @@ export function PlacesStep({
         <ItineraryList
           trip={trip}
           byId={byId}
+          routesById={routesById}
           onToggleStatus={(dayIndex, locationId, status) =>
             void toggleItineraryPlace(dayIndex, locationId, status)
           }
           onOpen={(place) => setDetail(place)}
           onRemove={(id) => void removeFromTrip(id)}
-          onPlan={openPlanSheet}
+          onPlan={() => requestPlanSheet("generate")}
           onAddPlace={(dayIndex) => openAddSheet(dayIndex)}
           onAddPlaces={() => openAddSheet()}
           onUpdateItinerary={onUpdateItinerary}
@@ -398,7 +538,9 @@ export function PlacesStep({
               {listTripDestinations(trip)
                 .map((dest) => dest.cityName)
                 .filter(Boolean)
-                .join(", ") || trip.destination.countryName}{" "}
+                .join(", ") ||
+                listTripDestinations(trip)[0]?.countryName ||
+                "your destinations"}{" "}
               left to add. Save places from those destinations on your map
               first.
             </p>
@@ -437,9 +579,23 @@ export function PlacesStep({
         locations={locations}
         aiCreditsBalance={aiCreditsBalance}
         language={language}
+        intent={planIntent}
         onSaved={async (payload) => {
           await onSavePlan(payload);
           setView("itinerary");
+        }}
+      />
+
+      <ConfirmModal
+        open={planSetupConfirmOpen}
+        title="Plan without full details?"
+        description={planSetupWarningDescription()}
+        confirmLabel="Plan anyway"
+        cancelLabel="Go back"
+        onCancel={() => setPlanSetupConfirmOpen(false)}
+        onConfirm={() => {
+          setPlanSetupConfirmOpen(false);
+          openPlanSheet(pendingPlanIntent);
         }}
       />
 
@@ -458,6 +614,10 @@ export function PlacesStep({
           setDetail({ ...detail, note });
         }}
       />
+
+      {view === "itinerary" ? (
+        <TripSetupChecklist trip={trip} userId={userId} />
+      ) : null}
     </div>
   );
 }
@@ -493,6 +653,7 @@ function ViewTab({
 function ItineraryList({
   trip,
   byId,
+  routesById,
   onToggleStatus,
   onOpen,
   onRemove,
@@ -503,6 +664,7 @@ function ItineraryList({
 }: {
   trip: TripPlannerDoc;
   byId: Map<string, SavedLocation>;
+  routesById: Map<string, TripRoute>;
   onToggleStatus: (
     dayIndex: number,
     locationId: string,
@@ -649,7 +811,9 @@ function ItineraryList({
         const activePlaces = day.places.filter((slot) =>
           isActiveItinerarySlot(slot, byId)
         );
-        const placeCount = activePlaces.length;
+        const placeCount = activePlaces.filter(
+          (slot) => slot.type !== "gap" && slot.type !== "route"
+        ).length;
         const dateLabel = day.date.toDate().toLocaleDateString("en-GB", {
           weekday: "short",
           day: "numeric",
@@ -711,8 +875,135 @@ function ItineraryList({
               <>
                 <ul className="mt-4 space-y-1">
                   {activePlaces.map((slot) => {
+                    if (slot.type === "gap") {
+                      const gapTitle =
+                        slot.title?.trim() ||
+                        (slot.cityName
+                          ? `Time in ${slot.cityName}`
+                          : "Free time");
+                      const gapDuration =
+                        slot.durationMinutes != null &&
+                        Number.isFinite(slot.durationMinutes)
+                          ? formatAvailableDuration(slot.durationMinutes)
+                          : null;
+                      return (
+                        <li
+                          key={slot.locationId}
+                          className="flex items-start gap-3 rounded-xl px-1 py-2"
+                        >
+                          <span className="mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-tint text-primary">
+                            <Sparkles className="h-3 w-3" aria-hidden />
+                          </span>
+                          <div className="min-w-0 flex-1 py-1.5">
+                            <p className="text-sm font-semibold text-text">
+                              {gapTitle}
+                            </p>
+                            {gapDuration ? (
+                              <p className="mt-0.5 text-xs text-text-secondary">
+                                {gapDuration} layover
+                              </p>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    }
+
+                    if (slot.type === "route") {
+                      const route =
+                        (slot.routeId
+                          ? routesById.get(slot.routeId)
+                          : undefined) ??
+                        (slot.locationId.startsWith("route:")
+                          ? routesById.get(slot.locationId.slice(6))
+                          : undefined);
+                      const title =
+                        slot.title?.trim() ||
+                        (route
+                          ? `${route.from.name} → ${route.to.name}`
+                          : "Transfer");
+                      const TransportIcon = route
+                        ? ROUTE_TRANSPORT_ICON[route.transport]
+                        : TrainFront;
+                      const transportLabel = route
+                        ? ROUTE_TRANSPORT_LABEL[route.transport]
+                        : "Transfer";
+                      const duration = route
+                        ? formatRouteDuration(
+                            route.durationMinutes,
+                            route.durationApproximate ?? true
+                          )
+                        : slot.durationMinutes != null
+                          ? formatAvailableDuration(slot.durationMinutes)
+                          : null;
+                      const routeNote = route?.note?.trim() || null;
+                      const price =
+                        route?.priceLabel?.trim() ||
+                        (route?.priceAmount != null
+                          ? route.priceAmount === 0
+                            ? "Free"
+                            : `${route.priceAmount}${
+                                route.priceCurrency
+                                  ? ` ${route.priceCurrency}`
+                                  : ""
+                              }`
+                          : null);
+                      return (
+                        <li
+                          key={slot.locationId}
+                          className="flex items-start gap-3 rounded-xl px-1 py-2"
+                        >
+                          <span className="mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-tint text-primary">
+                            <TransportIcon className="h-3 w-3" aria-hidden />
+                          </span>
+                          <div className="min-w-0 flex-1 py-1.5">
+                            <p className="text-sm font-semibold text-text">
+                              {title}
+                            </p>
+                            <p className="mt-0.5 text-xs text-text-secondary">
+                              {[transportLabel, duration]
+                                .filter(Boolean)
+                                .join(" · ")}
+                              {routeNote
+                                ? `${duration || transportLabel ? " · " : ""}${routeNote}`
+                                : ""}
+                            </p>
+                            {(price || route?.link) && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                {price ? (
+                                  <span className="inline-flex items-center rounded-full bg-surface px-2 py-0.5 text-[11px] font-medium text-text">
+                                    {price}
+                                  </span>
+                                ) : null}
+                                {route?.link ? (
+                                  <a
+                                    href={route.link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    Book / info
+                                  </a>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    }
+
                     const place = byId.get(slot.locationId);
                     const visited = slot.status === "visited";
+                    const displayTitle =
+                      slot.title?.trim() ||
+                      place?.title?.trim() ||
+                      "Unknown place";
+                    const displayDescription =
+                      slot.description?.trim() ||
+                      place?.description?.trim() ||
+                      place?.ai?.why?.trim() ||
+                      null;
+                    const displayNote = place?.note?.trim() || null;
                     const distanceLabel =
                       userCoords && place
                         ? formatDistanceFrom(userCoords, {
@@ -725,6 +1016,12 @@ function ItineraryList({
                       : null;
                     const links =
                       place?.links?.filter((l) => l.url?.trim()) ?? [];
+                    const locality = [
+                      place?.city.name,
+                      place?.country.name,
+                    ]
+                      .filter(Boolean)
+                      .join(", ");
                     const hasMeta = Boolean(priceLabel) || links.length > 0;
                     return (
                       <li
@@ -759,7 +1056,10 @@ function ItineraryList({
                             className="shrink-0 text-left"
                             onClick={() => place && onOpen(place)}
                           >
-                            <PlaceThumb place={place} />
+                            <PlaceThumb
+                              place={place}
+                              imageUrl={slot.imageUrl}
+                            />
                           </button>
                           <div className="min-w-0 flex-1">
                             <button
@@ -767,9 +1067,9 @@ function ItineraryList({
                               className="w-full min-w-0 text-left"
                               onClick={() => place && onOpen(place)}
                             >
-                              <span className="flex min-w-0 items-center gap-2">
+                              <span className="flex min-w-0 flex-wrap items-center gap-2">
                                 <span className="truncate text-sm font-semibold text-text">
-                                  {place?.title ?? "Unknown place"}
+                                  {displayTitle}
                                 </span>
                                 {place?.category ? (
                                   <span className="shrink-0 rounded-full bg-primary-tint px-2 py-0.5 text-[10px] font-medium text-primary">
@@ -781,13 +1081,24 @@ function ItineraryList({
                               <span className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-text-secondary">
                                 <MapPin className="h-3 w-3 shrink-0" />
                                 <span className="truncate">
-                                  {place?.city.name ?? "Unknown area"}
+                                  {locality || "Unknown area"}
                                   {distanceLabel
                                     ? ` · ${distanceLabel}`
                                     : ""}
                                 </span>
                               </span>
                             </button>
+                            {displayDescription ? (
+                              <p className="mt-1 text-xs text-text-secondary">
+                                {displayDescription}
+                              </p>
+                            ) : null}
+                            {displayNote ? (
+                              <p className="mt-1 text-xs text-text">
+                                <span className="font-medium">Note: </span>
+                                {displayNote}
+                              </p>
+                            ) : null}
                             {hasMeta ? (
                               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                                 {priceLabel ? (
@@ -804,7 +1115,10 @@ function ItineraryList({
                                     className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                                   >
                                     <ExternalLink className="h-3 w-3" />
-                                    {link.label?.trim() || "Tickets / info"}
+                                    {link.label?.trim() ||
+                                      (place?.category === "transport"
+                                        ? "Buy tickets"
+                                        : "Tickets / info")}
                                   </a>
                                 ))}
                               </div>
@@ -829,9 +1143,10 @@ function ItineraryList({
                     );
                   })}
                 </ul>
-                {placeCount === 0 ? (
+                {placeCount === 0 &&
+                !activePlaces.some((slot) => slot.type === "route") ? (
                   <p className="mt-4 rounded-xl bg-surface px-3 py-2.5 text-sm text-text-secondary">
-                    Free time — nothing scheduled.
+                    No places on this day yet — add one or regenerate the plan.
                   </p>
                 ) : null}
 
@@ -920,8 +1235,18 @@ function DayWeatherBadge({
   );
 }
 
-function PlaceThumb({ place }: { place?: SavedLocation | null }) {
-  const image = place?.images[0]?.url?.trim() || null;
+function PlaceThumb({
+  place,
+  imageUrl,
+}: {
+  place?: SavedLocation | null;
+  /** Prefer itinerary/plan image so thumbs match PlanTripSheet. */
+  imageUrl?: string | null;
+}) {
+  const image =
+    imageUrl?.trim() ||
+    place?.images[0]?.url?.trim() ||
+    null;
   return (
     <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-divider">
       {image ? (

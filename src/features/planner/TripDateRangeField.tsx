@@ -48,6 +48,8 @@ interface TripDateRangeFieldProps {
   className?: string;
   /** Disallow dates before this day. Pass null to allow any past date. */
   minDate?: Date | null;
+  /** Inclusive max days between start and end. */
+  maxSpanDays?: number;
 }
 
 /**
@@ -61,6 +63,7 @@ export function TripDateRangeField({
   disabled,
   className,
   minDate,
+  maxSpanDays,
 }: TripDateRangeFieldProps) {
   const [open, setOpen] = useState(defaultOpen);
   const daysLabel = dayCountLabel(value);
@@ -110,6 +113,7 @@ export function TripDateRangeField({
             value={value}
             disabled={disabled}
             minDate={minDate}
+            maxSpanDays={maxSpanDays}
             onCancel={() => setOpen(false)}
             onApply={(next) => {
               onChange(next);

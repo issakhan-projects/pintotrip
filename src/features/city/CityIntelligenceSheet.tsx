@@ -29,13 +29,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
-import { getCityIntelligence } from "@/services/functions";
+import { getCityIntelligenceForPlace } from "@/services/functions";
 import { createUserLocation, listUserLocations } from "@/services/locations";
 import { getUserProfile, updateUserProfile } from "@/services/users";
 import { resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
-import { resolveCityGooglePlaceId, resolveEnglishPlaceIds, withCityGooglePlaceId } from "@/lib/maps";
-import { fetchPlacePhotoUrl } from "@/features/add-place/placeSearch";
+import { resolveEnglishPlaceIds, withCityGooglePlaceId, englishPlaceIdsFromNames } from "@/lib/maps";
+import { fetchPexelsCityPhoto } from "@/lib/pexels";
 import { Timestamp } from "firebase/firestore";
 import {
   CITY_INTELLIGENCE_DISCLAIMER,
@@ -90,31 +90,44 @@ export function CityIntelligenceSheet({
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [photoCredit, setPhotoCredit] = useState<{
+    photographer: string;
+    photographerUrl?: string | null;
+    pexelsUrl?: string | null;
+  } | null>(null);
 
-  // Load a Google Maps city photo for the sheet header.
+  // Load a Pexels city photo for the sheet header.
   useEffect(() => {
     if (!open || !city) {
       setPhotoUrl(null);
+      setPhotoCredit(null);
       return;
     }
 
     let cancelled = false;
     setPhotoUrl(null);
+    setPhotoCredit(null);
 
     void (async () => {
       try {
-        const placeId = await resolveCityGooglePlaceId({
-          key: `${city.cityName}:${city.countryName}:${city.lat},${city.lon}`,
+        const photo = await fetchPexelsCityPhoto({
           cityName: city.cityName,
           countryName: city.countryName,
-          lat: city.lat,
-          lon: city.lon,
         });
-        if (!placeId || cancelled) return;
-        const url = await fetchPlacePhotoUrl(placeId);
-        if (!cancelled) setPhotoUrl(url);
+        if (cancelled || !photo) return;
+        setPhotoUrl(photo.url);
+        if (photo.photographer) {
+          setPhotoCredit({
+            photographer: photo.photographer,
+            photographerUrl: photo.photographerUrl,
+            pexelsUrl: photo.pexelsUrl,
+          });
+        }
       } catch {
-        if (!cancelled) setPhotoUrl(null);
+        if (!cancelled) {
+          setPhotoUrl(null);
+          setPhotoCredit(null);
+        }
       }
     })();
 
@@ -176,7 +189,7 @@ export function CityIntelligenceSheet({
     setData(null);
     setVisaExpanded(false);
 
-    getCityIntelligence({
+    getCityIntelligenceForPlace({
       city: city.cityName,
       country: city.countryName,
       lat: city.lat,
@@ -290,7 +303,6 @@ export function CityIntelligenceSheet({
       (details.practicalInfo.transport ||
         details.practicalInfo.walkability ||
         details.practicalInfo.payment ||
-        details.practicalInfo.safety ||
         details.practicalInfo.tips?.length)
   );
   const usefulApps = getUsefulApps(data, details);
@@ -312,6 +324,32 @@ export function CityIntelligenceSheet({
                 alt={city.cityName}
                 className="h-full w-full object-cover"
               />
+              {photoCredit ? (
+                <p className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 to-transparent px-3 pb-2 pt-6 text-[11px] text-white/90">
+                  Photo by{" "}
+                  {photoCredit.photographerUrl ? (
+                    <a
+                      href={photoCredit.photographerUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline underline-offset-2"
+                    >
+                      {photoCredit.photographer}
+                    </a>
+                  ) : (
+                    photoCredit.photographer
+                  )}{" "}
+                  on{" "}
+                  <a
+                    href={photoCredit.pexelsUrl || "https://www.pexels.com"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline underline-offset-2"
+                  >
+                    Pexels
+                  </a>
+                </p>
+              ) : null}
             </div>
           ) : null}
           <div className="flex items-start justify-between gap-3">
@@ -334,18 +372,14 @@ export function CityIntelligenceSheet({
                   isFavorite ? "Remove saved place" : "Save place"
                 }
                 title={isFavorite ? "Saved" : "Save place"}
-                className={
-                  isFavorite
-                    ? "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:opacity-50"
-                    : "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-primary hover:bg-primary-tint hover:text-primary disabled:opacity-50"
-                }
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-primary-hover disabled:opacity-50"
               >
                 {favoriteBusy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                 ) : (
                   <Bookmark
                     className="h-3.5 w-3.5"
-                    fill={isFavorite ? "currentColor" : "none"}
+                    fill="currentColor"
                     aria-hidden
                   />
                 )}
@@ -471,133 +505,114 @@ export function CityIntelligenceSheet({
           </div>
 
           {/* Safety */}
-          {(data.safeRate || details?.practicalInfo?.safeRate) && (
+          {(data.safeRate) && (
             <SafeRateCard data={data} details={details} />
           )}
 
-          {/* Best time + Budget */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {bestTimePrimary ? (
-              <MetricCard
-                icon={CalendarDays}
-                label="Best time to visit"
-                value={bestTimePrimary}
-                hint={bestTimeHint}
-              />
-            ) : null}
-            {(data.approximateDailyBudget || details?.dailyBudget) && (
-              <MetricCard
-                icon={Wallet}
-                label="Estimated daily budget"
-                value={formatBudget(data, details)}
-                hint={
-                  data.approximateDailyBudget?.summary ||
-                  details?.dailyBudget?.description
-                }
-              />
-            )}
-          </div>
-
-          {/* Visa + Climate */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {visaSummary ? (
-              <div className="flex flex-col rounded-2xl bg-surface px-4 py-3.5">
-                <SectionHeader icon={BookOpen} label="Visa" />
-                <p className="mt-2.5 text-sm leading-relaxed text-text">
-                  {visaSummary}
+          {/* Best time / Budget / Visa / Climate — each full width */}
+          {bestTimePrimary ? (
+            <MetricCard
+              icon={CalendarDays}
+              label="Best time to visit"
+              value={bestTimePrimary}
+              hint={bestTimeHint}
+            />
+          ) : null}
+          {details?.dailyBudget ? (
+            <MetricCard
+              icon={Wallet}
+              label="Estimated daily budget"
+              value={formatBudgetPrimary(data, details)}
+              hint={formatBudgetHint(data, details)}
+            />
+          ) : null}
+          {visaSummary ? (
+            <div className="flex flex-col rounded-2xl bg-surface px-4 py-3.5">
+              <SectionHeader icon={BookOpen} label="Visa" />
+              <p className="mt-2.5 text-sm leading-relaxed text-text">
+                {visaSummary}
+              </p>
+              {visaExpanded && visaExtra ? (
+                <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                  {visaExtra}
                 </p>
-                {visaExpanded && visaExtra ? (
-                  <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-                    {visaExtra}
-                  </p>
-                ) : null}
-                <div className="mt-auto flex items-end justify-between gap-2 pt-3">
-                  {visaExtra ? (
-                    <button
-                      type="button"
-                      onClick={() => setVisaExpanded((v) => !v)}
-                      className="text-sm font-medium text-sky-700 hover:underline"
-                    >
-                      {visaExpanded ? "Hide details ‹" : "Show details ›"}
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <span className="inline-flex shrink-0 items-center rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-medium text-orange-700">
-                    Requires verification
+              ) : null}
+              <div className="mt-auto flex items-end justify-between gap-2 pt-3">
+                {visaExtra ? (
+                  <button
+                    type="button"
+                    onClick={() => setVisaExpanded((v) => !v)}
+                    className="text-sm font-medium text-sky-700 hover:underline"
+                  >
+                    {visaExpanded ? "Hide details ‹" : "Show details ›"}
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <span className="inline-flex shrink-0 items-center rounded-full bg-orange-50 px-2.5 py-1 text-[11px] font-medium text-orange-700">
+                  Requires verification
+                </span>
+              </div>
+            </div>
+          ) : null}
+          {details?.climate?.description ? (
+            <div className="flex flex-col rounded-2xl bg-surface px-4 py-3.5">
+              <SectionHeader icon={Sun} label="Climate" />
+              <p className="mt-2.5 text-sm leading-relaxed text-text">
+                {details.climate.description}
+              </p>
+              {climateTemp ? (
+                <div className="mt-auto pt-3">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-800">
+                    <Thermometer className="h-3 w-3" strokeWidth={2} />
+                    {climateTemp}
                   </span>
                 </div>
-              </div>
-            ) : null}
-
-            {details?.climate?.description ? (
-              <div className="flex flex-col rounded-2xl bg-surface px-4 py-3.5">
-                <SectionHeader icon={Sun} label="Climate" />
-                <p className="mt-2.5 text-sm leading-relaxed text-text">
-                  {details.climate.description}
-                </p>
-                {climateTemp ? (
-                  <div className="mt-auto pt-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-800">
-                      <Thermometer className="h-3 w-3" strokeWidth={2} />
-                      {climateTemp}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Practical info */}
           {hasPractical && details?.practicalInfo ? (
             <div className="rounded-2xl bg-surface px-4 py-3.5">
               <SectionHeader icon={Car} label="Practical info" />
-              <div className="mt-3 overflow-hidden rounded-xl ring-1 ring-border/70">
-                <table className="w-full border-collapse text-left text-sm">
-                  <tbody>
-                    {details.practicalInfo.transport ? (
-                      <PracticalRow
-                        label="Transport"
-                        value={details.practicalInfo.transport}
-                      />
-                    ) : null}
-                    {details.practicalInfo.walkability ? (
-                      <PracticalRow
-                        label="Walkability"
-                        value={details.practicalInfo.walkability}
-                      />
-                    ) : null}
-                    {details.practicalInfo.payment ? (
-                      <PracticalRow
-                        label="Payment"
-                        value={details.practicalInfo.payment}
-                      />
-                    ) : null}
-                    {details.practicalInfo.safety ? (
-                      <PracticalRow
-                        label="Safety"
-                        value={details.practicalInfo.safety}
-                      />
-                    ) : null}
-                    {details.practicalInfo.tips?.length ? (
-                      <tr className="border-t border-border/70 bg-white/50 first:border-t-0">
-                        <th
-                          scope="row"
-                          className="w-[34%] align-top px-3 py-2.5 font-semibold text-text sm:w-36"
-                        >
-                          Travel tips
-                        </th>
-                        <td className="px-3 py-2.5 text-text-secondary">
-                          <ul className="list-disc space-y-1 pl-4 leading-relaxed">
-                            {details.practicalInfo.tips.map((tip) => (
-                              <li key={tip}>{tip}</li>
-                            ))}
-                          </ul>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <div className="mt-3 w-full overflow-hidden text-sm">
+                {details.practicalInfo.transport ? (
+                  <PracticalRow
+                    label="Transport"
+                    value={details.practicalInfo.transport}
+                  />
+                ) : null}
+                {details.practicalInfo.walkability ? (
+                  <PracticalRow
+                    label="Walkability"
+                    value={details.practicalInfo.walkability}
+                  />
+                ) : null}
+                {details.practicalInfo.payment ? (
+                  <PracticalRow
+                    label="Payment"
+                    value={details.practicalInfo.payment}
+                  />
+                ) : null}
+                {data.safeRate?.summary ? (
+                  <PracticalRow
+                    label="Safety"
+                    value={data.safeRate.summary}
+                  />
+                ) : null}
+                {details.practicalInfo.tips?.length ? (
+                  <div className="flex w-full flex-col border-t border-border/70 bg-white/50 first:border-t-0">
+                    <span className="px-3 pt-2.5 font-semibold text-text">
+                      Travel tips
+                    </span>
+                    <ul className="list-disc space-y-1 px-3 pb-2.5 pl-7 leading-relaxed text-text-secondary">
+                      {details.practicalInfo.tips.map((tip) => (
+                        <li key={tip}>{tip}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -654,10 +669,10 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-text-secondary ring-1 ring-border/80">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-text-secondary ring-1 ring-border/80">
         <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
       </span>
-      <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
+      <p className="whitespace-nowrap text-[11px] font-medium uppercase tracking-wide text-text-muted">
         {label}
       </p>
     </div>
@@ -693,17 +708,12 @@ function MetricCard({
 
 function PracticalRow({ label, value }: { label: string; value: string }) {
   return (
-    <tr className="border-t border-border/70 bg-white/50 first:border-t-0">
-      <th
-        scope="row"
-        className="w-[34%] align-top px-3 py-2.5 font-semibold text-text sm:w-36"
-      >
-        {label}
-      </th>
-      <td className="px-3 py-2.5 leading-relaxed text-text-secondary">
+    <div className="flex w-full flex-col border-t border-border/50 first:border-t-0">
+      <span className="px-3 pt-2.5 font-semibold text-text">{label}</span>
+      <span className="px-3 pb-2.5 leading-relaxed text-text-secondary">
         {value}
-      </td>
-    </tr>
+      </span>
+    </div>
   );
 }
 
@@ -723,9 +733,9 @@ const USEFUL_APP_META: Record<
 
 function getUsefulApps(
   data: CityIntelligenceResult | null,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): UsefulApp[] {
-  const apps = data?.usefulApps ?? details?.usefulApps;
+  const apps = data?.usefulApps;
   if (!apps?.length) return [];
   return apps.filter((app) => app.isRecommended !== false).slice(0, 8);
 }
@@ -780,11 +790,8 @@ function buildCityPlaceDescription(
   }
 
   const details = data.details;
-  const currency = details?.currency
-    ? [details.currency.name, details.currency.code && `(${details.currency.code})`]
-        .filter(Boolean)
-        .join(" ")
-    : data.currency;
+  const currency =
+    data.exchangeRate?.to || details?.dailyBudget?.currency || "";
   if (currency) lines.push(`Currency: ${currency}`);
 
   if (data.exchangeRate) {
@@ -795,16 +802,16 @@ function buildCityPlaceDescription(
 
   const bestTime =
     data.bestTimeToVisit?.summary ||
-    details?.bestTimeToVisit?.description ||
-    details?.bestTimeToVisit?.months?.join(", ");
+    data.bestTimeToVisit?.months?.join(", ");
   if (bestTime) lines.push(`Best time: ${bestTime}`);
 
-  const visa =
-    data.visaRequirements?.summary || details?.visa?.description;
+  const visa = data.visa?.description;
   if (visa) lines.push(`Visa: ${visa}`);
 
-  const budget = formatBudget(data, details);
+  const budget = formatBudgetPrimary(data, details);
   if (budget) lines.push(`Daily budget: ${budget}`);
+  const budgetHint = formatBudgetHint(data, details);
+  if (budgetHint) lines.push(budgetHint);
 
   if (details?.climate?.description) {
     lines.push(`Climate: ${details.climate.description}`);
@@ -813,8 +820,8 @@ function buildCityPlaceDescription(
   if (details?.practicalInfo?.transport) {
     lines.push(`Transport: ${details.practicalInfo.transport}`);
   }
-  if (details?.practicalInfo?.safety) {
-    lines.push(`Safety: ${details.practicalInfo.safety}`);
+  if (data.safeRate?.summary) {
+    lines.push(`Safety: ${data.safeRate.summary}`);
   }
 
   lines.push(CITY_INTELLIGENCE_DISCLAIMER);
@@ -846,7 +853,12 @@ async function saveCityAsPlace(
   const cityName = city.cityName;
   const description = buildCityPlaceDescription(city, data);
   // Localized display names slugify to "unknown" — resolve English/ASCII ids from coords.
-  const englishIds = await resolveEnglishPlaceIds(city.lat, city.lon);
+  const englishIds =
+    englishPlaceIdsFromNames(
+      cityName,
+      countryName,
+      resolveCountryCode(countryName) || undefined
+    ) ?? (await resolveEnglishPlaceIds(city.lat, city.lon));
   const countryCode =
     englishIds?.countryCode ||
     resolveCountryCode(countryName) ||
@@ -878,9 +890,13 @@ async function saveCityAsPlace(
   );
   const photoUrl =
     existingPhotoUrl ||
-    (cityData.googlePlaceId
-      ? await fetchPlacePhotoUrl(cityData.googlePlaceId)
-      : null);
+    (
+      await fetchPexelsCityPhoto({
+        cityName: city.cityName,
+        countryName: city.countryName,
+      })
+    )?.url ||
+    null;
 
   await createUserLocation(userId, {
     title: cityName,
@@ -908,62 +924,41 @@ function getCurrencyParts(
   data: CityIntelligenceResult,
   details?: CityIntelligenceDetails
 ): { primary: string; symbol?: string } {
-  if (details?.currency) {
-    const { name, code, symbol } = details.currency;
-    const primary = [name, code && `(${code})`].filter(Boolean).join(" ");
-    return {
-      primary: primary || data.currency,
-      symbol: symbol || undefined,
-    };
-  }
-  return { primary: data.currency };
+  const code =
+    data.exchangeRate?.to || details?.dailyBudget?.currency || "";
+  return { primary: code || "—" };
 }
 
 function formatBestTimePrimary(
   data: CityIntelligenceResult,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): string {
   if (data.bestTimeToVisit?.months?.length) {
     return data.bestTimeToVisit.months.join(", ");
   }
-  if (details?.bestTimeToVisit?.months?.length) {
-    return details.bestTimeToVisit.months.join(", ");
-  }
-  return (
-    data.bestTimeToVisit?.summary ||
-    details?.bestTimeToVisit?.season ||
-    details?.bestTimeToVisit?.description ||
-    ""
-  );
+  return data.bestTimeToVisit?.summary || "";
 }
 
 function formatBestTimeHint(
   data: CityIntelligenceResult,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): string | undefined {
-  const monthsShown =
-    Boolean(data.bestTimeToVisit?.months?.length) ||
-    Boolean(details?.bestTimeToVisit?.months?.length);
+  const monthsShown = Boolean(data.bestTimeToVisit?.months?.length);
   if (!monthsShown) return undefined;
-  return (
-    data.bestTimeToVisit?.summary ||
-    details?.bestTimeToVisit?.description ||
-    details?.bestTimeToVisit?.season
-  );
+  return data.bestTimeToVisit?.summary;
 }
 
 function formatVisaSummary(
   data: CityIntelligenceResult,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): string {
   return (
-    data.visaRequirements?.summary ||
-    details?.visa?.description ||
-    (details?.visa?.required === true
+    data.visa?.description ||
+    (data.visa?.required === true
       ? "Visa required"
-      : details?.visa?.required === false
+      : data.visa?.required === false
         ? "Visa not required"
-        : details?.visa
+        : data.visa
           ? "Visa status unknown"
           : "")
   );
@@ -971,37 +966,30 @@ function formatVisaSummary(
 
 function formatVisaExtra(
   data: CityIntelligenceResult,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): string | null {
-  const visa = details?.visa;
+  const visa = data.visa;
   const parts: string[] = [];
   if (visa?.type) parts.push(`Type: ${visa.type}`);
   if (visa?.cost?.amount != null) {
     const cur = visa.cost.currency ? ` ${visa.cost.currency}` : "";
     parts.push(`Approx. cost: ${visa.cost.amount}${cur}`);
   }
-  const source = data.visaRequirements?.source;
-  if (source) parts.push(`Source: ${source}`);
+  if (visa?.verificationRequired) {
+    parts.push("Verify with official immigration sources");
+  }
   return parts.length ? parts.join(" · ") : null;
 }
 
 function getSafeRateValues(
   data: CityIntelligenceResult,
-  details?: CityIntelligenceDetails
+  _details?: CityIntelligenceDetails
 ): { score: number; outOf: number; summary?: string } | null {
   if (data.safeRate) {
     return {
       score: data.safeRate.score,
       outOf: data.safeRate.outOf,
       summary: data.safeRate.summary,
-    };
-  }
-  const nested = details?.practicalInfo?.safeRate;
-  if (nested?.score != null && Number.isFinite(nested.score)) {
-    return {
-      score: nested.score,
-      outOf: nested.outOf || 10,
-      summary: nested.summary || details?.practicalInfo?.safety,
     };
   }
   return null;
@@ -1067,10 +1055,7 @@ function SafeRateCard({
   const normalized = outOf > 0 ? Math.min(1, Math.max(0, score / outOf)) : 0;
   const percent = Math.round(normalized * 100);
   const tone = safeRateTone(normalized);
-  const hint =
-    summary ||
-    details?.practicalInfo?.safeRate?.summary ||
-    details?.practicalInfo?.safety;
+  const hint = summary;
   const scoreLabel = score % 1 === 0 ? score.toFixed(0) : score.toFixed(1);
 
   return (
@@ -1078,24 +1063,19 @@ function SafeRateCard({
       <CityscapeSilhouette />
 
       <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div className="w-full shrink-0 sm:w-auto">
           <SectionHeader icon={ShieldCheck} label="Safety rate" />
           <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-            <p className="text-3xl font-semibold leading-none tracking-tight text-text">
-              {scoreLabel}
+            <p className="inline-flex items-baseline whitespace-nowrap text-3xl font-semibold leading-none tracking-tight text-text">
+              <span>{scoreLabel}</span>
               <span className="ml-1 text-base font-medium text-text-secondary">
                 / {outOf}
               </span>
             </p>
-            <span
-              className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${tone.badge}`}
-            >
-              {tone.label}
-            </span>
           </div>
         </div>
         {hint ? (
-          <p className="max-w-sm text-sm leading-relaxed text-text-secondary sm:pt-6 sm:text-right">
+          <p className="min-w-0 flex-1 text-sm leading-relaxed text-text-secondary sm:pt-6 sm:text-right">
             {hint}
           </p>
         ) : null}
@@ -1139,19 +1119,73 @@ function CityscapeSilhouette() {
   );
 }
 
-function formatBudget(
+function formatMoney(amount: number, code: string): string {
+  const rounded =
+    amount >= 100 ? Math.round(amount) : Math.round(amount * 10) / 10;
+  return `~${rounded} ${code}`;
+}
+
+/**
+ * Primary line: mid-range in the traveler's currency when FX is available.
+ * Falls back to local city currency.
+ */
+function formatBudgetPrimary(
   data: CityIntelligenceResult,
   details?: CityIntelligenceDetails
 ): string {
-  if (data.approximateDailyBudget) {
-    return `${data.approximateDailyBudget.amount} ${data.approximateDailyBudget.currency} / day`;
+  const midUser = details?.dailyBudget?.midRange?.userCurrency;
+  const midLocal = details?.dailyBudget?.midRange?.local;
+  const localCode =
+    details?.dailyBudget?.currency?.trim().toUpperCase() ||
+    data.exchangeRate?.to?.trim().toUpperCase() ||
+    "";
+  const userCode = data.exchangeRate?.from?.trim().toUpperCase() || "";
+
+  if (midUser != null && Number.isFinite(midUser) && userCode) {
+    return `${formatMoney(midUser, userCode)} / day`;
   }
-  const mid = details?.dailyBudget?.midRange?.local;
-  const currency = details?.dailyBudget?.currency;
-  if (mid != null && currency) {
-    return `~${mid} ${currency} / day (mid-range)`;
+  if (midLocal != null && Number.isFinite(midLocal) && localCode) {
+    return `${formatMoney(midLocal, localCode)} / day`;
   }
   return details?.dailyBudget?.description ?? "";
+}
+
+/**
+ * Secondary line: local city amount + optional description.
+ */
+function formatBudgetHint(
+  data: CityIntelligenceResult,
+  details?: CityIntelligenceDetails
+): string | undefined {
+  const midUser = details?.dailyBudget?.midRange?.userCurrency;
+  const midLocal = details?.dailyBudget?.midRange?.local;
+  const localCode =
+    details?.dailyBudget?.currency?.trim().toUpperCase() ||
+    data.exchangeRate?.to?.trim().toUpperCase() ||
+    "";
+  const userCode = data.exchangeRate?.from?.trim().toUpperCase() || "";
+  const description = details?.dailyBudget?.description?.trim();
+
+  const parts: string[] = [];
+
+  // When primary is user currency, also show the city currency amount.
+  if (
+    midUser != null &&
+    Number.isFinite(midUser) &&
+    userCode &&
+    midLocal != null &&
+    Number.isFinite(midLocal) &&
+    localCode &&
+    localCode !== userCode
+  ) {
+    parts.push(`${formatMoney(midLocal, localCode)} locally (mid-range)`);
+  } else if (midLocal != null && Number.isFinite(midLocal) && localCode) {
+    parts.push("Mid-range estimate");
+  }
+
+  if (description) parts.push(description);
+
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 function formatTemperature(avg?: {

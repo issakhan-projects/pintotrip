@@ -11,7 +11,7 @@ import {
   Shield,
   Trash2,
 } from "lucide-react";
-import { Button, ConfirmModal, TextInput } from "@/components/ui";
+import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import {
   createTravelDocument,
   deleteTravelDocument,
@@ -132,12 +132,10 @@ export function MyDocumentsView({ userId }: MyDocumentsViewProps) {
           onEdit={() => setMode({ name: "form", id: viewing.id })}
           onDelete={() => setDeleteId(viewing.id)}
         />
-        <ConfirmModal
+        <DeleteConfirmModal
           open={deleteId === viewing.id}
           title="Delete document?"
           description="This removes it from this device only. It cannot be undone."
-          confirmLabel="Delete"
-          tone="danger"
           onCancel={() => setDeleteId(null)}
           onConfirm={() => {
             deleteTravelDocument(userId, viewing.id);
@@ -216,12 +214,10 @@ export function MyDocumentsView({ userId }: MyDocumentsViewProps) {
         </>
       )}
 
-      <ConfirmModal
+      <DeleteConfirmModal
         open={deleteId !== null && mode.name === "list"}
         title="Delete document?"
         description="This removes it from this device only. It cannot be undone."
-        confirmLabel="Delete"
-        tone="danger"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => {
           if (deleteId) {

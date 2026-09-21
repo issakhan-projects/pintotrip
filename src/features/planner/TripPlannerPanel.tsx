@@ -98,7 +98,6 @@ export function TripPlannerPanel({
   const filteredTrips = filterTrips(trips, tab);
 
   async function handleDelete(tripId: string) {
-    if (!window.confirm("Delete this trip? This cannot be undone.")) return;
     setDeletingId(tripId);
     try {
       // deleteTrip patches the shared trips cache — no list refetch.
@@ -247,7 +246,7 @@ export function TripPlannerPanel({
                     onDelete={
                       deletingId === trip.id
                         ? undefined
-                        : () => void handleDelete(trip.id)
+                        : () => handleDelete(trip.id)
                     }
                   />
                 ))}

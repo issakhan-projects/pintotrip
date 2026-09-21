@@ -31,13 +31,10 @@ import { listTravelDocuments } from "@/lib/documents";
 import type {
   PreparationCategory,
   PreparationItem,
-  TripAccommodation,
-  TripDocumentDetails,
   TripPlannerDoc,
-  TripVisaDetails,
 } from "@/types/trip-planner";
 import { preparationProgress } from "./tripUtils";
-import { TripEssentialsSection } from "./TripEssentialsSection";
+import { listTripDestinations } from "./tripDestinations";
 import { cx } from "@/lib/utils";
 import {
   isCustomPreparationItem,
@@ -70,9 +67,6 @@ interface BeforeYouGoStepProps {
   onAddItem: (title: string, link?: string) => void;
   onDeleteItem?: (itemId: string) => void;
   onSyncItems?: (items: PreparationItem[]) => void;
-  onUpdateAccommodation: (value: TripAccommodation | null) => Promise<void>;
-  onUpdateDocuments: (value: TripDocumentDetails | null) => Promise<void>;
-  onUpdateVisa: (value: TripVisaDetails | null) => Promise<void>;
   onGoToDetails: () => void;
   onGoToPlaces: () => void;
   onViewGuide?: () => void;
@@ -86,9 +80,6 @@ export function BeforeYouGoStep({
   onAddItem,
   onDeleteItem,
   onSyncItems,
-  onUpdateAccommodation,
-  onUpdateDocuments,
-  onUpdateVisa,
   onGoToDetails,
   onGoToPlaces,
   onViewGuide,
@@ -126,42 +117,31 @@ export function BeforeYouGoStep({
   }, [
     localDocs,
     trip.id,
-    trip.destination,
     trip.destinations,
     trip.from,
     trip.leisureType,
     trip.spendMoney,
     trip.startDate,
     trip.cityIntelligence,
-    trip.tripEssentials,
-    trip.preparation.accommodation,
     trip.preparation.documents,
     trip.preparation.visa,
   ]);
 
-  const intel = trip.cityIntelligence.result;
+  const intel = trip.cityIntelligence.results?.[0];
   const destCurrency = resolveCurrencyCode(
     trip.currency?.code ||
       trip.currency?.name ||
-      intel?.details?.currency?.code ||
-      intel?.currency ||
+      intel?.details?.dailyBudget?.currency ||
+      intel?.exchangeRate?.to ||
       ""
   );
   // Prefer profile currency; fall back to city-intel "from", then USD so rates still load.
   const fromCurrency = resolveCurrencyCode(
-    homeCurrency ||
-      intel?.exchangeRate?.from ||
-      intel?.details?.currency?.exchangeRate?.from ||
-      "USD"
+    homeCurrency || intel?.exchangeRate?.from || "USD"
   );
   const destLabel =
-    trip.currency?.name?.trim() ||
-    intel?.details?.currency?.name ||
-    destCurrency;
-  const destSymbol =
-    trip.currency?.symbol?.trim() ||
-    intel?.details?.currency?.symbol ||
-    "";
+    trip.currency?.name?.trim() || destCurrency;
+  const destSymbol = trip.currency?.symbol?.trim() || "";
 
   const [fxRate, setFxRate] = useState<number | null>(null);
   const [fxDate, setFxDate] = useState<string | null>(null);
@@ -267,14 +247,6 @@ export function BeforeYouGoStep({
         ) : null}
       </div>
 
-      <TripEssentialsSection
-        trip={trip}
-        userId={userId}
-        onUpdateAccommodation={onUpdateAccommodation}
-        onUpdateDocuments={onUpdateDocuments}
-        onUpdateVisa={onUpdateVisa}
-      />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-5">
         <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm sm:p-5 lg:col-span-2">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -344,32 +316,24 @@ export function BeforeYouGoStep({
                 <p className="text-xs text-red-600">{draftLinkError}</p>
               ) : null}
               <div className="flex gap-2">
-                <Button type="submit" disabled={!draft.trim()}>
-                  Add
+                <Button type="submit" icon={Plus} color="primary" disabled={!draft.trim()}>
+                  Add item
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    setAdding(false);
-                    setDraft("");
-                    setDraftLink("");
-                    setDraftLinkError(null);
-                  }}
-                >
+                <Button type="button" variant="secondary" onClick={() => setAdding(false)}>
                   Cancel
                 </Button>
               </div>
             </form>
           ) : (
-            <button
+            <Button
               type="button"
               onClick={() => setAdding(true)}
-              className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-surface px-4 py-3 text-sm font-medium text-text-secondary transition-colors hover:bg-primary-tint hover:text-primary"
+              className="mt-4 w-full"
+              icon={Plus}
+              color="primary"
             >
-              <Plus className="h-4 w-4" aria-hidden />
               Add custom item
-            </button>
+            </Button>
           )}
         </section>
 
@@ -410,81 +374,8 @@ export function BeforeYouGoStep({
             </span>
           </a>
 
-          <div className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
-                <Coins className="h-4 w-4" aria-hidden />
-              </span>
-              <h3 className="text-sm font-semibold text-text">Currency</h3>
-            </div>
-
-            {destCurrency ? (
-              <p className="mt-3 text-sm font-medium text-text">
-                {destCurrency}
-                {destLabel && destLabel !== destCurrency
-                  ? ` · ${destLabel}`
-                  : ""}
-                {destSymbol ? ` (${destSymbol})` : ""}
-              </p>
-            ) : (
-              <p className="mt-3 text-sm text-text-secondary">
-                Set a trip currency in trip details to see rates.
-              </p>
-            )}
-
-            {fxLoading ? (
-              <p className="mt-2 inline-flex items-center gap-2 text-sm text-text-secondary">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                Loading exchange rate…
-              </p>
-            ) : fromCurrency && destCurrency && fromCurrency === destCurrency ? (
-              <p className="mt-2 text-xs text-text-secondary">
-                Same as your home currency ({fromCurrency})
-              </p>
-            ) : fromCurrency && destCurrency && fxRate != null ? (
-              <p className="mt-2 flex items-center justify-between gap-2 text-sm text-text">
-                <span className="font-medium tabular-nums">
-                  1 {fromCurrency} ≈ {formatRate(fxRate)} {destCurrency}
-                </span>
-                <ChevronRight
-                  className="h-4 w-4 shrink-0 text-text-muted"
-                  aria-hidden
-                />
-              </p>
-            ) : null}
-
-            {fxError ? (
-              <p className="mt-2 text-xs text-text-muted">{fxError}</p>
-            ) : null}
-
-            {fxDate &&
-            fromCurrency &&
-            destCurrency &&
-            fromCurrency !== destCurrency &&
-            fxRate != null ? (
-              <p className="mt-1.5 text-[11px] text-text-muted">
-                Mid-market rate as of {fxDate} via{" "}
-                <a
-                  href="https://frankfurter.dev/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-2 hover:text-text-secondary"
-                >
-                  Frankfurter
-                </a>
-              </p>
-            ) : null}
-
-            <div className="mt-3 flex gap-2 rounded-xl bg-primary-tint px-3 py-2.5 text-xs leading-relaxed text-primary">
-              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              <p>{currencyTip}</p>
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      {aiInsight ? (
-        <section className="flex flex-col gap-3 rounded-2xl border border-primary/15 bg-primary-tint px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5">
+          {aiInsight ? (
+        <section className="flex flex-col gap-3 rounded-2xl border border-primary/15 bg-primary-tint px-4 py-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary shadow-sm">
               <Sparkles className="h-4 w-4" aria-hidden />
@@ -496,6 +387,8 @@ export function BeforeYouGoStep({
               </p>
             </div>
           </div>
+
+
           {onViewGuide ? (
             <Button
               type="button"
@@ -509,6 +402,13 @@ export function BeforeYouGoStep({
           ) : null}
         </section>
       ) : null}
+
+
+
+        </aside>
+      </div>
+
+ 
 
       <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center">
         <Button
@@ -525,6 +425,7 @@ export function BeforeYouGoStep({
           type="button"
           size="lg"
           iconRight={ArrowRight}
+          color="primary"
           className="w-full shrink-0 sm:ml-auto sm:w-auto sm:min-w-[14rem]"
           onClick={onGoToPlaces}
         >
@@ -627,27 +528,35 @@ function formatRate(rate: number): string {
 }
 
 function buildAiInsight(trip: TripPlannerDoc): string | null {
-  const result = trip.cityIntelligence.result;
-  if (!result) return null;
+  const results = trip.cityIntelligence.results ?? [];
+  if (results.length === 0) return null;
 
-  const destinations =
-    trip.destinations && trip.destinations.length > 0
-      ? trip.destinations
-      : [trip.destination];
+  const destinations = listTripDestinations(trip);
+  const fromCountryId = trip.from.countryId?.trim().toLowerCase();
+  const fromCountryName = trip.from.countryName?.trim().toLowerCase();
+  const allDomestic =
+    destinations.length > 0 &&
+    destinations.every((d) => {
+      const destId = d.countryId?.trim().toLowerCase();
+      if (fromCountryId && destId) return fromCountryId === destId;
+      const destName = d.countryName?.trim().toLowerCase();
+      return Boolean(fromCountryName && destName && fromCountryName === destName);
+    });
+
   const cities = [
     ...new Set(destinations.map((d) => d.cityName).filter(Boolean)),
   ];
-  const city = cities.join(", ") || trip.destination.cityName;
+  const city = cities.join(", ") || destinations[0]?.cityName || "";
   const parts: string[] = [];
 
-  const best =
-    result.bestTimeToVisit?.summary ||
-    result.details?.bestTimeToVisit?.description;
-  if (best) parts.push(best);
-
-  const visa =
-    result.visaRequirements?.summary || result.details?.visa?.description;
-  if (visa) parts.push(visa);
+  for (const result of results) {
+    const best = result.bestTimeToVisit?.summary;
+    if (best) parts.push(best);
+    if (!allDomestic) {
+      const visa = result.visa?.description;
+      if (visa) parts.push(visa);
+    }
+  }
 
   if (parts.length === 0) return null;
 

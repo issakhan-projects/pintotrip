@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
@@ -24,7 +24,7 @@ import { cx } from "@/lib/utils";
 
 interface TripCityIntelligenceBlockProps {
   status: CityIntelligenceStatus;
-  result?: CityIntelligenceResult;
+  results?: CityIntelligenceResult[];
   errorMessage?: string;
   lastUpdatedAt?: Timestamp;
   onRetry?: () => void;
@@ -53,17 +53,41 @@ const TONE_CLASS: Record<TileTone, string> = {
 
 /**
  * Compact City Intelligence summary for Trip Planner Step 1.
- * Matches the trip detail grid layout (currency, visa, climate, …).
+ * Supports one or many destination cities via results[].
  */
+function hasCity(
+  entry: CityIntelligenceResult
+): entry is CityIntelligenceResult & {
+  city: NonNullable<CityIntelligenceResult["city"]>;
+} {
+  return Boolean(entry?.city?.cityId);
+}
+
 export function TripCityIntelligenceBlock({
   status,
-  result,
+  results = [],
   errorMessage,
   lastUpdatedAt,
   onRetry,
 }: TripCityIntelligenceBlockProps) {
+  const validResults = useMemo(() => results.filter(hasCity), [results]);
   const isLoading = status === "pending" || status === "loading";
-  const isError = status === "error" || (!result && Boolean(errorMessage));
+  const isError =
+    status === "error" ||
+    (validResults.length === 0 && Boolean(errorMessage));
+
+  const [activeCityId, setActiveCityId] = useState<string | null>(null);
+
+  const selected = useMemo(() => {
+    if (validResults.length === 0) return null;
+    if (activeCityId) {
+      return (
+        validResults.find((r) => r.city.cityId === activeCityId) ??
+        validResults[0]!
+      );
+    }
+    return validResults[0]!;
+  }, [validResults, activeCityId]);
 
   if (isError && !isLoading) {
     return (
@@ -89,32 +113,63 @@ export function TripCityIntelligenceBlock({
     );
   }
 
-  const details = result?.details;
-  const currencyLabel = details?.currency
-    ? [details.currency.code, details.currency.name].filter(Boolean).join(" ")
-    : result?.currency
-      ? result.currency
-      : null;
+  const details = selected?.details;
+  const currencyLabel =
+    selected?.exchangeRate?.to ||
+    details?.dailyBudget?.currency ||
+    null;
 
   const visa =
-    result?.visaRequirements?.summary ||
-    details?.visa?.description ||
-    (details?.visa?.required === true
+    selected?.visa?.description ||
+    (selected?.visa?.required === true
       ? "Visa required"
-      : details?.visa?.required === false
+      : selected?.visa?.required === false
         ? "Visa not required"
         : null);
 
   const bestTime =
-    result?.bestTimeToVisit?.summary ||
-    details?.bestTimeToVisit?.description ||
-    details?.bestTimeToVisit?.months?.join(", ");
+    selected?.bestTimeToVisit?.summary ||
+    selected?.bestTimeToVisit?.months?.join(", ");
 
-  const budget = result?.approximateDailyBudget
-    ? `${result.approximateDailyBudget.amount} ${result.approximateDailyBudget.currency} / day`
-    : details?.dailyBudget?.midRange?.local != null
-      ? `~${details.dailyBudget.midRange.local} ${details.dailyBudget.currency} / day`
-      : details?.dailyBudget?.description;
+  const budget = (() => {
+    const midUser = details?.dailyBudget?.midRange?.userCurrency;
+    const midLocal = details?.dailyBudget?.midRange?.local;
+    const localCode =
+      details?.dailyBudget?.currency?.trim().toUpperCase() ||
+      selected?.exchangeRate?.to?.trim().toUpperCase() ||
+      "";
+    const userCode =
+      selected?.exchangeRate?.from?.trim().toUpperCase() || "";
+    const rate = selected?.exchangeRate?.rate;
+
+    let amountInUser =
+      midUser != null && Number.isFinite(midUser) ? midUser : null;
+    // Fallback when server-filled userCurrency is missing but FX is present.
+    if (
+      amountInUser == null &&
+      midLocal != null &&
+      Number.isFinite(midLocal) &&
+      userCode &&
+      rate != null &&
+      rate > 0
+    ) {
+      amountInUser = Math.round((midLocal / rate) * 100) / 100;
+    }
+
+    const formatAmount = (amount: number, code: string) => {
+      const rounded =
+        amount >= 100 ? Math.round(amount) : Math.round(amount * 10) / 10;
+      return `~${rounded} ${code} / day`;
+    };
+
+    if (amountInUser != null && userCode) {
+      return formatAmount(amountInUser, userCode);
+    }
+    if (midLocal != null && Number.isFinite(midLocal) && localCode) {
+      return formatAmount(midLocal, localCode);
+    }
+    return details?.dailyBudget?.description;
+  })();
 
   const climate = details?.climate?.description;
   const temp = details?.climate?.averageTemperature;
@@ -126,18 +181,15 @@ export function TripCityIntelligenceBlock({
 
   const transport = details?.practicalInfo?.transport;
   const safety =
-    details?.practicalInfo?.safety ||
-    result?.safeRate?.summary ||
-    (result?.safeRate?.score != null
-      ? `${result.safeRate.score}/${result.safeRate.outOf}`
-      : details?.practicalInfo?.safeRate?.score != null
-        ? `${details.practicalInfo.safeRate.score}/${details.practicalInfo.safeRate.outOf}`
-        : null);
+    selected?.safeRate?.summary ||
+    (selected?.safeRate?.score != null
+      ? `${selected.safeRate.score}/${selected.safeRate.outOf}`
+      : null);
   const tips = details?.practicalInfo?.tips?.[0];
 
   const checkedAt =
-    result?.generatedAt != null
-      ? new Date(result.generatedAt)
+    selected?.generatedAt != null
+      ? new Date(selected.generatedAt)
       : lastUpdatedAt?.toDate?.() ?? null;
 
   const tiles: Array<{
@@ -199,6 +251,8 @@ export function TripCityIntelligenceBlock({
     },
   ];
 
+  const multiCity = validResults.length > 1;
+
   return (
     <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm sm:p-5">
       <div className="flex items-start justify-between gap-3">
@@ -209,7 +263,9 @@ export function TripCityIntelligenceBlock({
           <div>
             <h3 className="text-sm font-semibold text-text">City Intelligence</h3>
             <p className="text-xs text-text-secondary">
-              Destination insights tailored to your trip.
+              {multiCity
+                ? "Insights for each destination on your trip."
+                : "Destination insights tailored to your trip."}
             </p>
           </div>
         </div>
@@ -220,6 +276,31 @@ export function TripCityIntelligenceBlock({
           </span>
         ) : null}
       </div>
+
+      {multiCity ? (
+        <div className="-mx-1 mt-4 flex gap-1.5 overflow-x-auto px-1 pb-1">
+          {validResults.map((entry) => {
+            const active =
+              (activeCityId ?? validResults[0]?.city.cityId) ===
+              entry.city.cityId;
+            return (
+              <button
+                key={entry.city.cityId}
+                type="button"
+                onClick={() => setActiveCityId(entry.city.cityId)}
+                className={cx(
+                  "shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  active
+                    ? "border-primary bg-primary-tint text-primary"
+                    : "border-border bg-surface text-text-secondary hover:border-primary/30 hover:text-text"
+                )}
+              >
+                {entry.city.name}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {tiles.map((tile) => (
@@ -235,7 +316,7 @@ export function TripCityIntelligenceBlock({
       </div>
 
       <div className="mt-4 flex flex-col gap-2 border-t border-divider pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex items-start gap-1.5 text-xs text-sky-800">
+        <p className="flex items-start gap-1.5 text-xs text-sky-800">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             This information is provided by AI and should be verified from

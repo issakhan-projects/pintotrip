@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import { ensureUserProfile, subscribeUserProfile } from "@/services/users";
 import { initRealtimeVisibilityPause } from "@/lib/firebase/realtime-sync";
+import { devLog } from "@/lib/devLog";
+import {
+  isBrowserOffline,
+  loadOfflineProfileSnapshot,
+} from "@/lib/planner/offline-store";
 import type { User } from "firebase/auth";
 import type { UserProfile } from "@/types/user";
+import { Timestamp } from "firebase/firestore";
 
 export interface UserProfileState {
   profile: UserProfile | null;
@@ -23,6 +29,28 @@ function firestoreErrorMessage(error: unknown): string {
   }
   if (error instanceof Error && error.message) return error.message;
   return "Could not save your profile. Please try again.";
+}
+
+function offlineProfileStub(userId: string): UserProfile | null {
+  const snap = loadOfflineProfileSnapshot(userId);
+  if (!snap) return null;
+  const ts = Timestamp.fromMillis(snap.savedAt);
+  return {
+    name: "",
+    lastname: "",
+    email: "",
+    country: "",
+    city: "",
+    aiCreditsBalance: snap.aiCreditsBalance,
+    preferences: {
+      emailSubscription: true,
+      language: "en",
+      timezone: "UTC",
+    },
+    subscription: snap.subscription,
+    createdAt: ts,
+    updatedAt: ts,
+  };
 }
 
 /**
@@ -50,6 +78,12 @@ export function useUserProfile(user: User | undefined | null): UserProfileState 
     setError(null);
     let cancelled = false;
     let ensureStarted = false;
+
+    const offlineStub = offlineProfileStub(userId);
+    if (offlineStub && isBrowserOffline()) {
+      setProfile(offlineStub);
+      setLoading(false);
+    }
 
     const unsubscribe = subscribeUserProfile(
       userId,
@@ -79,16 +113,31 @@ export function useUserProfile(user: User | undefined | null): UserProfileState 
             setError(null);
           })
           .catch((err) => {
-            console.error("[useUserProfile] ensureUserProfile failed", err);
+            devLog.error("[useUserProfile] ensureUserProfile failed", err);
             if (cancelled) return;
+            const stub = offlineProfileStub(userId);
+            if (stub) {
+              setProfile(stub);
+              setLoading(false);
+              setError(null);
+              return;
+            }
             setProfile(null);
             setLoading(false);
             setError(firestoreErrorMessage(err));
           });
       },
       (err) => {
-        console.error("[useUserProfile] snapshot error", err);
+        devLog.error("[useUserProfile] snapshot error", err);
         if (cancelled) return;
+
+        const stub = offlineProfileStub(userId);
+        if (stub && isBrowserOffline()) {
+          setProfile(stub);
+          setLoading(false);
+          setError(null);
+          return;
+        }
 
         // Snapshot failed (often permission-denied on missing rules) — still try create.
         if (!ensureStarted) {
@@ -106,12 +155,29 @@ export function useUserProfile(user: User | undefined | null): UserProfileState 
               setError(null);
             })
             .catch((createErr) => {
-              console.error("[useUserProfile] ensure after snapshot error failed", createErr);
+              devLog.error(
+                "[useUserProfile] ensure after snapshot error failed",
+                createErr
+              );
               if (cancelled) return;
+              const offline = offlineProfileStub(userId);
+              if (offline) {
+                setProfile(offline);
+                setLoading(false);
+                setError(null);
+                return;
+              }
               setProfile(null);
               setLoading(false);
               setError(firestoreErrorMessage(createErr));
             });
+          return;
+        }
+
+        if (stub) {
+          setProfile(stub);
+          setLoading(false);
+          setError(null);
           return;
         }
 

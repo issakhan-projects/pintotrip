@@ -44,7 +44,7 @@ npm run build
 | `NEXT_PUBLIC_POSTHOG_*` | `.env.local` / App Hosting | Public analytics key |
 | `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` | `.env.local` / App Hosting | Search Console HTML-tag token |
 | `OPENAI_API_KEY` | Secret Manager / Functions secrets | **Never** `NEXT_PUBLIC_*` |
-| `GOOGLE_PRIVATE_API_KEY` | Secret Manager / Functions secrets | Server verification only |
+| `GOOGLE_PRIVATE_API_KEY` | Secret Manager / Functions secrets | Places Nearby (transport discovery) |
 
 ## Security
 

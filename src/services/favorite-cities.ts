@@ -15,7 +15,9 @@ import {
 import { getFirestoreDb, FirestorePaths } from "@/lib/firebase/firestore";
 import { getDocsCacheFirst, getDocCacheFirst } from "@/lib/firebase/cache-read";
 import { recordCacheHit } from "@/lib/firebase/debug";
-import { slugifyId } from "@/lib/utils";
+import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
+import { resolveCountryCode } from "@/lib/countries";
+import { resolveEnglishPlaceIds, englishPlaceIdsFromNames } from "@/lib/maps";
 import {
   approxNowTimestamp,
   favoriteCitiesInFlight,
@@ -34,9 +36,104 @@ function favoriteCitiesCollection(userId: string): CollectionReference {
   return collection(getFirestoreDb(), FirestorePaths.favoriteCities(userId));
 }
 
-/** Stable Firestore doc id for a city + country pair. */
+/**
+ * Stable Firestore doc id: `{countryId}_{cityId}` (e.g. `sa_jeddah`).
+ * Prefer resolved English/ASCII parts — never persist `unknown_*` from localized names.
+ */
+export function favoriteCityIdFromParts(
+  countryId: string,
+  cityId: string
+): string | null {
+  const country = countryId.trim().toLowerCase();
+  const city = cityId.trim().toLowerCase();
+  if (!isAsciiId(country) || !isAsciiId(city)) return null;
+  return `${country}_${city}`;
+}
+
+/**
+ * @deprecated Prefer {@link resolveFavoriteCityId} — slugifying localized names yields `unknown_*`.
+ */
 export function favoriteCityId(cityName: string, country: string): string {
   return `${slugifyId(country)}_${slugifyId(cityName)}`;
+}
+
+/**
+ * Resolve an English/ASCII favorite doc id from coordinates (+ display-name fallbacks).
+ * Returns null when ids cannot be resolved without producing `unknown`.
+ */
+export async function resolveFavoriteCityId(input: {
+  cityName: string;
+  country: string;
+  lat: number;
+  lon: number;
+}): Promise<string | null> {
+  const englishIds =
+    englishPlaceIdsFromNames(
+      input.cityName,
+      input.country,
+      resolveCountryCode(input.country) || undefined
+    ) ?? (await resolveEnglishPlaceIds(input.lat, input.lon));
+  if (englishIds) {
+    const fromCoords = favoriteCityIdFromParts(
+      englishIds.countryId,
+      englishIds.cityId
+    );
+    if (fromCoords) return fromCoords;
+  }
+
+  const countryCode =
+    englishIds?.countryCode ||
+    resolveCountryCode(input.country) ||
+    undefined;
+  const countryId = countryIdFromParts(
+    englishIds?.countryNameEn || input.country,
+    countryCode
+  );
+  const citySlug = slugifyId(
+    englishIds?.cityNameEn || input.cityName
+  );
+  return favoriteCityIdFromParts(countryId, citySlug);
+}
+
+/** Match a favorite by id, display names, or nearby coordinates. */
+export function findFavoriteCity(
+  favorites: SavedFavoriteCity[],
+  input: {
+    cityName: string;
+    country: string;
+    lat?: number;
+    lon?: number;
+    cityId?: string | null;
+  }
+): SavedFavoriteCity | undefined {
+  const name = input.cityName.trim().toLowerCase();
+  const country = input.country.trim().toLowerCase();
+  const legacyId = favoriteCityId(input.cityName, input.country);
+  const resolvedId = input.cityId?.trim().toLowerCase() || null;
+
+  return favorites.find((c) => {
+    if (resolvedId && (c.cityId === resolvedId || c.id === resolvedId)) {
+      return true;
+    }
+    if (c.cityId === legacyId || c.id === legacyId) return true;
+    if (
+      c.cityName.trim().toLowerCase() === name &&
+      c.country.trim().toLowerCase() === country
+    ) {
+      return true;
+    }
+    if (
+      input.lat != null &&
+      input.lon != null &&
+      Number.isFinite(input.lat) &&
+      Number.isFinite(input.lon) &&
+      Math.abs(c.lat - input.lat) < 0.05 &&
+      Math.abs(c.lon - input.lon) < 0.05
+    ) {
+      return true;
+    }
+    return false;
+  });
 }
 
 function isActiveFavorite(data: FavoriteCity): boolean {
@@ -243,18 +340,23 @@ export async function removeFavoriteCity(
     FirestorePaths.favoriteCity(userId, cityId)
   );
 
-  const mem = favoriteCitiesStore
-    .get(favoriteCitiesKey(userId))
-    ?.items.find((c) => c.id === cityId || c.cityId === cityId);
-
-  let data = mem as FavoriteCity | undefined;
-  if (!data) {
-    const snap = await getDocCacheFirst(ref);
+  let data: FavoriteCity | undefined;
+  try {
+    const snap = await getDocCacheFirst(ref, { forceServer: true });
     if (!snap.exists()) {
       removeFavoriteFromCache(userId, cityId);
       return;
     }
     data = snap.data() as FavoriteCity;
+  } catch {
+    const mem = favoriteCitiesStore
+      .get(favoriteCitiesKey(userId))
+      ?.items.find((c) => c.id === cityId || c.cityId === cityId);
+    data = mem as FavoriteCity | undefined;
+    if (!data) {
+      removeFavoriteFromCache(userId, cityId);
+      return;
+    }
   }
 
   const needsReversal =

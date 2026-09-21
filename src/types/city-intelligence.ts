@@ -9,77 +9,6 @@
 export const CITY_INTELLIGENCE_DISCLAIMER =
   "Travel information can change. Verify important details with official sources before traveling.";
 
-export interface GetCityIntelligenceRequest {
-  city: string;
-  country: string;
-  lat: number;
-  lon: number;
-  userCountry?: string;
-  userCurrency?: string;
-  language?: string;
-}
-
-/** Optional richer model payload retained for future UI. */
-export interface CityIntelligenceDetails {
-  city?: { name: string; country: string };
-  currency?: {
-    name: string;
-    code: string;
-    symbol: string;
-    exchangeRate?: {
-      from: string;
-      to: string;
-      rate: number | null;
-      approximate: boolean;
-    } | null;
-  };
-  bestTimeToVisit?: {
-    months?: string[];
-    season?: string;
-    description?: string;
-  };
-  visa?: {
-    required: boolean | "unknown";
-    type?: string | null;
-    cost?: {
-      amount?: number | null;
-      currency?: string | null;
-    } | null;
-    description?: string;
-    verificationRequired?: boolean;
-  };
-  dailyBudget?: {
-    currency: string;
-    budget?: { local?: number | null; userCurrency?: number | null };
-    midRange?: { local?: number | null; userCurrency?: number | null };
-    luxury?: { local?: number | null; userCurrency?: number | null };
-    description?: string;
-  };
-  climate?: {
-    description?: string;
-    averageTemperature?: {
-      min?: number | null;
-      max?: number | null;
-      unit?: string;
-    };
-  };
-  practicalInfo?: {
-    transport?: string;
-    walkability?: string;
-    payment?: string;
-    safety?: string;
-    /** Tourist safety score from 0 (very unsafe) to 10 (very safe). */
-    safeRate?: {
-      score: number | null;
-      outOf: number;
-      summary?: string;
-    } | null;
-    tips?: string[];
-  };
-  /** Destination-specific apps a short-term traveler should install. */
-  usefulApps?: UsefulApp[];
-}
-
 export type UsefulAppCategory =
   | "taxi"
   | "transport"
@@ -103,8 +32,71 @@ export interface UsefulApp {
   isRecommended: boolean;
 }
 
+/** One destination in a getCityIntelligence request (single or multi-city). */
+export type CityIntelligenceCityInput = {
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+  /** English/ASCII city slug when known (required for stable trip matching). */
+  cityId?: string;
+  /** ISO 3166-1 alpha-2 lowercase when known. */
+  countryId?: string;
+};
+
+/**
+ * Request one or more cities.
+ * Pass `cities: [one]` for single-city (map sheet); pass all trip destinations for multi-city.
+ */
+export interface GetCityIntelligenceRequest {
+  cities: CityIntelligenceCityInput[];
+  userCountry?: string;
+  userCurrency?: string;
+  language?: string;
+}
+
+/** Optional richer model payload retained for future UI. */
+export interface CityIntelligenceDetails {
+  dailyBudget?: {
+    currency: string;
+    budget?: { local?: number | null; userCurrency?: number | null };
+    midRange?: { local?: number | null; userCurrency?: number | null };
+    luxury?: { local?: number | null; userCurrency?: number | null };
+    description?: string;
+  };
+  climate?: {
+    description?: string;
+    averageTemperature?: {
+      min?: number | null;
+      max?: number | null;
+      unit?: string;
+    };
+  };
+  practicalInfo?: {
+    transport?: string;
+    walkability?: string;
+    payment?: string;
+    tips?: string[];
+  };
+}
+
 export interface CityIntelligenceResult {
-  currency: string;
+  city: {
+    name: string;
+    country: string;
+    cityId: string;
+    countryId: string;
+  };
+  visa?: {
+    required: boolean | "unknown";
+    type?: string | null;
+    cost?: {
+      amount?: number | null;
+      currency?: string | null;
+    } | null;
+    description?: string;
+    verificationRequired?: boolean;
+  };
   /** Current exchange rate relative to the user's currency when available. */
   exchangeRate?: {
     from: string;
@@ -128,18 +120,6 @@ export interface CityIntelligenceResult {
     months?: string[];
     source?: string;
   };
-  visaRequirements?: {
-    summary: string;
-    /** Never treat LLM output as authoritative for visas. */
-    source: string;
-    requiresOfficialVerification: true;
-  };
-  approximateDailyBudget?: {
-    amount: number;
-    currency: string;
-    summary?: string;
-    source?: string;
-  };
   /**
    * Destination-specific apps useful on arrival (~4–8).
    * Based on the destination city, not the traveler's home country.
@@ -150,6 +130,13 @@ export interface CityIntelligenceResult {
   generatedAt: string;
   /** Richer structured payload from the model (optional). */
   details?: CityIntelligenceDetails;
+}
+
+/** Callable success payload — always an array (length 1 for single-city). */
+export interface GetCityIntelligenceBatchResult {
+  results: CityIntelligenceResult[];
+  disclaimer: typeof CITY_INTELLIGENCE_DISCLAIMER;
+  generatedAt: string;
 }
 
 /**
@@ -177,5 +164,5 @@ export interface VisaInfoProvider {
 export interface CityIntelligenceAssembler {
   assemble(
     request: GetCityIntelligenceRequest
-  ): Promise<CityIntelligenceResult>;
+  ): Promise<GetCityIntelligenceBatchResult>;
 }

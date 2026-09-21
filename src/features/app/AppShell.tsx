@@ -57,6 +57,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     favoriteCities,
     isFavorite,
     toggleFavorite,
+    removeFavorite,
   } = useFavoriteCities(user.uid);
   const { profile } = useUserProfile(user);
   const aiCreditsBalance = profile?.aiCreditsBalance ?? null;
@@ -161,6 +162,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       title: place.title,
       status: place.status,
       kind: "place" as const,
+      googlePlaceId: place.city.googlePlaceId,
     }));
 
     const cityMarkers: MapMarkerInput[] = favoriteCities.map((city) => ({
@@ -298,9 +300,36 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             key={placesMountKey}
             locations={locations}
             loading={loading}
-            onSelectPlace={(place) => setDetail(place)}
+            allowGooglePlacePhotos={isPro}
+            onSelectPlace={(place) => setPreview(place)}
             onAddPlace={() => setAddOpen(true)}
             onSelectCity={openCityInfo}
+            onDeleteCity={async (places) => {
+              await Promise.all(places.map((place) => removeLocation(place.id)));
+              const first = places[0];
+              if (
+                first &&
+                isFavorite(first.city.name, first.country.name, {
+                  lat: first.lat,
+                  lon: first.lon,
+                })
+              ) {
+                try {
+                  await removeFavorite(first.city.name, first.country.name, {
+                    lat: first.lat,
+                    lon: first.lon,
+                  });
+                } catch {
+                  // Places already removed; favorite cleanup is best-effort.
+                }
+              }
+              if (preview && places.some((p) => p.id === preview.id)) {
+                setPreview(null);
+              }
+              if (detail && places.some((p) => p.id === detail.id)) {
+                setDetail(null);
+              }
+            }}
           />
         </div>
       ) : null}
@@ -362,13 +391,16 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             <button
               type="button"
               onClick={() => router.push("/pricing")}
-              className="flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-elevated/95 px-2.5 py-2 shadow-sm backdrop-blur transition-colors hover:bg-surface sm:gap-1.5 sm:px-3"
+              className="flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11"
               title="AI credits available"
             >
-              <Coins className="h-3.5 w-3.5 text-primary" aria-hidden />
-              <p className="text-sm font-semibold tabular-nums text-text">
+              <span className="flex items-center px-2.5 sm:px-3">
+                <Coins className="h-3.5 w-3.5 text-primary" aria-hidden />
+              </span>
+              <span className="h-4 w-px shrink-0 bg-border" aria-hidden />
+              <span className="px-2.5 text-sm font-semibold tabular-nums text-text sm:px-3">
                 {aiCreditsBalance}
-              </p>
+              </span>
               <span className="sr-only">AI credits available — open pricing</span>
             </button>
           ) : null}
@@ -377,22 +409,42 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         {tab === "map" ? (
           <div className="pointer-events-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             {viewMode === "map" ? (
-              <Button
-                icon={Sparkles}
-                variant="secondary"
+              <button
+                type="button"
                 aria-label="City info"
+                aria-pressed={cityPickMode}
                 onClick={() => {
                   setPickMode(false);
                   setCityPickMode((v) => !v);
                 }}
                 className={
                   cityPickMode
-                    ? "!h-10 !w-10 !gap-0 !rounded-full !px-0 !bg-primary !text-white !border-primary sm:!h-11 sm:!w-auto sm:!gap-2 sm:!px-4"
-                    : "!h-10 !w-10 !gap-0 !rounded-full !px-0 !bg-surface-elevated/95 !text-text !border-border sm:!h-11 sm:!w-auto sm:!gap-2 sm:!px-4"
+                    ? "flex h-10 shrink-0 items-center rounded-full border border-primary bg-primary text-white shadow-sm transition-colors sm:h-11"
+                    : "flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 text-text shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11"
                 }
               >
-                <span className="hidden sm:inline">City info</span>
-              </Button>
+                <span className="flex items-center px-2.5 sm:px-3">
+                  <Sparkles
+                    className={
+                      cityPickMode
+                        ? "h-3.5 w-3.5 text-white"
+                        : "h-3.5 w-3.5 text-text"
+                    }
+                    aria-hidden
+                  />
+                </span>
+                <span
+                  className={
+                    cityPickMode
+                      ? "h-4 w-px shrink-0 bg-white/30"
+                      : "h-4 w-px shrink-0 bg-border"
+                  }
+                  aria-hidden
+                />
+                <span className="px-2.5 text-sm font-medium sm:px-3">
+                  City info
+                </span>
+              </button>
             ) : null}
             <MapListToggle mode={viewMode} onChange={setViewMode} />
           </div>
@@ -526,10 +578,12 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       <PlacePreviewSheet
         place={preview}
         open={Boolean(preview)}
+        allowGooglePlacePhotos={isPro}
         onClose={() => setPreview(null)}
-        onOpenDetails={(place) => {
-          setPreview(null);
-          setDetail(place);
+        onUpdateStatus={async (status: LocationStatus) => {
+          if (!preview) return;
+          await patchLocation(preview.id, { status });
+          setPreview({ ...preview, status });
         }}
         onSaveNote={async (note: string) => {
           if (!preview) return;
@@ -557,6 +611,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       <PlaceDetailSheet
         place={detail}
         open={Boolean(detail)}
+        allowGooglePlacePhotos={isPro}
         onClose={() => setDetail(null)}
         onUpdateStatus={async (status: LocationStatus) => {
           if (!detail) return;
@@ -594,7 +649,10 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         city={cityInfo}
         isFavorite={
           cityInfo
-            ? isFavorite(cityInfo.cityName, cityInfo.countryName)
+            ? isFavorite(cityInfo.cityName, cityInfo.countryName, {
+                lat: cityInfo.lat,
+                lon: cityInfo.lon,
+              })
             : false
         }
         onToggleFavorite={

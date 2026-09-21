@@ -1,4 +1,5 @@
 import { resolveCountryCode } from "@/lib/countries";
+import { devLog } from "@/lib/devLog";
 import type { DdsFeatureType } from "./ddsCapabilities";
 
 /**
@@ -238,7 +239,7 @@ export function resolveUsableFeatureType(options: {
     if (type === "COUNTRY") {
       if (!options.countryAvailable) continue;
       if (type !== options.preferred) {
-        console.warn(
+        devLog.warn(
           `[PinToTrip DDS] "${options.cityName ?? "city"}" has no city/region DDS coverage in ${(country || "?").toUpperCase()} — highlighting COUNTRY instead.`
         );
       }

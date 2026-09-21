@@ -4,35 +4,29 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import {
   BedDouble,
+  CalendarDays,
   Check,
   ChevronDown,
   ExternalLink,
   FileText,
   Link2,
   Loader2,
-  MapPin,
   Pencil,
+  Plane,
   Plus,
-  Stamp,
+  Save,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
-import { TravelMap } from "@/features/map/TravelMap";
-import {
-  searchPlacesByName,
-  type SearchedPlace,
-} from "@/features/add-place/placeSearch";
 import { listTravelDocuments } from "@/lib/documents";
-import { reverseGeocode } from "@/lib/maps";
 import { cx } from "@/lib/utils";
 import {
   TRAVEL_DOCUMENT_KIND_LABELS,
@@ -41,11 +35,22 @@ import {
 import type {
   TripAccommodation,
   TripDocumentDetails,
+  TripFlightAirport,
+  TripFlightEssential,
   TripPlannerDoc,
   TripVisaDetails,
   TripVisaStatus,
 } from "@/types/trip-planner";
-import { resolveAccommodationLocation } from "./resolveAccommodationLocation";
+import { AccommodationSheet } from "./AccommodationSheet";
+import { FlightSheet } from "./FlightSheet";
+import {
+  flightAirportCode,
+  formatFlightWhen,
+  formatStayDates,
+  listTripAccommodations,
+  normalizeUrl,
+} from "./essentialsHelpers";
+import { listFlightRouteCities, flightRouteLabel, primaryTripDestination } from "./tripDestinations";
 
 const VISA_STATUS_OPTIONS: Array<{ value: TripVisaStatus; label: string }> = [
   { value: "unknown", label: "Not sure yet" },
@@ -55,12 +60,15 @@ const VISA_STATUS_OPTIONS: Array<{ value: TripVisaStatus; label: string }> = [
   { value: "approved", label: "Approved" },
 ];
 
-type AccommodationMode = "link" | "map";
-
 interface TripEssentialsSectionProps {
   trip: TripPlannerDoc;
   userId: string;
-  onUpdateAccommodation: (value: TripAccommodation | null) => Promise<void>;
+  onUpdateAccommodations: (items: TripAccommodation[]) => Promise<void>;
+  onUpdateFlights: (items: TripFlightEssential[]) => Promise<void>;
+  onUpdateRouteAirports: (
+    airports: TripFlightAirport[],
+    key: string
+  ) => Promise<void>;
   onUpdateDocuments: (value: TripDocumentDetails | null) => Promise<void>;
   onUpdateVisa: (value: TripVisaDetails | null) => Promise<void>;
 }
@@ -68,67 +76,62 @@ interface TripEssentialsSectionProps {
 export function TripEssentialsSection({
   trip,
   userId,
-  onUpdateAccommodation,
+  onUpdateAccommodations,
+  onUpdateFlights,
+  onUpdateRouteAirports,
   onUpdateDocuments,
   onUpdateVisa,
 }: TripEssentialsSectionProps) {
   const [accommodationOpen, setAccommodationOpen] = useState(false);
+  const [flightOpen, setFlightOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [visaOpen, setVisaOpen] = useState(false);
 
-  const accommodation =
-    trip.tripEssentials?.accommodation?.[0] ??
-    trip.preparation.accommodation ??
-    null;
+  const accommodations = listAccommodations(trip);
+  const flights = listFlights(trip);
   const documents = trip.preparation.documents ?? null;
   const visa = trip.preparation.visa ?? null;
 
   const visaHint =
-    trip.cityIntelligence.result?.visaRequirements?.summary ||
-    trip.cityIntelligence.result?.details?.visa?.description ||
-    null;
+    trip.cityIntelligence.results?.[0]?.visa?.description || null;
 
   return (
     <section className="space-y-3">
       <div>
         <h3 className="text-sm font-semibold text-text">Trip essentials</h3>
         <p className="mt-0.5 text-sm text-text-secondary">
-          Save where you are staying, travel documents, and visa details.
+          Save flights, where you are staying, and travel documents.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <EssentialCard
+          icon={Plane}
+          title="Flight"
+          empty={flights.length === 0}
+          onEdit={() => setFlightOpen(true)}
+          summary={
+            flights.length > 0 ? (
+              <FlightsSummary items={flights} trip={trip} />
+            ) : (
+              "Add flights for your trip route."
+            )
+          }
+        />
         <EssentialCard
           icon={BedDouble}
           title="Accommodation"
-          empty={
-            !accommodation?.name &&
-            !accommodation?.link &&
-            !accommodation?.address
-          }
+          empty={accommodations.length === 0}
           onEdit={() => setAccommodationOpen(true)}
           summary={
-            accommodation ? (
-              <AccommodationSummary value={accommodation} />
+            accommodations.length > 0 ? (
+              <AccommodationsSummary items={accommodations} />
             ) : (
-              "Add a booking link or pick a place on the map."
+              "Add one or more stays — dates optional."
             )
           }
         />
-        <EssentialCard
-          icon={FileText}
-          title="Documents"
-          empty={!hasDocumentDetails(documents)}
-          onEdit={() => setDocumentsOpen(true)}
-          summary={
-            documents && hasDocumentDetails(documents) ? (
-              <DocumentsSummary value={documents} userId={userId} />
-            ) : (
-              "Track passport, ID, and docs for this trip."
-            )
-          }
-        />
-        <EssentialCard
+        {/* <EssentialCard
           icon={Stamp}
           title="Visa"
           empty={
@@ -152,21 +155,27 @@ export function TripEssentialsSection({
               </p>
             )
           }
-        />
+        /> */}
       </div>
+
+      <FlightSheet
+        open={flightOpen}
+        onClose={() => setFlightOpen(false)}
+        trip={trip}
+        items={flights}
+        onSaveAll={async (items) => {
+          await onUpdateFlights(items);
+        }}
+        onSaveRouteAirports={onUpdateRouteAirports}
+      />
 
       <AccommodationSheet
         open={accommodationOpen}
         onClose={() => setAccommodationOpen(false)}
         trip={trip}
-        initial={accommodation}
-        onSave={async (value) => {
-          await onUpdateAccommodation(value);
-          setAccommodationOpen(false);
-        }}
-        onClear={async () => {
-          await onUpdateAccommodation(null);
-          setAccommodationOpen(false);
+        items={accommodations}
+        onSaveAll={async (items) => {
+          await onUpdateAccommodations(items);
         }}
       />
 
@@ -190,7 +199,7 @@ export function TripEssentialsSection({
         onClose={() => setVisaOpen(false)}
         initial={visa}
         hint={visaHint}
-        destinationCountry={trip.destination.countryName}
+        destinationCountry={primaryTripDestination(trip).countryName}
         onSave={async (value) => {
           await onUpdateVisa(value);
           setVisaOpen(false);
@@ -261,17 +270,95 @@ function EssentialCard({
   );
 }
 
-function AccommodationSummary({ value }: { value: TripAccommodation }) {
+function listAccommodations(trip: TripPlannerDoc): TripAccommodation[] {
+  return listTripAccommodations(trip);
+}
+
+function AccommodationsSummary({ items }: { items: TripAccommodation[] }) {
+  const visible = items.slice(0, 2);
   return (
-    <div className="space-y-1">
-      {value.name ? (
-        <p className="font-medium text-text">{value.name}</p>
+    <div className="space-y-2">
+      {visible.map((stay) => {
+        const dates = formatStayDates(stay.startDate, stay.endDate);
+        return (
+          <div key={stay.id ?? stay.name ?? stay.link} className="space-y-0.5">
+            <p className="font-medium text-text">
+              {stay.name?.trim() || stay.address?.trim() || "Stay"}
+            </p>
+            {dates ? (
+              <p className="inline-flex items-center gap-1">
+                <CalendarDays className="h-3 w-3" aria-hidden />
+                {dates}
+              </p>
+            ) : stay.address ? (
+              <p className="truncate">{stay.address}</p>
+            ) : stay.link ? (
+              <p className="inline-flex items-center gap-1 text-primary">
+                <Link2 className="h-3 w-3" aria-hidden />
+                Booking link
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+      {items.length > 2 ? (
+        <p className="text-text-muted">+{items.length - 2} more</p>
+      ) : items.length > 1 ? (
+        <p className="text-text-muted">
+          {items.length} stay{items.length === 1 ? "" : "s"}
+        </p>
       ) : null}
-      {value.address ? <p className="truncate">{value.address}</p> : null}
-      {value.link ? (
-        <p className="inline-flex items-center gap-1 text-primary">
-          <Link2 className="h-3 w-3" aria-hidden />
-          Booking link saved
+    </div>
+  );
+}
+
+function listFlights(_trip: TripPlannerDoc): TripFlightEssential[] {
+  return [];
+}
+
+function FlightsSummary({
+  items,
+  trip,
+}: {
+  items: TripFlightEssential[];
+  trip: TripPlannerDoc;
+}) {
+  const routeCities = listFlightRouteCities(trip);
+  const fallbackRoute = flightRouteLabel(routeCities);
+  const visible = items.slice(0, 2);
+
+  return (
+    <div className="space-y-2">
+      {visible.map((flight) => {
+        const route =
+          flight.routeLabel?.trim() ||
+          [flight.fromCityName, flight.toCityName].filter(Boolean).join(" → ") ||
+          fallbackRoute;
+        const codes = [
+          flightAirportCode(flight, "departure"),
+          flightAirportCode(flight, "arrival"),
+        ].filter(Boolean);
+        return (
+          <div key={flight.id} className="space-y-0.5">
+            {route ? <p className="font-medium text-text">{route}</p> : null}
+            {codes.length > 0 ? <p>{codes.join(" → ")}</p> : null}
+            {flight.departureAt?.trim() ? (
+              <p className="truncate">{formatFlightWhen(flight.departureAt)}</p>
+            ) : null}
+            {flight.bookingLink ? (
+              <p className="inline-flex items-center gap-1 text-primary">
+                <Link2 className="h-3 w-3" aria-hidden />
+                Booking link
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+      {items.length > 2 ? (
+        <p className="text-text-muted">+{items.length - 2} more</p>
+      ) : items.length > 1 ? (
+        <p className="text-text-muted">
+          {items.length} flight{items.length === 1 ? "" : "s"}
         </p>
       ) : null}
     </div>
@@ -396,411 +483,6 @@ function hasDocumentDetails(value: TripDocumentDetails | null): boolean {
       value.idReady ||
       value.insuranceReady ||
       (value.linkedDocumentIds && value.linkedDocumentIds.length > 0)
-  );
-}
-
-function normalizeUrl(raw: string): string | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
-}
-
-function AccommodationSheet({
-  open,
-  onClose,
-  trip,
-  initial,
-  onSave,
-  onClear,
-}: {
-  open: boolean;
-  onClose: () => void;
-  trip: TripPlannerDoc;
-  initial: TripAccommodation | null;
-  onSave: (value: TripAccommodation) => Promise<void>;
-  onClear: () => Promise<void>;
-}) {
-  const [mode, setMode] = useState<AccommodationMode>("link");
-  const [name, setName] = useState("");
-  const [link, setLink] = useState("");
-  const [notes, setNotes] = useState("");
-  const [address, setAddress] = useState("");
-  const [placeId, setPlaceId] = useState<string | undefined>();
-  const [lat, setLat] = useState<number | undefined>();
-  const [lon, setLon] = useState<number | undefined>();
-  const [cityName, setCityName] = useState<string | undefined>();
-  const [countryName, setCountryName] = useState<string | undefined>();
-  const [source, setSource] = useState<TripAccommodation["source"]>("link");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [results, setResults] = useState<SearchedPlace[]>([]);
-  const [mapResolving, setMapResolving] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const nameId = useId();
-  const linkId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    setMode(
-      initial?.source === "map" || initial?.source === "search" ? "map" : "link"
-    );
-    setName(initial?.name ?? "");
-    setLink(initial?.link ?? "");
-    setNotes(initial?.notes ?? "");
-    setAddress(initial?.address ?? "");
-    setPlaceId(initial?.placeId);
-    setLat(initial?.lat);
-    setLon(initial?.lon);
-    setCityName(initial?.cityName);
-    setCountryName(initial?.countryName);
-    setSource(initial?.source ?? "link");
-    setSearchQuery("");
-    setResults([]);
-  }, [open, initial]);
-
-  useEffect(() => {
-    if (!open || mode !== "map") return;
-    const q = searchQuery.trim();
-    if (q.length < 2) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    const timer = window.setTimeout(() => {
-      void searchPlacesByName(
-        `${q} hotel ${trip.destination.cityName}`.trim()
-      )
-        .then((places) => {
-          if (!cancelled) setResults(places);
-        })
-        .catch(() => {
-          if (!cancelled) setResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, 280);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, mode, searchQuery, trip.destination.cityName]);
-
-  const mapMarkers = useMemo(() => {
-    if (lat == null || lon == null) {
-      if (trip.destination.lat != null && trip.destination.lon != null) {
-        return [
-          {
-            id: "__destination__",
-            lat: trip.destination.lat,
-            lon: trip.destination.lon,
-            title: trip.destination.cityName,
-            kind: "city" as const,
-          },
-        ];
-      }
-      return [];
-    }
-    return [
-      {
-        id: "__stay__",
-        lat,
-        lon,
-        title: name || "Stay",
-        kind: "place" as const,
-      },
-    ];
-  }, [lat, lon, name, trip.destination]);
-
-  const canSave =
-    Boolean(name.trim()) ||
-    Boolean(link.trim()) ||
-    Boolean(address.trim()) ||
-    (lat != null && lon != null);
-
-  async function handleMapPick(coords: { lat: number; lng: number }) {
-    setMapResolving(true);
-    setSource("map");
-    setLat(coords.lat);
-    setLon(coords.lng);
-    setPlaceId(undefined);
-    try {
-      const place = await reverseGeocode(coords.lat, coords.lng);
-      if (place) {
-        const label =
-          [place.city, place.country].filter(Boolean).join(", ") || undefined;
-        setAddress(
-          label ?? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
-        );
-        setCityName(place.city || undefined);
-        setCountryName(place.country || undefined);
-        if (!name.trim() && place.city) {
-          setName(place.city);
-        }
-      } else {
-        setAddress(`${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`);
-      }
-    } finally {
-      setMapResolving(false);
-    }
-  }
-
-  function pickSearchResult(place: SearchedPlace) {
-    setSource("search");
-    setName(place.title);
-    setAddress(place.address);
-    setPlaceId(place.placeId);
-    setLat(place.lat);
-    setLon(place.lon);
-    setCityName(place.cityName);
-    setCountryName(place.countryName);
-    setSearchQuery(place.title);
-    setResults([]);
-  }
-
-  async function handleSave() {
-    if (!canSave) return;
-    setSaving(true);
-    try {
-      let nextLat = lat;
-      let nextLon = lon;
-      let nextAddress = address.trim() || undefined;
-      let nextPlaceId = placeId?.trim() || undefined;
-      let nextCityName = cityName?.trim() || undefined;
-      let nextCountryName = countryName?.trim() || undefined;
-
-      const nextSource =
-        mode === "link"
-          ? ("link" as const)
-          : source === "search"
-            ? ("search" as const)
-            : ("map" as const);
-
-      // Link mode (and map without a pin yet) — best-effort resolve coords.
-      if (
-        (nextLat == null || nextLon == null) &&
-        (mode === "link" || Boolean(name.trim()) || Boolean(link.trim()))
-      ) {
-        const resolved = await resolveAccommodationLocation({
-          name: name.trim() || undefined,
-          link: normalizeUrl(link),
-          lat: nextLat,
-          lon: nextLon,
-          address: nextAddress,
-          placeId: nextPlaceId,
-          cityName: nextCityName,
-          countryName: nextCountryName,
-          destinationCity: trip.destination.cityName,
-          destinationCountry: trip.destination.countryName,
-        });
-        nextLat = resolved.lat ?? nextLat;
-        nextLon = resolved.lon ?? nextLon;
-        nextAddress = resolved.address || nextAddress;
-        nextPlaceId = resolved.placeId || nextPlaceId;
-        nextCityName = resolved.cityName || nextCityName;
-        nextCountryName = resolved.countryName || nextCountryName;
-        if (resolved.lat != null && resolved.lon != null) {
-          setLat(resolved.lat);
-          setLon(resolved.lon);
-          if (resolved.address) setAddress(resolved.address);
-          if (resolved.placeId) setPlaceId(resolved.placeId);
-          if (resolved.cityName) setCityName(resolved.cityName);
-          if (resolved.countryName) setCountryName(resolved.countryName);
-        }
-      }
-
-      const payload: TripAccommodation = {
-        id: initial?.id || crypto.randomUUID(),
-        name: name.trim() || undefined,
-        link: normalizeUrl(link),
-        address: nextAddress,
-        placeId: nextPlaceId,
-        lat: nextLat,
-        lon: nextLon,
-        cityName: nextCityName,
-        countryName: nextCountryName,
-        notes: notes.trim() || undefined,
-        source: nextSource,
-      };
-      await onSave(payload);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Sheet open={open} onClose={onClose} title="Accommodation" size="lg">
-      <div className="space-y-4">
-        <div className="flex gap-4 border-b border-divider">
-          {(
-            [
-              { id: "link" as const, label: "Booking link" },
-              { id: "map" as const, label: "On map" },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setMode(tab.id)}
-              className={cx(
-                "relative -mb-px pb-2.5 text-sm font-medium transition-colors",
-                mode === tab.id
-                  ? "text-primary"
-                  : "text-text-secondary hover:text-text"
-              )}
-            >
-              {tab.label}
-              {mode === tab.id ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
-              ) : null}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label
-              htmlFor={nameId}
-              className="text-xs font-medium text-text-secondary"
-            >
-              Place name
-            </label>
-            <TextInput
-              id={nameId}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Hotel, apartment, hostel…"
-              className="mt-1.5"
-            />
-          </div>
-
-          {mode === "link" ? (
-            <div>
-              <label
-                htmlFor={linkId}
-                className="text-xs font-medium text-text-secondary"
-              >
-                Booking link
-              </label>
-              <TextInput
-                id={linkId}
-                value={link}
-                onChange={(e) => setLink(e.target.value)}
-                placeholder="https://booking.com/…"
-                inputMode="url"
-                className="mt-1.5"
-              />
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="relative">
-                <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <TextInput
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={`Search stays in ${trip.destination.cityName}`}
-                  className="!pl-9"
-                />
-              </div>
-              {searching ? (
-                <p className="text-xs text-text-muted">Searching…</p>
-              ) : null}
-              {results.length > 0 ? (
-                <ul className="max-h-36 space-y-1 overflow-y-auto">
-                  {results.map((place) => (
-                    <li key={place.placeId}>
-                      <button
-                        type="button"
-                        onClick={() => pickSearchResult(place)}
-                        className="flex w-full items-start gap-2 rounded-xl border border-transparent px-3 py-2 text-left hover:border-primary/25 hover:bg-surface"
-                      >
-                        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-text">
-                            {place.title}
-                          </span>
-                          <span className="block truncate text-xs text-text-secondary">
-                            {place.address}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              <div className="overflow-hidden rounded-2xl border border-border">
-                <div className="border-b border-divider bg-primary-tint px-3 py-2 text-xs font-medium text-primary">
-                  {mapResolving
-                    ? "Finding address…"
-                    : "Tap the map to drop a pin for your stay"}
-                </div>
-                <div className="h-52">
-                  <TravelMap
-                    className="h-full w-full"
-                    markers={mapMarkers}
-                    interactionMode="pick-place"
-                    fitToMarkers={mapMarkers.length > 0}
-                    centerOnCurrentLocation={false}
-                    showCurrentLocation={false}
-                    onMapClick={(coords) => {
-                      void handleMapPick(coords);
-                    }}
-                  />
-                </div>
-              </div>
-
-              {address ? (
-                <p className="text-xs text-text-secondary">
-                  <span className="font-medium text-text">Address: </span>
-                  {address}
-                </p>
-              ) : null}
-            </div>
-          )}
-
-          <div>
-            <label className="text-xs font-medium text-text-secondary">
-              Notes (optional)
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Check-in time, confirmation code, host notes…"
-              className="mt-1.5 block w-full rounded-xl border border-border bg-surface-elevated px-3 py-2.5 text-sm text-text shadow-sm outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={!canSave || saving}
-            className="min-w-[7rem]"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          {initial ? (
-            <Button
-              type="button"
-              variant="secondary"
-              icon={Trash2}
-              className="ml-auto !text-error"
-              onClick={() => void onClear()}
-            >
-              Remove
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </Sheet>
   );
 }
 
@@ -958,6 +640,8 @@ function DocumentsSheet({
             type="button"
             onClick={() => void handleSave()}
             disabled={saving}
+            icon={Save}
+            color="primary"
             className="min-w-[7rem]"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
@@ -970,7 +654,8 @@ function DocumentsSheet({
               type="button"
               variant="secondary"
               icon={Trash2}
-              className="ml-auto !text-error"
+              color="error"
+              className="ml-auto"
               onClick={() => void onClear()}
             >
               Remove

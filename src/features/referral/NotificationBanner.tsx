@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { devLog } from "@/lib/devLog";
 import {
   markNotificationRead,
   subscribeUnreadNotifications,
@@ -27,7 +28,7 @@ export function NotificationBanner({
       userId,
       (items) => setLatest(items[0] ?? null),
       (err) => {
-        console.error("[NotificationBanner]", err);
+        devLog.error("[NotificationBanner]", err);
         setLatest(null);
       }
     );
@@ -41,7 +42,7 @@ export function NotificationBanner({
     try {
       await markNotificationRead(userId, id);
     } catch (err) {
-      console.error("[NotificationBanner] mark read failed", err);
+      devLog.error("[NotificationBanner] mark read failed", err);
     }
   }
 

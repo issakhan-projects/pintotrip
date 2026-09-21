@@ -284,6 +284,7 @@ export function ProfilePanel({
                     <AiCreditsCard
                       balance={balance}
                       plan={plan}
+                      resetsAt={profile?.subscription?.currentPeriodEnd}
                       onUpgrade={() => {
                         trackEvent(AnalyticsEvents.UPGRADE_CLICKED, {
                           plan,

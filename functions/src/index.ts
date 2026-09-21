@@ -2,10 +2,12 @@
  * PinToTrip Cloud Functions entrypoint.
  * AI and privileged work runs here — never in the browser.
  *
- * Callables: findPlace, getCityIntelligence, planTrip, chargeCreateTrip, getTripWeather,
- * submitReview, createReferral, completeReferral.
+ * Callables: findPlace, getCityIntelligence, planTrip, fillTripPlannerAiPlaces,
+ * getTripWeather, resolveCityAirports, submitReview, createReferral,
+ * completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
- * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend).
+ * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
+ * onTripPlannerCreated (tripPlanner create → transport discovery + cityTransportCache).
  * HTTP: paddleWebhook (Paddle Billing notifications).
  * Callables: createPaddlePortalSession.
  */
@@ -14,7 +16,9 @@ import { DEFAULT_FUNCTIONS_REGION } from "./shared/config";
 import { findPlace } from "./location/findPlace";
 import { getCityIntelligence } from "./city/getCityIntelligence";
 import { planTrip } from "./trip/planTrip";
-import { chargeCreateTrip } from "./trip/chargeCreateTrip";
+import { fillTripPlannerAiPlaces } from "./trip/fillTripPlannerAiPlaces";
+import { resolveCityAirports } from "./trip/resolveCityAirports";
+import { onTripPlannerCreated } from "./trip/onTripPlannerCreated";
 import { getTripWeather } from "./weather/getTripWeather";
 import { submitReview } from "./review/submitReview";
 import { createReferral, completeReferral } from "./referral";
@@ -34,7 +38,9 @@ export {
   findPlace,
   getCityIntelligence,
   planTrip,
-  chargeCreateTrip,
+  fillTripPlannerAiPlaces,
+  resolveCityAirports,
+  onTripPlannerCreated,
   getTripWeather,
   submitReview,
   createReferral,

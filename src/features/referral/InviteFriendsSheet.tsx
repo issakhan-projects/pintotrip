@@ -5,6 +5,7 @@ import { Button } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { Check, Copy, Link2, Share2, Users } from "lucide-react";
 import { buildInviteAbsoluteUrl } from "@/lib/referral";
+import { devLog } from "@/lib/devLog";
 import { createReferral } from "@/services/functions";
 import { REFERRAL_REWARD_AI_CREDITS } from "@/types/credits";
 import { useAnalytics } from "@/hooks/useAnalytics";
@@ -53,7 +54,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
         rewardCredits: result.rewardCredits ?? REFERRAL_REWARD_AI_CREDITS,
       });
     } catch (err) {
-      console.error("[InviteFriendsSheet] createReferral failed", err);
+      devLog.error("[InviteFriendsSheet] createReferral failed", err);
       setState({
         status: "error",
         message:

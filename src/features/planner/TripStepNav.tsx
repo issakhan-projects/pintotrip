@@ -7,7 +7,8 @@ import type { TripPlannerStep } from "@/types/trip-planner";
 const STEPS: Array<{ id: TripPlannerStep; label: string; number: number }> = [
   { id: "details", label: "Trip details", number: 1 },
   { id: "preparation", label: "Before you go", number: 2 },
-  { id: "places", label: "Places", number: 3 },
+  { id: "routes", label: "Routes", number: 3 },
+  { id: "places", label: "Places", number: 4 },
 ];
 
 interface TripStepNavProps {
@@ -73,7 +74,7 @@ export function TripStepNav({
   return (
     <nav
       aria-label="Trip steps"
-      className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+      className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
     >
       {STEPS.map((step) => {
         const isActive = active === step.id;

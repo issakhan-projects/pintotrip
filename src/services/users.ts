@@ -27,6 +27,7 @@ import {
   userProfileKey,
   userProfileStore,
 } from "@/lib/firebase/data-cache";
+import { saveOfflineProfileSnapshot } from "@/lib/planner/offline-store";
 import type { DetectedUserLocation } from "@/lib/maps/detectLocation";
 import type {
   UserProfile,
@@ -73,6 +74,9 @@ function applyProfileToCache(
     return;
   }
   setUserProfileInCache(userId, profile);
+  if (profile) {
+    saveOfflineProfileSnapshot(userId, profile);
+  }
   if (profile?.subscription?.plan) {
     setRealtimeSyncFromPlan(profile.subscription.plan);
   }
@@ -84,16 +88,22 @@ const PROFILE_REVALIDATE_MS = 8_000;
 function queryProfileFromServer(userId: string): Promise<UserProfile | null> {
   const key = userProfileKey(userId);
   return userProfileInFlight.run(`${key}:hard`, async () => {
-    const snap = await getDocCacheFirst(userRef(userId), {
-      forceServer: true,
-    });
-    if (!snap.exists()) {
-      applyProfileToCache(userId, null);
-      return null;
+    try {
+      const snap = await getDocCacheFirst(userRef(userId), {
+        forceServer: true,
+      });
+      if (!snap.exists()) {
+        applyProfileToCache(userId, null);
+        return null;
+      }
+      const profile = snap.data() as UserProfile;
+      applyProfileToCache(userId, profile);
+      return profile;
+    } catch (err) {
+      const mem = userProfileStore.get(key);
+      if (mem) return mem;
+      throw err;
     }
-    const profile = snap.data() as UserProfile;
-    applyProfileToCache(userId, profile);
-    return profile;
   });
 }
 
@@ -377,7 +387,8 @@ export async function updateUserProfile(
     ...input,
     updatedAt: serverTimestamp(),
   });
-  patchUserProfileInCache(userId, input as Partial<UserProfile>);
+  const next = patchUserProfileInCache(userId, input as Partial<UserProfile>);
+  if (next) saveOfflineProfileSnapshot(userId, next);
   if (input.subscription?.plan) {
     setRealtimeSyncFromPlan(input.subscription.plan);
   }

@@ -14,6 +14,7 @@ import type { SubscriptionPlan } from "@/types/user";
 import { isSubscriptionEntitled } from "@/features/profile/plans";
 import { openCheckout, previewPrices } from "@/lib/paddle/client";
 import { hasPaddlePublicEnvConfigured } from "@/lib/paddle/env";
+import { devLog } from "@/lib/devLog";
 import { cx } from "@/lib/utils";
 import {
   TIERS,
@@ -111,7 +112,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
         setPricesById(next);
       } catch (error) {
         if (cancelled) return;
-        console.error("Paddle PricePreview failed", error);
+        devLog.error("Paddle PricePreview failed", error);
         setPricesError(
           error instanceof Error
             ? error.message
@@ -168,7 +169,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
         ...(email ? { customer: { email } } : {}),
       });
     } catch (error) {
-      console.error("Paddle Checkout.open failed", error);
+      devLog.error("Paddle Checkout.open failed", error);
       setCheckoutError(
         error instanceof Error
           ? error.message
@@ -533,6 +534,14 @@ function HowCreditsWork() {
           credits={AI_CREDIT_COSTS.getCityIntelligence}
         />
         <CreditRow
+          label="Plan trip (ordinary)"
+          credits={AI_CREDIT_COSTS.planTrip}
+        />
+        <CreditRow
+          label="Plan trip (advanced)"
+          credits={AI_CREDIT_COSTS.planTripAdvanced}
+        />
+        <CreditRow
           label="Recreate trip plan (ordinary)"
           credits={AI_CREDIT_COSTS.planTripRegenerate}
         />
@@ -541,6 +550,10 @@ function HowCreditsWork() {
           credits={AI_CREDIT_COSTS.planTripRegenerateAdvanced}
         />
         <CreditRow label="Regenerate" credits={AI_CREDIT_COSTS.regenerate} />
+        <CreditRow
+          label="Resolve city airports"
+          credits={AI_CREDIT_COSTS.resolveCityAirports}
+        />
       </ul>
     </section>
   );

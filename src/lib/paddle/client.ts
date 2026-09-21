@@ -9,6 +9,7 @@ import {
   type PricePreviewParams,
   type PricePreviewResponse,
 } from "@paddle/paddle-js";
+import { devLog } from "@/lib/devLog";
 import { getPaddlePublicEnv } from "./env";
 
 let paddlePromise: Promise<Paddle> | null = null;
@@ -17,7 +18,7 @@ let paddlePromiseKey: string | null = null;
 function logPaddleEvent(event: PaddleEventData) {
   const name = event.name ?? event.type;
   if (name === "checkout.error" || name === "checkout.warning") {
-    console.error("[Paddle]", name, event);
+    devLog.error("[Paddle]", name, event);
   }
 }
 

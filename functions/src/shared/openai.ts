@@ -41,7 +41,6 @@ import {
 } from "../city/parseModelResponse";
 import type {
   CityIntelligenceResult,
-  GetCityIntelligenceRequest,
 } from "../city/types";
 import {
   PLAN_TRIP_SYSTEM_PROMPT,
@@ -52,16 +51,18 @@ import {
   parseModelPlanTrip,
 } from "../trip/parseModelResponse";
 import type {
-  LeisureType,
-  PlanTripDestination,
-  PlanTripExistingDay,
-  PlanTripSavedPlace,
-  PlanTripWeatherDay,
   PlannedDaySuggestion,
+  PlannedRouteSuggestion,
+  TripPlanningContext,
+  LeisureType,
 } from "../trip/types";
+import {
+  FILL_PLACES_SYSTEM_PROMPT,
+  buildFillPlacesUserPrompt,
+} from "../trip/fillPlacesPrompts";
 
-/** Vision-capable model for landmark / place identification. */
-const LOCATION_MODEL = "gpt-5.6-luna";
+/** Vision-capable / lightweight text model for landmark + metadata enrichment. */
+export const LOCATION_MODEL = "gpt-5.6-luna";
 
 /** Text model for city travel intelligence synthesis. */
 const CITY_INTELLIGENCE_MODEL = "gpt-5.6-luna";
@@ -74,7 +75,7 @@ const LOCATION_MAX_TOKENS = 2200;
 const LOCATION_VERIFY_MAX_TOKENS = 2200;
 const CITY_MAX_TOKENS = 2800;
 const CITY_TIME_SENSITIVE_MAX_TOKENS = 900;
-const PLAN_TRIP_MAX_TOKENS = 3500;
+const PLAN_TRIP_MAX_TOKENS = 4500;
 
 /**
  * Server-side OpenAI client factory.
@@ -117,10 +118,16 @@ export interface OpenAILocationAnalyzer {
 
 export interface OpenAICityIntelligenceAnalyzer {
   analyze(
-    input: GetCityIntelligenceRequest & {
+    input: {
+      city: string;
+      country: string;
+      lat: number;
+      lon: number;
       userCountry: string;
       userCurrency: string;
       language: string;
+      cityId: string;
+      countryId: string;
     }
   ): Promise<{
     result: CityIntelligenceResult;
@@ -132,10 +139,16 @@ export interface OpenAICityIntelligenceAnalyzer {
    * Exchange rates are attached separately via Frankfurter.
    */
   analyzeTimeSensitive(
-    input: GetCityIntelligenceRequest & {
+    input: {
+      city: string;
+      country: string;
+      lat: number;
+      lon: number;
       userCountry: string;
       userCurrency: string;
       language: string;
+      cityId: string;
+      countryId: string;
       slow: ModelCityIntelligence;
     }
   ): Promise<{
@@ -147,20 +160,13 @@ export interface OpenAICityIntelligenceAnalyzer {
 
 export interface OpenAITripPlanner {
   plan(input: {
-    cityName: string;
-    countryName: string;
-    lat?: number;
-    lon?: number;
-    leisureType: LeisureType;
+    context: TripPlanningContext;
     language: string;
-    currency: string;
-    emptyDays: PlanTripExistingDay[];
-    occupiedDays: PlanTripExistingDay[];
-    destinations?: PlanTripDestination[];
-    savedPlaces?: PlanTripSavedPlace[];
-    weather?: PlanTripWeatherDay[];
+    primaryCityName: string;
+    primaryCountryName: string;
   }): Promise<{
     resultDays: PlannedDaySuggestion[];
+    resultRoutes: PlannedRouteSuggestion[];
     metrics: Omit<OpenAICallMetrics, "verificationPerformed">;
   }>;
 }
@@ -479,6 +485,8 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
       const result = toCityIntelligenceResult(raw, {
         userCountry: input.userCountry,
         generatedAt,
+        cityId: input.cityId,
+        countryId: input.countryId,
       });
 
       return {
@@ -531,6 +539,8 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
       const result = toCityIntelligenceResult(raw, {
         userCountry: input.userCountry,
         generatedAt,
+        cityId: input.cityId,
+        countryId: input.countryId,
       });
 
       return {
@@ -549,15 +559,18 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
 export { toSlowCityIntelligence };
 
 /**
- * OpenAI-backed trip itinerary planner. Leisure type controls purpose and
- * intensity; web search grounds scheduled places when they are needed.
+ * OpenAI-backed trip itinerary planner. Leisure type shapes style;
+ * web search grounds places and transfer fares when needed.
  */
 export function createOpenAITripPlanner(): OpenAITripPlanner {
   const client = createOpenAIClient();
 
   return {
     async plan(input) {
-      const userPrompt = buildPlanTripUserPrompt(input);
+      const userPrompt = buildPlanTripUserPrompt({
+        context: input.context,
+        language: input.language,
+      });
 
       const response = await client.responses.create({
         model: PLAN_TRIP_MODEL,
@@ -578,20 +591,157 @@ export function createOpenAITripPlanner(): OpenAITripPlanner {
       }
 
       const usage = usageFromResponse(response.usage);
-      const resultDays = parseModelPlanTrip(
-        extractPlanTripJsonObject(text),
-        input.cityName,
-        input.countryName
-      );
+      let parsed;
+      try {
+        parsed = parseModelPlanTrip(
+          extractPlanTripJsonObject(text),
+          input.primaryCityName,
+          input.primaryCountryName
+        );
+      } catch (err) {
+        logger.error("planTrip model JSON parse failed", {
+          error: err instanceof Error ? err.message : String(err),
+          responseChars: text.length,
+          responsePreview: text.slice(0, 800),
+          responseTail: text.slice(-400),
+        });
+        throw err;
+      }
 
       return {
-        resultDays,
+        resultDays: parsed.days,
+        resultRoutes: parsed.routes,
         metrics: {
           model: PLAN_TRIP_MODEL,
           usage,
           cost: estimateGpt4oCost(usage),
         },
       };
+    },
+  };
+}
+
+const FILL_PLACES_MAX_TOKENS = 4500;
+
+export type OpenAIPlacesFiller = {
+  fill(input: {
+    language?: string;
+    leisureType?: LeisureType;
+    leisureCustom?: string;
+    currency?: string;
+    destinationsJson: string;
+    itineraryJson: string;
+  }): Promise<{
+    text: string;
+    metrics: { model: string; usage: AITokenUsage; cost: number };
+  }>;
+};
+
+/**
+ * OpenAI filler for trip free-time place slots (saved refs + new locations).
+ */
+export function createOpenAIPlacesFiller(): OpenAIPlacesFiller {
+  const client = createOpenAIClient();
+
+  return {
+    async fill(input) {
+      const userPrompt = buildFillPlacesUserPrompt({
+        language: input.language,
+        leisureType: input.leisureType,
+        leisureCustom: input.leisureCustom,
+        currency: input.currency,
+        destinationsJson: input.destinationsJson,
+        itineraryJson: input.itineraryJson,
+      });
+
+      const response = await client.responses.create({
+        model: PLAN_TRIP_MODEL,
+        max_output_tokens: FILL_PLACES_MAX_TOKENS,
+        tools: [{ type: "web_search", search_context_size: "medium" }],
+        instructions: FILL_PLACES_SYSTEM_PROMPT,
+        input: [
+          {
+            role: "user",
+            content: [{ type: "input_text", text: userPrompt }],
+          },
+        ],
+      });
+
+      const text = response.output_text;
+      if (!text) {
+        throw new Error("OpenAI returned an empty places fill response.");
+      }
+
+      const usage = usageFromResponse(response.usage);
+      return {
+        text,
+        metrics: {
+          model: PLAN_TRIP_MODEL,
+          usage,
+          cost: estimateGpt4oCost(usage),
+        },
+      };
+    },
+  };
+}
+
+type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
+/**
+ * Chat Completions JSON helper for Trip Planner AI stages (routes / places).
+ * Uses max_completion_tokens + low reasoning; retries on empty content.
+ */
+export async function completeTripPlannerAiJson(params: {
+  system: string;
+  user: string;
+  maxCompletionTokens: number;
+  reasoningEffort?: ReasoningEffort;
+}): Promise<{
+  text: string;
+  metrics: { model: string; usage: AITokenUsage; cost: number };
+}> {
+  const client = createOpenAIClient();
+  const reasoningEffort = params.reasoningEffort ?? "low";
+
+  const run = async (maxTokens: number, effort: ReasoningEffort) => {
+    const completion = await client.chat.completions.create({
+      model: PLAN_TRIP_MODEL,
+      max_completion_tokens: maxTokens,
+      reasoning_effort: effort,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: params.system },
+        { role: "user", content: params.user },
+      ],
+    });
+    return completion;
+  };
+
+  let completion = await run(params.maxCompletionTokens, reasoningEffort);
+  let text = completion.choices[0]?.message?.content?.trim() ?? "";
+
+  if (!text) {
+    const retryTokens = Math.min(params.maxCompletionTokens * 2, 24_000);
+    completion = await run(retryTokens, "minimal");
+    text = completion.choices[0]?.message?.content?.trim() ?? "";
+  }
+
+  if (!text) {
+    const finishReason = completion.choices[0]?.finish_reason ?? null;
+    const reasoningTokens =
+      completion.usage?.completion_tokens_details?.reasoning_tokens ?? null;
+    throw new Error(
+      `OpenAI returned an empty Trip Planner AI response (finish_reason=${finishReason}, reasoning_tokens=${reasoningTokens}).`
+    );
+  }
+
+  const usage = usageFromCompletion(completion.usage);
+  return {
+    text,
+    metrics: {
+      model: PLAN_TRIP_MODEL,
+      usage,
+      cost: estimateGpt4oCost(usage),
     },
   };
 }

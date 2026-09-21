@@ -20,6 +20,7 @@ import {
   preferredFeatureTypeForCountry,
   resolveUsableFeatureType,
 } from "./ddsCoverage";
+import { devLog } from "@/lib/devLog";
 
 export type CityPlaceIdBackfill = {
   locationIds: string[];
@@ -173,7 +174,7 @@ export class CityStatusOverlayController {
         }
 
         nextStyles.set(placeId, { status: entry.status, featureType });
-        console.info(
+        devLog.info(
           `[PinToTrip DDS] City highlight: ${entry.cityName} → ${placeId} (${entry.status}, ${featureType})`
         );
 
@@ -196,7 +197,7 @@ export class CityStatusOverlayController {
     await Promise.all(
       [...countryHighlights.values()].map(async (country) => {
         if (!this.report!.countryLayerAvailable) {
-          console.error(
+          devLog.error(
             `[PinToTrip DDS] Cannot highlight "${country.countryName}" — COUNTRY feature layer is not enabled on this Map Style. Enable Country in Cloud Console → Map Styles → Feature layers.`,
             { cities: country.cityNames }
           );
@@ -214,7 +215,7 @@ export class CityStatusOverlayController {
         });
         if (generation !== this.generation) return;
         if (!placeId) {
-          console.error(
+          devLog.error(
             `[PinToTrip DDS] Country Place ID missing for "${country.countryName}".`,
             { cities: country.cityNames }
           );
@@ -228,7 +229,7 @@ export class CityStatusOverlayController {
             : country.status;
 
         nextStyles.set(placeId, { status, featureType: "COUNTRY" });
-        console.info(
+        devLog.info(
           `[PinToTrip DDS] Country highlight: ${country.countryName} → ${placeId} (${status}, COUNTRY)`,
           { cities: country.cityNames }
         );
@@ -294,7 +295,7 @@ export class CityStatusOverlayController {
     if (!this.report.ok) {
       this.loggedFailure = true;
     } else if (this.loggedFailure) {
-      console.info(
+      devLog.info(
         "[PinToTrip DDS] Capabilities became available — applying city boundary styles."
       );
     }

@@ -40,7 +40,20 @@ export async function assertSufficientCredits(
   | { ok: true; requiredCredits: number; availableCredits: number }
   | { ok: false; response: InsufficientAICreditsError }
 > {
-  const requiredCredits = getRequiredCredits(operation);
+  return assertSufficientCreditUnits(userId, operation, 1);
+}
+
+/** Pre-check balance for N units of an operation (e.g. multi-city intelligence). */
+export async function assertSufficientCreditUnits(
+  userId: string,
+  operation: AICreditOperation,
+  units: number
+): Promise<
+  | { ok: true; requiredCredits: number; availableCredits: number }
+  | { ok: false; response: InsufficientAICreditsError }
+> {
+  const requiredCredits =
+    getRequiredCredits(operation) * Math.max(1, Math.floor(units));
   const snap = await userRef(userId).get();
   const availableCredits = readBalance(snap.data());
 
@@ -65,7 +78,22 @@ export async function deductCredits(
   userId: string,
   operation: AICreditOperation
 ): Promise<number> {
-  const requiredCredits = getRequiredCredits(operation);
+  return deductCreditUnits(userId, operation, 1);
+}
+
+/** Deduct N units of an operation after billable work. */
+export async function deductCreditUnits(
+  userId: string,
+  operation: AICreditOperation,
+  units: number
+): Promise<number> {
+  const requiredCredits =
+    getRequiredCredits(operation) * Math.max(0, Math.floor(units));
+  if (requiredCredits <= 0) {
+    const snap = await userRef(userId).get();
+    return readBalance(snap.data());
+  }
+
   const ref = userRef(userId);
 
   const remaining = await adminDb().runTransaction(async (tx) => {
@@ -76,8 +104,7 @@ export async function deductCredits(
 
     const availableCredits = readBalance(snap.data());
     if (availableCredits < requiredCredits) {
-      // Rare race after a pre-check; clamp to zero and log.
-      logger.warn("deductCredits race: insufficient at commit", {
+      logger.warn("deductCreditUnits race: insufficient at commit", {
         userId,
         operation,
         requiredCredits,
@@ -102,6 +129,7 @@ export async function deductCredits(
     userId,
     operation,
     requiredCredits,
+    units,
     remaining,
   });
 

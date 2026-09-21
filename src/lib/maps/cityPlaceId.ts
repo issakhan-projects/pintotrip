@@ -1,5 +1,5 @@
 import { loadPlacesLibrary } from "./loader";
-import { geocodeByAddress, geocodeByLocation } from "./geocode";
+import { geocodeByAddress, geocodeByLocation, hasUsableMapCoords } from "./geocode";
 import type { CityStatusEntry } from "./cityStatus";
 import type { DdsFeatureType } from "./ddsCapabilities";
 import {
@@ -9,6 +9,7 @@ import {
   normalizeQuery,
   roundCoord,
 } from "./requestCache";
+import { devLog } from "@/lib/devLog";
 
 export interface CityPlaceIdQuery {
   key: string;
@@ -97,10 +98,16 @@ function pickPlaceIdByTypes(
   return null;
 }
 
+function resultsHavePlaceId(
+  results: Array<{ place_id?: string }>
+): boolean {
+  return results.some((r) => Boolean(r.place_id?.trim()));
+}
+
 function logMissingPlaceId(city: CityPlaceIdQuery, reason: string): void {
   if (missingLogged.has(city.key)) return;
   missingLogged.add(city.key);
-  console.error(
+  devLog.error(
     `[PinToTrip DDS] City Google Place ID is missing for "${city.cityName}" (${city.countryName}). ${reason}`,
     {
       key: city.key,
@@ -117,13 +124,17 @@ function logMissingPlaceId(city: CityPlaceIdQuery, reason: string): void {
  */
 async function resolveViaReverseGeocode(
   city: CityPlaceIdQuery
-): Promise<string | null> {
-  if (city.lat == null || city.lon == null) return null;
+): Promise<{ placeId: string | null; hadPlaceIds: boolean }> {
+  if (!hasUsableMapCoords(city.lat, city.lon)) {
+    return { placeId: null, hadPlaceIds: false };
+  }
+  const lat = city.lat as number;
+  const lon = city.lon as number;
 
-  const results = await geocodeByLocation(city.lat, city.lon, {
+  const results = await geocodeByLocation(lat, lon, {
     language: "en",
   });
-
+  const hadPlaceIds = resultsHavePlaceId(results);
   const placeId = pickPlaceIdByTypes(
     results,
     matchingGeocodeTypes(city.featureType)
@@ -134,7 +145,7 @@ async function resolveViaReverseGeocode(
       (r: { place_id?: string; types?: string[]; formatted_address?: string }) =>
         r.place_id === placeId
     );
-    console.info(
+    devLog.info(
       `[PinToTrip DDS] Reverse-geocode Place ID for "${city.cityName}":`,
       placeId,
       matched?.types,
@@ -142,7 +153,7 @@ async function resolveViaReverseGeocode(
     );
   }
 
-  return placeId;
+  return { placeId, hadPlaceIds };
 }
 
 async function resolveViaPlaces(
@@ -184,12 +195,12 @@ async function resolveViaPlaces(
 
 async function resolveViaGeocoder(
   city: CityPlaceIdQuery
-): Promise<string | null> {
+): Promise<{ placeId: string | null; hadPlaceIds: boolean }> {
   const isCountry = city.featureType === "COUNTRY";
   const primaryName = isCountry
     ? city.countryName.trim()
     : city.cityName.trim();
-  if (!primaryName) return null;
+  if (!primaryName) return { placeId: null, hadPlaceIds: false };
 
   const address = isCountry
     ? primaryName
@@ -201,13 +212,19 @@ async function resolveViaGeocoder(
     country,
   });
 
-  return pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType));
+  return {
+    placeId: pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType)),
+    hadPlaceIds: resultsHavePlaceId(results),
+  };
 }
 
 /**
  * Resolve a Google Place ID for a city or country boundary.
  * Prefers `city.googlePlaceId` from the locations collection (LOCALITY only).
  * Never treats `location.city.id` (slug) as a Google Place ID.
+ *
+ * Order: stored id → reverse geocode → forward geocode → Places Text Search
+ * (Places only when geocoding returned no place_id at all).
  */
 export async function resolveCityGooglePlaceId(
   city: CityPlaceIdQuery
@@ -231,20 +248,47 @@ export async function resolveCityGooglePlaceId(
     city.featureType === "COUNTRY" ? city.countryName : city.cityName;
 
   const request = (async (): Promise<string | null> => {
+    let geocodeHadPlaceIds = false;
+
     // Reverse geocode first when coords exist — matches DDS Feature Layer IDs.
-    if (city.lat != null && city.lon != null) {
+    if (hasUsableMapCoords(city.lat, city.lon)) {
       try {
         const fromReverse = await resolveViaReverseGeocode(city);
-        if (fromReverse) {
-          placeIdCache.set(key, fromReverse);
-          return fromReverse;
+        if (fromReverse.hadPlaceIds) geocodeHadPlaceIds = true;
+        if (fromReverse.placeId) {
+          placeIdCache.set(key, fromReverse.placeId);
+          return fromReverse.placeId;
         }
       } catch (err) {
-        console.warn(
-          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying Places/Geocoder.`,
+        devLog.warn(
+          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying forward geocode.`,
           err
         );
       }
+    }
+
+    try {
+      const fromGeocoder = await resolveViaGeocoder(city);
+      if (fromGeocoder.hadPlaceIds) geocodeHadPlaceIds = true;
+      if (fromGeocoder.placeId) {
+        placeIdCache.set(key, fromGeocoder.placeId);
+        return fromGeocoder.placeId;
+      }
+    } catch (err) {
+      devLog.warn(
+        `[PinToTrip DDS] Geocoder Place ID lookup failed for "${label}".`,
+        err
+      );
+    }
+
+    // Geocoding already returned place_id(s) — type just didn't match the DDS
+    // layer. Skip Places Text Search; callers fall back to country highlight.
+    if (geocodeHadPlaceIds) {
+      logMissingPlaceId(
+        city,
+        "Geocode returned place_id(s) but none matched the requested feature type; skipped Places Text Search."
+      );
+      return null;
     }
 
     try {
@@ -254,28 +298,15 @@ export async function resolveCityGooglePlaceId(
         return fromPlaces;
       }
     } catch (err) {
-      console.warn(
-        `[PinToTrip DDS] Places Text Search failed for "${label}". Falling back to Geocoder.`,
-        err
-      );
-    }
-
-    try {
-      const fromGeocoder = await resolveViaGeocoder(city);
-      if (fromGeocoder) {
-        placeIdCache.set(key, fromGeocoder);
-        return fromGeocoder;
-      }
-    } catch (err) {
-      console.warn(
-        `[PinToTrip DDS] Geocoder Place ID lookup failed for "${label}".`,
+      devLog.warn(
+        `[PinToTrip DDS] Places Text Search failed for "${label}".`,
         err
       );
     }
 
     logMissingPlaceId(
       city,
-      "Reverse geocode, Places Text Search, and Geocoder returned no matching place_id for the requested feature type."
+      "Reverse geocode, forward geocode, and Places Text Search returned no matching place_id for the requested feature type."
     );
     return null;
   })();

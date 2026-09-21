@@ -8,6 +8,7 @@ export {
   cityIntelligenceFullFingerprint,
   cityIntelligenceSlowFingerprint,
   planTripFingerprint,
+  resolveCityAirportsFingerprint,
 } from "./aiFingerprint";
 export { dedupeAsync, isInflight } from "./aiDeduplication";
 export {

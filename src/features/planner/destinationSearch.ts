@@ -1,12 +1,10 @@
-import { loadPlacesLibrary } from "@/lib/maps/loader";
 import { geocodeByAddress } from "@/lib/maps/geocode";
 import {
-  PLACE_PHOTOS_TTL_MS,
   PLACES_SEARCH_TTL_MS,
   cachedRequest,
   normalizeQuery,
-  roundCoord,
 } from "@/lib/maps/requestCache";
+import { fetchPexelsCityPhoto } from "@/lib/pexels";
 
 export type GeocodedPlace = {
   cityName: string;
@@ -16,14 +14,9 @@ export type GeocodedPlace = {
   lat?: number;
   lon?: number;
   label: string;
-  /** Google Place photo URIs for trip covers. */
+  /** Pexels (or other external) image URLs for trip covers. */
   photos?: string[];
 };
-
-/** Enough for cover gallery; avoid requesting unused photo SKUs. */
-const MAX_DESTINATION_PHOTOS = 4;
-/** Cover / card display size — 1600 was over-fetching for UI use. */
-const PHOTO_MAX_WIDTH = 1200;
 
 function readComponent(
   components: google.maps.GeocoderAddressComponent[],
@@ -73,25 +66,9 @@ function fromGeocoderResult(
   };
 }
 
-function photoUrisFromPlace(
-  place: google.maps.places.Place | undefined
-): string[] {
-  if (!place?.photos?.length) return [];
-  const urls: string[] = [];
-  for (const photo of place.photos.slice(0, MAX_DESTINATION_PHOTOS)) {
-    try {
-      const uri = photo.getURI({ maxWidth: PHOTO_MAX_WIDTH });
-      if (uri) urls.push(uri);
-    } catch {
-      // Skip photos that fail to resolve a URI.
-    }
-  }
-  return urls;
-}
-
 /**
- * Resolve Google Place photos for a city destination (search / map pick).
- * Cached; Place Details only if Text Search returned an id but no photos.
+ * Resolve a cover photo for a city destination via Pexels.
+ * Same source as plan-place thumbs — no Google Places Text Search / Photos.
  */
 export async function fetchDestinationPhotos(place: {
   cityName: string;
@@ -103,41 +80,11 @@ export async function fetchDestinationPhotos(place: {
   const country = place.countryName.trim();
   if (!city && !country) return [];
 
-  const bias =
-    place.lat != null && place.lon != null
-      ? `${roundCoord(place.lat)}:${roundCoord(place.lon)}`
-      : "";
-  const key = `places:photos:${normalizeQuery([city, country].filter(Boolean).join(","))}:${bias}`;
-
-  try {
-    return await cachedRequest(key, PLACE_PHOTOS_TTL_MS, async () => {
-      const { Place } = await loadPlacesLibrary();
-      const textQuery = [city, country].filter(Boolean).join(", ");
-      const { places } = await Place.searchByText({
-        textQuery,
-        fields: ["id", "photos", "displayName", "location"],
-        includedType: "locality",
-        maxResultCount: 1,
-        ...(place.lat != null && place.lon != null
-          ? { locationBias: { lat: place.lat, lng: place.lon } }
-          : {}),
-      });
-
-      const photos = photoUrisFromPlace(places[0]);
-      if (photos.length > 0) return photos;
-
-      // Text Search already requested photos; empty usually means none exist.
-      // Only fall back to Place Details when we have an id but photos were omitted.
-      const placeId = places[0]?.id?.trim();
-      if (!placeId || places[0]?.photos) return [];
-
-      const detail = new Place({ id: placeId });
-      await detail.fetchFields({ fields: ["photos"] });
-      return photoUrisFromPlace(detail);
-    });
-  } catch {
-    return [];
-  }
+  const photo = await fetchPexelsCityPhoto({
+    cityName: city || country,
+    countryName: country && country !== city ? country : undefined,
+  });
+  return photo?.url ? [photo.url] : [];
 }
 
 /**

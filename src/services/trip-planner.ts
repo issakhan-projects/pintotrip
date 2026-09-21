@@ -4,6 +4,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   serverTimestamp,
   query,
   orderBy,
@@ -31,7 +32,15 @@ import {
   upsertTripInListCache,
   type TripsCacheState,
 } from "@/lib/firebase/data-cache";
+import {
+  loadOfflineTrip,
+  removeOfflineTrip,
+  saveOfflineTrip,
+} from "@/lib/planner/offline-store";
+import { normalizeTripDoc } from "@/lib/planner/normalize-trip";
+import { deleteAllTripRoutes } from "@/services/trip-routes";
 import type {
+  TripDestination,
   TripPlanner,
   TripPlannerCreateInput,
   TripPlannerDoc,
@@ -52,10 +61,10 @@ function tripRef(userId: string, tripId: string): DocumentReference {
 }
 
 function mapDoc(d: QueryDocumentSnapshot): TripPlannerDoc {
-  return {
-    id: d.id,
-    ...(d.data() as TripPlanner),
-  };
+  return normalizeTripDoc(
+    d.id,
+    d.data() as TripPlanner & { destination?: TripDestination }
+  );
 }
 
 /** Firestore rejects `undefined` anywhere in update payloads. */
@@ -115,12 +124,15 @@ function applyTripsSnapshot(
   for (const trip of items) {
     const existing = tripDetailStore.get(tripDetailKey(userId, trip.id));
     // Keep a newer in-memory edit over a stale query snapshot (IndexedDB / bfcache).
-    const chosen =
+    const chosen = normalizeTripDoc(
+      trip.id,
       existing && updatedAtMillis(existing) > updatedAtMillis(trip)
         ? existing
-        : trip;
+        : trip
+    );
     byId.set(chosen.id, chosen);
     tripDetailStore.set(tripDetailKey(userId, chosen.id), chosen);
+    saveOfflineTrip(userId, chosen);
   }
 
   // Keep trips that were just created locally but are missing from the query
@@ -306,6 +318,13 @@ export async function listUserTrips(
   return state.items;
 }
 
+function hydrateTripCaches(userId: string, trip: TripPlannerDoc): void {
+  const normalized = normalizeTripDoc(trip.id, trip);
+  tripDetailStore.set(tripDetailKey(userId, trip.id), normalized);
+  upsertTripInListCache(userId, normalized);
+  saveOfflineTrip(userId, normalized);
+}
+
 export async function getTrip(
   userId: string,
   tripId: string,
@@ -318,15 +337,24 @@ export async function getTrip(
     const mem = tripDetailStore.get(detailKey);
     if (mem) {
       recordCacheHit();
-      return mem;
+      const normalized = normalizeTripDoc(mem.id, mem);
+      tripDetailStore.set(detailKey, normalized);
+      saveOfflineTrip(userId, normalized);
+      return normalized;
     }
     const fromList = tripsStore
       .get(tripsKey(userId))
       ?.items.find((t) => t.id === tripId);
     if (fromList) {
       recordCacheHit();
-      tripDetailStore.set(detailKey, fromList);
-      return fromList;
+      hydrateTripCaches(userId, fromList);
+      return normalizeTripDoc(fromList.id, fromList);
+    }
+    const offline = loadOfflineTrip(userId, tripId);
+    if (offline) {
+      recordCacheHit();
+      hydrateTripCaches(userId, offline);
+      return offline;
     }
   }
 
@@ -337,18 +365,39 @@ export async function getTrip(
         const mem = tripDetailStore.get(detailKey);
         if (mem) {
           recordCacheHit();
-          return mem;
+          const normalized = normalizeTripDoc(mem.id, mem);
+          tripDetailStore.set(detailKey, normalized);
+          saveOfflineTrip(userId, normalized);
+          return normalized;
         }
       }
 
-      const snap = await getDocCacheFirst(tripRef(userId, tripId), {
-        forceServer: hard,
-      });
-      if (!snap.exists()) return null;
-      const trip = { id: snap.id, ...(snap.data() as TripPlanner) };
-      tripDetailStore.set(detailKey, trip);
-      upsertTripInListCache(userId, trip);
-      return trip;
+      try {
+        const snap = await getDocCacheFirst(tripRef(userId, tripId), {
+          forceServer: hard,
+        });
+        if (!snap.exists()) {
+          const offline = loadOfflineTrip(userId, tripId);
+          if (offline) {
+            hydrateTripCaches(userId, offline);
+            return offline;
+          }
+          return null;
+        }
+        const trip = normalizeTripDoc(
+          snap.id,
+          snap.data() as TripPlanner & { destination?: TripDestination }
+        );
+        hydrateTripCaches(userId, trip);
+        return trip;
+      } catch {
+        const offline = loadOfflineTrip(userId, tripId);
+        if (offline) {
+          hydrateTripCaches(userId, offline);
+          return offline;
+        }
+        throw new Error("Failed to load trip.");
+      }
     }
   );
 }
@@ -356,14 +405,17 @@ export async function getTrip(
 export async function createTrip(
   input: TripPlannerCreateInput
 ): Promise<string> {
-  const ref = await addDoc(tripsCollection(input.userId), {
-    status: "planning",
-    cityIntelligence: { status: "pending" },
+  const cleaned = omitUndefinedDeep({
+    status: "planning" as const,
+    cityIntelligence: { status: "pending" as const },
     preparation: { items: [] },
-    tripEssentials: { flights: [], accommodation: [], documents: [] },
     savedPlaceIds: [],
-    itinerary: { status: "empty", days: [] },
+    itinerary: { status: "empty" as const, days: [] },
     ...input,
+  });
+
+  const ref = await addDoc(tripsCollection(input.userId), {
+    ...cleaned,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -371,17 +423,12 @@ export async function createTrip(
   const now = approxNowTimestamp();
   const trip: TripPlannerDoc = {
     id: ref.id,
-    status: "planning",
-    cityIntelligence: { status: "pending" },
-    preparation: { items: [] },
-    tripEssentials: { flights: [], accommodation: [], documents: [] },
-    savedPlaceIds: [],
-    itinerary: { status: "empty", days: [] },
-    ...input,
+    ...cleaned,
     createdAt: now,
     updatedAt: now,
-  };
+  } as TripPlannerDoc;
   tripDetailStore.set(tripDetailKey(input.userId, ref.id), trip);
+  saveOfflineTrip(input.userId, trip);
   const listKey = tripsKey(input.userId);
   if (tripsStore.get(listKey)) {
     upsertTripInListCache(input.userId, trip);
@@ -400,23 +447,43 @@ export async function updateTrip(
   input: TripPlannerUpdateInput
 ): Promise<void> {
   const cleaned = omitUndefinedDeep(input) as TripPlannerUpdateInput;
-  await updateDoc(tripRef(userId, tripId), {
-    ...cleaned,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(tripRef(userId, tripId), {
+      ...cleaned,
+      // Drop legacy singular field once destinations[] is the source of truth.
+      ...(cleaned.destinations ? { destination: deleteField() } : {}),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    // Offline writes may still queue via Firestore persistence; always keep
+    // local + device snapshot so the detail page stays usable offline.
+    const patched = patchTripInCache(userId, tripId, {
+      ...cleaned,
+      updatedAt: approxNowTimestamp(),
+    } as Partial<TripPlannerDoc>);
+    if (patched) {
+      saveOfflineTrip(userId, patched);
+      return;
+    }
+    throw err;
+  }
 
-  patchTripInCache(userId, tripId, {
+  const patched = patchTripInCache(userId, tripId, {
     ...cleaned,
     updatedAt: approxNowTimestamp(),
   } as Partial<TripPlannerDoc>);
+  if (patched) saveOfflineTrip(userId, patched);
 }
 
 export async function deleteTrip(
   userId: string,
   tripId: string
 ): Promise<void> {
+  // Subcollections are not deleted with the parent doc — clear routes first.
+  await deleteAllTripRoutes(userId, tripId);
   await deleteDoc(tripRef(userId, tripId));
   removeTripFromListCache(userId, tripId);
+  removeOfflineTrip(userId, tripId);
 }
 
 export function subscribeTripsCache(

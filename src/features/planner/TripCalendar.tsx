@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { TripPlannerDoc } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
+import { primaryTripDestination } from "./tripDestinations";
 
 const WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const;
 
@@ -119,7 +120,8 @@ function tripDayKey(date: Date): string {
 }
 
 function tripLabel(trip: TripPlannerDoc): string {
-  return trip.destination.cityName || trip.destination.countryName || "Trip";
+  const primary = primaryTripDestination(trip);
+  return primary.cityName || primary.countryName || "Trip";
 }
 
 function initialMonth(trips: TripPlannerDoc[]): Date {

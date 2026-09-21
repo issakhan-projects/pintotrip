@@ -12,6 +12,12 @@ export const resendApiKey = defineSecret("RESEND_API_KEY");
 /** OpenWeatherMap — trip day forecasts (getTripWeather). Never expose to the browser. */
 export const openWeatherMapApiKey = defineSecret("OPENWEATHERMAP_API_KEY");
 
+/**
+ * Private Google Maps Platform key for server-side Places / Geocoding.
+ * Restrict by IP / API in Cloud Console — never use NEXT_PUBLIC_*.
+ */
+export const googlePrivateApiKey = defineSecret("GOOGLE_PRIVATE_API_KEY");
+
 /** Paddle Billing API keys — keep both; pick by webhook signature / stored env. */
 export const paddleApiKeySandbox = defineSecret("PADDLE_API_KEY_SANDBOX");
 export const paddleApiKeyLive = defineSecret("PADDLE_API_KEY_LIVE");

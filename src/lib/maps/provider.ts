@@ -4,8 +4,10 @@
  */
 
 import type { LocationStatus } from "@/types/location";
+import { devLog } from "@/lib/devLog";
 import { getGoogleMapsConfig } from "./config";
 import { DEMO_MAP_ID } from "./ddsCapabilities";
+import { hasUsableMapCoords } from "./geocode";
 import { loadMapsLibrary, loadMarkerLibrary } from "./loader";
 
 export interface MapMarkerInput {
@@ -14,8 +16,13 @@ export interface MapMarkerInput {
   lon: number;
   title?: string;
   status?: LocationStatus;
-  /** Place pins use status colors; city/stay pins use fixed brand accents. */
-  kind?: "place" | "city" | "stay";
+  /** Place pins use status colors; city/stay/airport pins use fixed brand accents. */
+  kind?: "place" | "city" | "stay" | "airport";
+  /**
+   * Google Place ID fallback when lat/lon are missing or Null Island (0,0).
+   * TravelMap resolves geometry before placing the pin.
+   */
+  googlePlaceId?: string;
 }
 
 export interface CreateMapOptions {
@@ -77,6 +84,8 @@ const STATUS_HEX: Record<LocationStatus, string> = {
 const CITY_PIN_HEX = "#6D28D9";
 /** Accommodation / trip-essentials stay pin — distinct from place + city. */
 const STAY_PIN_HEX = "#0F766E";
+/** Arrival airport pin from trip-essentials flights. */
+const AIRPORT_PIN_HEX = "#C2410C";
 
 export { DEMO_MAP_ID };
 
@@ -127,11 +136,25 @@ function stayPinSvg(color: string): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+/** Plane badge pin for trip-essentials arrival airports. */
+function airportPinSvg(color: string): string {
+  // Pin tip + white badge with Lucide Plane glyph (rotated for map readability).
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="40" viewBox="0 0 34 40">
+    <path fill="${color}" stroke="#fff" stroke-width="2" d="M17 1C9.3 1 3 7.3 3 15c0 10 12 22.5 13.1 23.6a1.3 1.3 0 0 0 1.8 0C19 37.5 31 25 31 15 31 7.3 24.7 1 17 1z"/>
+    <circle cx="17" cy="15" r="8.25" fill="#fff"/>
+    <g transform="translate(17 15) rotate(-45) scale(0.68) translate(-12 -12)">
+      <path fill="${color}" d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+    </g>
+  </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
 type MarkerKind = NonNullable<MapMarkerInput["kind"]>;
 
 function pinColorFor(kind: MarkerKind, status?: LocationStatus): string {
   if (kind === "city") return CITY_PIN_HEX;
   if (kind === "stay") return STAY_PIN_HEX;
+  if (kind === "airport") return AIRPORT_PIN_HEX;
   return STATUS_HEX[status ?? "planned"];
 }
 
@@ -146,12 +169,20 @@ function createPinContent(
       ? cityPinSvg(color)
       : kind === "stay"
         ? stayPinSvg(color)
-        : pinSvg(color);
+        : kind === "airport"
+          ? airportPinSvg(color)
+          : pinSvg(color);
   img.width = kind === "place" ? 28 : kind === "city" ? 32 : 34;
   img.height = kind === "place" ? 36 : 40;
   img.alt =
     title ??
-    (kind === "city" ? "City" : kind === "stay" ? "Accommodation" : "Place");
+    (kind === "city"
+      ? "City"
+      : kind === "stay"
+        ? "Accommodation"
+        : kind === "airport"
+          ? "Airport"
+          : "Place");
   img.draggable = false;
   img.style.display = "block";
   // AdvancedMarkerElement anchors custom HTML at the bottom center (pin tip).
@@ -175,7 +206,7 @@ function createCurrentLocationContent(): HTMLElement {
   return wrap;
 }
 
-const CURRENT_LOCATION_ZOOM = 13;
+const CURRENT_LOCATION_ZOOM = 5;
 
 export const googleMapsProvider: MapProvider = {
   async createMap({ element, center, zoom = 3, mapId, gestureHandling }) {
@@ -183,7 +214,7 @@ export const googleMapsProvider: MapProvider = {
     const resolved = resolveMapsMapId(mapId);
 
     if (resolved.usingDemo) {
-      console.error(
+      devLog.error(
         "[PinToTrip DDS] NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID is missing or empty in .env.local. " +
           "Pins still work via DEMO_MAP_ID, but city boundaries require a Cloud Console " +
           "JavaScript VECTOR Map ID with the LOCALITY feature layer enabled. " +
@@ -222,6 +253,8 @@ export const googleMapsProvider: MapProvider = {
     const removed: MapMarkerHandle[] = [];
 
     for (const m of markers) {
+      if (!hasUsableMapCoords(m.lat, m.lon)) continue;
+
       const visualKey = markerVisualKey(m);
       const prev = existing.get(m.id);
 
@@ -271,13 +304,14 @@ export const googleMapsProvider: MapProvider = {
   },
 
   fitToMarkers(map, markers) {
-    if (markers.length === 0) return;
+    const usable = markers.filter((m) => hasUsableMapCoords(m.lat, m.lon));
+    if (usable.length === 0) return;
     const bounds = new google.maps.LatLngBounds();
-    for (const m of markers) {
+    for (const m of usable) {
       bounds.extend({ lat: m.lat, lng: m.lon });
     }
     map.fitBounds(bounds, 64);
-    if (markers.length === 1) {
+    if (usable.length === 1) {
       map.setZoom(Math.min(map.getZoom() ?? 12, 12));
     }
   },

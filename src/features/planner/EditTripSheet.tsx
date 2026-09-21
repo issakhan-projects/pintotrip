@@ -8,10 +8,9 @@ import {
 } from "@/components/ui";
 import {
   CircleDollarSign,
+  Compass,
   MapPin,
   Plane,
-  Plus,
-  Search,
   Tag,
   X,
 } from "lucide-react";
@@ -28,6 +27,8 @@ import { resolveCountryCode } from "@/lib/countries";
 import {
   resolveEnglishPlaceIds,
   resolveEnglishPlaceIdsFromAddress,
+  englishPlaceIdsFromNames,
+  resolveTimezoneFromCoords,
 } from "@/lib/maps";
 import { timestampFromDate } from "@/services/trip-planner";
 import type {
@@ -36,10 +37,12 @@ import type {
   TripPlannerUpdateInput,
 } from "@/types/trip-planner";
 import {
-  autocompleteDestinations,
-  fetchDestinationPhotos,
-  type GeocodedPlace,
-} from "./destinationSearch";
+  LEISURE_CUSTOM_MAX_LENGTH,
+  LEISURE_TYPES,
+  LEISURE_TYPE_OPTIONS,
+  type LeisureType,
+} from "@/types/trip-plan";
+import { type GeocodedPlace } from "./destinationSearch";
 import { currencySymbolForCode } from "./tripUtils";
 import { TripDateRangeField } from "./TripDateRangeField";
 import {
@@ -47,7 +50,19 @@ import {
   stopToEditDraft,
   type EditDestDraft,
 } from "./EditTripDestinationsEditor";
-import { listTripDestinations } from "./tripDestinations";
+import {
+  isSaudiArabiaCountry,
+  listTripDestinations,
+  primaryTripDestination,
+} from "./tripDestinations";
+
+function leisureTypeFromTrip(trip: TripPlannerDoc): LeisureType {
+  const value = trip.leisureType;
+  if (value && (LEISURE_TYPES as readonly string[]).includes(value)) {
+    return value;
+  }
+  return "mixed";
+}
 
 interface EditTripSheetProps {
   open: boolean;
@@ -57,34 +72,23 @@ interface EditTripSheetProps {
   onSave: (input: TripPlannerUpdateInput) => Promise<void>;
 }
 
-function parseFrom(value: string): { city: string; country: string } {
-  const parts = value
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return { city: "", country: "" };
-  if (parts.length === 1) return { city: "", country: parts[0]! };
-  return {
-    city: parts.slice(0, -1).join(", "),
-    country: parts[parts.length - 1]!,
-  };
-}
-
 function destinationChanged(
   trip: TripPlannerDoc,
   next: GeocodedPlace
 ): boolean {
+  const primary = primaryTripDestination(trip);
   const sameCity =
-    trip.destination.cityName.trim().toLowerCase() ===
+    primary.cityName.trim().toLowerCase() ===
     next.cityName.trim().toLowerCase();
   const sameCountry =
-    trip.destination.countryName.trim().toLowerCase() ===
+    primary.countryName.trim().toLowerCase() ===
     next.countryName.trim().toLowerCase();
   return !(sameCity && sameCountry);
 }
 
 /**
- * Edit basic trip fields (name, from, destination, dates, currency).
+ * Edit trip fields. Origin is always fixed after create.
+ * Ordinary: destination is fixed. Advanced: destinations can be added or removed.
  */
 export function EditTripSheet({
   open,
@@ -127,27 +131,9 @@ function EditTripForm({
   onSave: (input: TripPlannerUpdateInput) => Promise<void>;
 }) {
   const [tripName, setTripName] = useState(trip.name);
-  const [fromValue, setFromValue] = useState(() =>
+  const [fromValue] = useState(() =>
     [trip.from.cityName, trip.from.countryName].filter(Boolean).join(", ")
   );
-  const [destination, setDestination] = useState<GeocodedPlace>(() => ({
-    cityName: trip.destination.cityName,
-    countryName: trip.destination.countryName,
-    label: [trip.destination.cityName, trip.destination.countryName]
-      .filter(Boolean)
-      .join(", "),
-    lat: trip.destination.lat,
-    lon: trip.destination.lon,
-    photos: trip.destination.photos,
-  }));
-  const [searchQuery, setSearchQuery] = useState(
-    () =>
-      [trip.destination.cityName, trip.destination.countryName]
-        .filter(Boolean)
-        .join(", ")
-  );
-  const [searchResults, setSearchResults] = useState<GeocodedPlace[]>([]);
-  const [searching, setSearching] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => ({
     from: trip.startDate.toDate(),
     to: trip.endDate.toDate(),
@@ -155,51 +141,20 @@ function EditTripForm({
   const [currencyCode, setCurrencyCode] = useState(
     () => resolveCurrencyCode(trip.currency.code) || trip.currency.code || "USD"
   );
+  const [leisureType, setLeisureType] = useState<LeisureType>(() =>
+    leisureTypeFromTrip(trip)
+  );
+  const [leisureCustom, setLeisureCustom] = useState(
+    () => trip.leisureCustom?.trim() ?? ""
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isAdvanced = trip.createMode === "advanced";
   const initialCities = listTripDestinations(trip);
   const [destinations, setDestinations] = useState<EditDestDraft[]>(() =>
-    initialCities.length > 1 ? initialCities.map(stopToEditDraft) : []
+    isAdvanced ? initialCities.map(stopToEditDraft) : []
   );
   const [addingDestination, setAddingDestination] = useState(false);
-  const [multiEditor, setMultiEditor] = useState(
-    () => initialCities.length > 1
-  );
-  const isMultiCityEditor = multiEditor;
-
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (q.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
-    // Don't search while the query still matches the selected destination label.
-    if (
-      destination &&
-      q.toLowerCase() === destination.label.trim().toLowerCase()
-    ) {
-      setSearchResults([]);
-      return;
-    }
-
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setSearching(true);
-      void autocompleteDestinations(q)
-        .then((results) => {
-          if (!cancelled) setSearchResults(results);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [searchQuery, destination]);
 
   const currencyOptions = useMemo(
     () =>
@@ -214,22 +169,58 @@ function EditTripForm({
     []
   );
 
-  async function applyDestination(place: GeocodedPlace) {
-    setDestination(place);
-    setSearchQuery(place.label);
-    setSearchResults([]);
-    const photos = await fetchDestinationPhotos(place);
-    if (photos.length === 0) return;
-    setDestination((prev) => {
-      if (!prev) return prev;
-      if (
-        prev.cityName !== place.cityName ||
-        prev.countryName !== place.countryName
-      ) {
-        return prev;
-      }
-      return { ...prev, photos };
-    });
+  const hasSaudiDestination = useMemo(() => {
+    if (isAdvanced) {
+      return destinations.some((item) =>
+        isSaudiArabiaCountry({
+          countryCode: item.place.countryCode,
+          countryName: item.place.countryName,
+        })
+      );
+    }
+    return listTripDestinations(trip).some((stop) =>
+      isSaudiArabiaCountry({
+        countryId: stop.countryId,
+        countryName: stop.countryName,
+      })
+    );
+  }, [isAdvanced, destinations, trip]);
+
+  const leisureOptions = useMemo(
+    () =>
+      LEISURE_TYPE_OPTIONS.filter(
+        (option) => option.value !== "umrah" || hasSaudiDestination
+      ).map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description,
+      })),
+    [hasSaudiDestination]
+  );
+
+  useEffect(() => {
+    if (leisureType === "umrah" && !hasSaudiDestination) {
+      setLeisureType("mixed");
+    }
+  }, [leisureType, hasSaudiDestination]);
+
+  async function resolveTimezoneForCoords(
+    lat?: number,
+    lon?: number
+  ): Promise<string | undefined> {
+    if (
+      typeof lat !== "number" ||
+      typeof lon !== "number" ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon)
+    ) {
+      return undefined;
+    }
+    try {
+      return (await resolveTimezoneFromCoords(lat, lon))?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async function resolvePlaceToStop(
@@ -244,24 +235,36 @@ function EditTripForm({
         place.countryName.trim().toLowerCase();
     if (sameOriginal && original) {
       const { startDate: _s, endDate: _e, ...rest } = original;
+      const lat =
+        typeof place.lat === "number" && Number.isFinite(place.lat)
+          ? place.lat
+          : original.lat;
+      const lon =
+        typeof place.lon === "number" && Number.isFinite(place.lon)
+          ? place.lon
+          : original.lon;
+      const timezone =
+        original.timezone?.trim() ||
+        (await resolveTimezoneForCoords(lat, lon));
       return {
         ...rest,
         photos: place.photos?.length ? place.photos : original.photos,
-        lat:
-          typeof place.lat === "number" && Number.isFinite(place.lat)
-            ? place.lat
-            : original.lat,
-        lon:
-          typeof place.lon === "number" && Number.isFinite(place.lon)
-            ? place.lon
-            : original.lon,
+        lat,
+        lon,
+        ...(timezone ? { timezone } : {}),
       };
     }
 
     let englishDestIds = null as Awaited<
       ReturnType<typeof resolveEnglishPlaceIds>
     >;
+    englishDestIds = englishPlaceIdsFromNames(
+      place.cityName,
+      place.countryName,
+      place.countryCode || resolveCountryCode(place.countryName) || undefined
+    );
     if (
+      !englishDestIds &&
       typeof place.lat === "number" &&
       typeof place.lon === "number" &&
       Number.isFinite(place.lat) &&
@@ -300,19 +303,26 @@ function EditTripForm({
 
     if (!isAsciiId(destCountryId) || !destCityId) return null;
 
+    const lat =
+      typeof place.lat === "number" && Number.isFinite(place.lat)
+        ? place.lat
+        : original?.lat;
+    const lon =
+      typeof place.lon === "number" && Number.isFinite(place.lon)
+        ? place.lon
+        : original?.lon;
+    const timezone =
+      original?.timezone?.trim() ||
+      (await resolveTimezoneForCoords(lat, lon));
+
     return {
       cityName: place.cityName,
       cityId: destCityId,
       countryName: place.countryName,
       countryId: destCountryId,
-      lat:
-        typeof place.lat === "number" && Number.isFinite(place.lat)
-          ? place.lat
-          : original?.lat,
-      lon:
-        typeof place.lon === "number" && Number.isFinite(place.lon)
-          ? place.lon
-          : original?.lon,
+      lat,
+      lon,
+      ...(timezone ? { timezone } : {}),
       ...(place.photos?.length
         ? { photos: place.photos }
         : original?.photos?.length
@@ -321,36 +331,16 @@ function EditTripForm({
     };
   }
 
-  function beginMultiCity() {
-    if (destinations.length === 0) {
-      const current = listTripDestinations(trip)[0];
-      setDestinations([
-        current
-          ? {
-              ...stopToEditDraft(current, 0),
-              place: destination,
-            }
-          : {
-              id: "current",
-              place: destination,
-              savedKey: null,
-              dateRange: {},
-            },
-      ]);
-    }
-    setAddingDestination(true);
-    setMultiEditor(true);
-  }
-
   async function handleSave() {
-    const primaryPlace = isMultiCityEditor
+    const primaryPlace = isAdvanced
       ? destinations[0]?.place
-      : destination;
+      : {
+          cityName: primaryTripDestination(trip).cityName,
+          countryName: primaryTripDestination(trip).countryName,
+        };
     if (!primaryPlace?.cityName || !primaryPlace.countryName) {
       setError(
-        isMultiCityEditor
-          ? "Add at least one destination."
-          : "Choose a destination."
+        isAdvanced ? "Keep at least one destination." : "Missing destination."
       );
       return;
     }
@@ -366,8 +356,12 @@ function EditTripForm({
       setError("Select a currency.");
       return;
     }
+    if (leisureType === "custom" && !leisureCustom.trim()) {
+      setError("Describe the activities you want for Custom leisure.");
+      return;
+    }
 
-    if (isMultiCityEditor) {
+    if (isAdvanced) {
       for (const item of destinations) {
         if (!item.dateRange.from && !item.dateRange.to) continue;
         if (!item.dateRange.from || !item.dateRange.to) {
@@ -379,9 +373,8 @@ function EditTripForm({
       }
     }
 
-    const { city: fromCity, country: fromCountry } = parseFrom(fromValue);
-    if (!fromCountry) {
-      setError("Enter where you’re traveling from.");
+    if (!trip.from.countryName?.trim()) {
+      setError("This trip is missing an origin city.");
       return;
     }
 
@@ -394,8 +387,12 @@ function EditTripForm({
       const startDate = timestampFromDate(dateRange.from);
       const endDate = timestampFromDate(dateRange.to);
 
-      let destinationStops: TripDestinationStop[] | null = null;
-      if (isMultiCityEditor) {
+      let nextDestinations: TripDestinationStop[];
+
+      if (!isAdvanced) {
+        // Ordinary trips: destination cities stay fixed.
+        nextDestinations = listTripDestinations(trip);
+      } else {
         const resolved = await Promise.all(
           destinations.map(async (draft) => {
             const stop = await resolvePlaceToStop(draft.place, draft.original);
@@ -405,27 +402,26 @@ function EditTripForm({
             const { startDate: _s, endDate: _e, ...rest } = stop;
             return {
               ...rest,
+              stopType: draft.stopType,
               ...(from ? { startDate: timestampFromDate(from) } : {}),
               ...(to ? { endDate: timestampFromDate(to) } : {}),
             };
           })
         );
         if (resolved.some((row) => !row)) {
-          setError("Couldn’t resolve destination. Try searching again.");
+          setError("Couldn’t resolve destination. Try again.");
           return;
         }
-        destinationStops = resolved as TripDestinationStop[];
+        nextDestinations = resolved as TripDestinationStop[];
+        if (!nextDestinations.some((stop) => stop.stopType === "destination")) {
+          setError("Keep at least one Destination city (not only Transit).");
+          return;
+        }
       }
 
       const primaryStop =
-        destinationStops?.[0] ??
-        (await resolvePlaceToStop(destination, {
-          ...trip.destination,
-        }));
-      if (!primaryStop?.cityId || !primaryStop.countryId) {
-        setError("Couldn’t resolve destination. Try searching again.");
-        return;
-      }
+        nextDestinations.find((stop) => stop.stopType === "destination") ??
+        nextDestinations[0]!;
 
       const destChanged = destinationChanged(trip, {
         cityName: primaryStop.cityName,
@@ -433,61 +429,11 @@ function EditTripForm({
         label: `${primaryStop.cityName}, ${primaryStop.countryName}`,
       });
 
-      const englishFromIds = await resolveEnglishPlaceIdsFromAddress(
-        [fromCity.trim(), fromCountry.trim()].filter(Boolean).join(", ")
-      );
-      const fromCountryCode =
-        englishFromIds?.countryCode ||
-        resolveCountryCode(
-          englishFromIds?.countryNameEn || fromCountry.trim()
-        ) ||
-        undefined;
-      const fromCountryId = countryIdFromParts(
-        englishFromIds?.countryNameEn || fromCountry.trim(),
-        fromCountryCode
-      );
-      const fromCityName = fromCity.trim() || englishFromIds?.cityNameEn || "";
-      const fromCityId = fromCityName
-        ? (englishFromIds?.cityId && isAsciiId(englishFromIds.cityId)
-            ? englishFromIds.cityId
-            : null) ||
-          (isAsciiId(slugifyId(englishFromIds?.cityNameEn || ""))
-            ? slugifyId(englishFromIds!.cityNameEn)
-            : null) ||
-          (isAsciiId(slugifyId(fromCityName))
-            ? slugifyId(fromCityName)
-            : null)
-        : undefined;
-
-      if (!isAsciiId(fromCountryId)) {
-        setError(
-          "Couldn’t resolve where you’re traveling from. Use a city and country name."
-        );
-        return;
-      }
-
       const patch: TripPlannerUpdateInput = {
         name,
-        from: {
-          countryName: fromCountry.trim(),
-          countryId: fromCountryId,
-          cityName: fromCityName || undefined,
-          ...(fromCityId ? { cityId: fromCityId } : {}),
-          lat: trip.from.lat,
-          lon: trip.from.lon,
-        },
-        destination: {
-          cityName: primaryStop.cityName,
-          cityId: primaryStop.cityId,
-          countryName: primaryStop.countryName,
-          countryId: primaryStop.countryId,
-          lat: primaryStop.lat,
-          lon: primaryStop.lon,
-          photos: primaryStop.photos,
-        },
-        ...(destinationStops
-          ? { destinations: destinationStops }
-          : {}),
+        // Origin is never editable after create — keep transport enrichment.
+        from: trip.from,
+        destinations: nextDestinations,
         startDate,
         endDate,
         currency: {
@@ -495,6 +441,14 @@ function EditTripForm({
           name: currencyMeta?.name ?? currencyCode,
           symbol: currencySymbolForCode(currencyCode),
         },
+        leisureType,
+        ...(leisureType === "custom" && leisureCustom.trim()
+          ? {
+              leisureCustom: leisureCustom
+                .trim()
+                .slice(0, LEISURE_CUSTOM_MAX_LENGTH),
+            }
+          : {}),
       };
 
       if (destChanged) {
@@ -528,7 +482,9 @@ function EditTripForm({
           Update trip details
         </h2>
         <p className="mt-1.5 max-w-md text-sm text-text-secondary">
-          Change name, route, dates, or currency for this trip.
+          {isAdvanced
+            ? "Update name, dates, leisure type, or currency. Add or remove destinations; origin stays fixed."
+            : "Update name, dates, leisure type, or currency. Origin and destination stay fixed for ordinary trips."}
         </p>
       </div>
 
@@ -548,12 +504,14 @@ function EditTripForm({
         <div className="space-y-2">
           <span className="flex items-center gap-1.5 text-sm font-medium text-text">
             <MapPin className="h-3.5 w-3.5 text-text-muted" aria-hidden />
-            {isMultiCityEditor ? "Destinations" : "Destination"}
+            {isAdvanced || listTripDestinations(trip).length > 1
+              ? "Destinations"
+              : "Destination"}
             <span className="text-error" aria-hidden>
               *
             </span>
           </span>
-          {isMultiCityEditor ? (
+          {isAdvanced ? (
             <EditTripDestinationsEditor
               destinations={destinations}
               onChange={setDestinations}
@@ -562,67 +520,26 @@ function EditTripForm({
               locations={locations}
               tripDateRange={dateRange}
               disabled={saving}
+              allowAdd
               onError={setError}
             />
           ) : (
-            <>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <TextInput
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search a city"
-                  className="!pl-9"
-                />
-              </div>
-              {searching ? (
-                <p className="text-xs text-text-muted">Searching…</p>
-              ) : null}
-              {searchResults.length > 0 ? (
-                <ul className="overflow-hidden rounded-xl border border-border bg-surface-elevated">
-                  {searchResults.slice(0, 6).map((place) => (
-                    <li key={`${place.label}-${place.lat}-${place.lon}`}>
-                      <button
-                        type="button"
-                        onClick={() => void applyDestination(place)}
-                        className="flex w-full items-start gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface"
-                      >
-                        <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-                        <span>
-                          <span className="block font-medium text-text">
-                            {place.cityName}
-                          </span>
-                          <span className="block text-xs text-text-secondary">
-                            {place.countryName}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {destination ? (
-                <p className="rounded-xl bg-primary-tint px-3 py-2 text-sm text-primary">
-                  Selected:{" "}
+            <ul className="space-y-2">
+              {listTripDestinations(trip).map((stop) => (
+                <li
+                  key={`${stop.cityId}-${stop.countryId}-${stop.cityName}`}
+                  className="rounded-xl bg-primary-tint px-3 py-2 text-sm text-primary"
+                >
                   <span className="font-semibold">
-                    {destination.cityName}, {destination.countryName}
+                    {stop.cityName}, {stop.countryName}
                   </span>
-                </p>
-              ) : null}
-              <button
-                type="button"
-                disabled={saving || !destination}
-                onClick={beginMultiCity}
-                className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm font-medium text-primary hover:border-primary/40 hover:bg-primary-tint"
-              >
-                <Plus className="h-4 w-4" />
-                Add destination
-              </button>
-            </>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 
-        <label className="block space-y-2">
+        <div className="space-y-2">
           <span className="flex items-center gap-1.5 text-sm font-medium text-text">
             <Plane className="h-3.5 w-3.5 text-text-muted" aria-hidden />
             From
@@ -632,16 +549,54 @@ function EditTripForm({
           </span>
           <TextInput
             value={fromValue}
-            onChange={(e) => setFromValue(e.target.value)}
+            disabled
+            readOnly
             placeholder="City, Country"
           />
-        </label>
+        </div>
 
         <TripDateRangeField
           value={dateRange}
           onChange={setDateRange}
           minDate={null}
         />
+
+        <div className="space-y-2">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-text">
+            <Compass className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+            Type of leisure
+          </span>
+          <SearchableSelect
+            value={leisureType}
+            onChange={(value) => {
+              if ((LEISURE_TYPES as readonly string[]).includes(value)) {
+                setLeisureType(value as LeisureType);
+              }
+            }}
+            options={leisureOptions}
+            placeholder="Select leisure type…"
+            searchPlaceholder="Search leisure types…"
+            clearable={false}
+          />
+          {leisureType === "custom" ? (
+            <div className="space-y-1.5">
+              <TextInput
+                value={leisureCustom}
+                onChange={(e) =>
+                  setLeisureCustom(
+                    e.target.value.slice(0, LEISURE_CUSTOM_MAX_LENGTH)
+                  )
+                }
+                placeholder="e.g. surfing, diving, parachute jump"
+                maxLength={LEISURE_CUSTOM_MAX_LENGTH}
+                disabled={saving}
+              />
+              <p className="text-xs text-text-muted">
+                Tell us what you want to do — we’ll prioritize those activities.
+              </p>
+            </div>
+          ) : null}
+        </div>
 
         <div className="space-y-2">
           <span className="flex items-center gap-1.5 text-sm font-medium text-text">

@@ -17,6 +17,8 @@ export function getFirebaseStorage(): FirebaseStorage {
  *   profile/avatar
  *   locations/{locationId}/original
  *   locations/{locationId}/image-2
+ *   tripPlanner/{tripId}/cover
+ *   tripPlanner/{tripId}/routes/{routeId}/{fileId}
  *
  * Only store user-uploaded images. Do not permanently store
  * third-party copyrighted images without licensing clearance.
@@ -30,4 +32,14 @@ export const StoragePaths = {
   /** Temporary upload before a location document exists (same rules path). */
   locationDraftOriginal: (userId: string, draftId: string) =>
     `users/${userId}/locations/${draftId}/original`,
+  /** User-uploaded trip cover image. */
+  tripCover: (userId: string, tripId: string) =>
+    `users/${userId}/tripPlanner/${tripId}/cover`,
+  /** Route ticket / boarding-pass attachments (image or PDF). */
+  tripRouteAttachment: (
+    userId: string,
+    tripId: string,
+    routeId: string,
+    fileId: string
+  ) => `users/${userId}/tripPlanner/${tripId}/routes/${routeId}/${fileId}`,
 } as const;

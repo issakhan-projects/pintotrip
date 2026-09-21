@@ -22,6 +22,11 @@ interface DateRangePickerProps {
   disabled?: boolean;
   /** Disallow dates before this day (inclusive). Defaults to today. */
   minDate?: Date | null;
+  /**
+   * Inclusive max days between start and end (e.g. 14 = from and to at most
+   * 13 days apart). Applied while choosing the end date.
+   */
+  maxSpanDays?: number;
   /** Kept for API compatibility. */
   enableSelect?: boolean;
   enableYearNavigation?: boolean;
@@ -56,6 +61,15 @@ function isBeforeDay(a: Date, b: Date): boolean {
 
 function isAfterDay(a: Date, b: Date): boolean {
   return startOfDay(a).getTime() > startOfDay(b).getTime();
+}
+
+/** Inclusive day count between two calendar days. */
+function inclusiveDayCount(a: Date, b: Date): number {
+  const start = startOfDay(a).getTime();
+  const end = startOfDay(b).getTime();
+  const lo = Math.min(start, end);
+  const hi = Math.max(start, end);
+  return Math.floor((hi - lo) / 86_400_000) + 1;
 }
 
 function daysInMonth(year: number, month: number): number {
@@ -128,6 +142,7 @@ export function DateRangePicker({
   className,
   disabled,
   minDate,
+  maxSpanDays,
 }: DateRangePickerProps) {
   const today = useMemo(() => startOfDay(new Date()), []);
   const earliest =
@@ -175,6 +190,14 @@ export function DateRangePicker({
     onValueChange?.(next);
   }
 
+  function exceedsMaxSpan(a: Date, b: Date): boolean {
+    return (
+      typeof maxSpanDays === "number" &&
+      maxSpanDays > 0 &&
+      inclusiveDayCount(a, b) > maxSpanDays
+    );
+  }
+
   function selectDay(day: Date) {
     if (disabled) return;
     const picked = startOfDay(day);
@@ -190,6 +213,8 @@ export function DateRangePicker({
       commitDraft({ from: picked, to: picked });
       return;
     }
+
+    if (exceedsMaxSpan(draft.from, picked)) return;
 
     if (isBeforeDay(picked, draft.from)) {
       commitDraft({ from: picked, to: draft.from });
@@ -219,7 +244,10 @@ export function DateRangePicker({
     });
   }
 
-  const canApply = Boolean(draft.from && draft.to) && !disabled;
+  const canApply =
+    Boolean(draft.from && draft.to) &&
+    !disabled &&
+    !(draft.from && draft.to && exceedsMaxSpan(draft.from, draft.to));
   const rangeLabel =
     draft.from && draft.to
       ? `Range: ${formatRangeDay(draft.from)} - ${formatRangeDay(draft.to)}`
@@ -240,6 +268,7 @@ export function DateRangePicker({
           draft={draft}
           today={today}
           earliest={earliest}
+          maxSpanDays={maxSpanDays}
           disabled={disabled}
           onPrev={() => shiftLeft(-1)}
           onNext={() => shiftLeft(1)}
@@ -250,6 +279,7 @@ export function DateRangePicker({
           draft={draft}
           today={today}
           earliest={earliest}
+          maxSpanDays={maxSpanDays}
           disabled={disabled}
           onPrev={() => shiftRight(-1)}
           onNext={() => shiftRight(1)}
@@ -275,6 +305,7 @@ export function DateRangePicker({
             disabled={!canApply}
             onClick={() => {
               if (!draft.from || !draft.to) return;
+              if (exceedsMaxSpan(draft.from, draft.to)) return;
               onApply?.(draft);
             }}
             className="!h-9 !px-4"
@@ -292,6 +323,7 @@ function MonthPanel({
   draft,
   today,
   earliest,
+  maxSpanDays,
   disabled,
   onPrev,
   onNext,
@@ -302,6 +334,7 @@ function MonthPanel({
   draft: DateRangeValue;
   today: Date;
   earliest: Date | null;
+  maxSpanDays?: number;
   disabled?: boolean;
   onPrev: () => void;
   onNext: () => void;
@@ -309,6 +342,7 @@ function MonthPanel({
   className?: string;
 }) {
   const cells = useMemo(() => buildMonthGrid(month), [month]);
+  const selectingEnd = Boolean(draft.from && !draft.to);
 
   return (
     <div className={cx("p-3 sm:p-4", className)}>
@@ -358,9 +392,15 @@ function MonthPanel({
             !isBeforeDay(date, draft.from!) &&
             !isAfterDay(date, draft.to!);
           const isToday = sameDay(date, today);
+          const outsideSpan =
+            selectingEnd &&
+            typeof maxSpanDays === "number" &&
+            maxSpanDays > 0 &&
+            inclusiveDayCount(draft.from!, date) > maxSpanDays;
           const isDisabled =
             Boolean(disabled) ||
-            (earliest ? isBeforeDay(date, earliest) : false);
+            (earliest ? isBeforeDay(date, earliest) : false) ||
+            outsideSpan;
 
           const rangeBar =
             inRange && draft.from && draft.to && !sameDay(draft.from, draft.to);

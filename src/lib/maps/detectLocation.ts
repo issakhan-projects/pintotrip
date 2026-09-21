@@ -1,5 +1,11 @@
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
-import { geocodeByAddress, geocodeByLocation } from "./geocode";
+import {
+  geocodeByAddress,
+  geocodeByLocation,
+  hasUsableMapCoords,
+  peekGeocodeByAddress,
+  peekGeocodeByLocation,
+} from "./geocode";
 
 export interface DetectedUserLocation {
   lat: number;
@@ -62,6 +68,32 @@ function toEnglishPlaceIds(
     cityNameEn: cityTrimmed || country,
     countryNameEn: country,
   };
+}
+
+/**
+ * Build English/ASCII ids from display names when they already slugify cleanly.
+ * Skips Geocoding when the caller already has Latin city/country (+ optional ISO code).
+ */
+export function englishPlaceIdsFromNames(
+  cityName: string,
+  countryName: string,
+  countryCode?: string | null
+): EnglishPlaceIds | null {
+  return toEnglishPlaceIds(
+    cityName,
+    countryName,
+    (countryCode ?? "").toUpperCase()
+  );
+}
+
+function englishIdsFromGeocodeResults(
+  results: google.maps.GeocoderResult[] | undefined
+): EnglishPlaceIds | null {
+  if (!results?.length) return null;
+  const components = results[0]?.address_components ?? [];
+  const { city, country, countryCode } = parseCityCountry(components);
+  if (!city && !country) return null;
+  return toEnglishPlaceIds(city, country, countryCode);
 }
 
 function getBrowserPosition(
@@ -127,18 +159,74 @@ export async function reverseGeocode(
   }
 }
 
+/** Prefer locality geometry so the map pins the city, not the street. */
+const CITY_LEVEL_TYPES = [
+  "locality",
+  "postal_town",
+  "administrative_area_level_2",
+  "administrative_area_level_1",
+] as const;
+
+function cityCenterFromResults(
+  results: google.maps.GeocoderResult[]
+): { lat: number; lon: number } | null {
+  for (const type of CITY_LEVEL_TYPES) {
+    const match = results.find((result) => result.types.includes(type));
+    const location = match?.geometry?.location;
+    if (!location) continue;
+    const lat = location.lat();
+    const lon = location.lng();
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { lat, lon };
+    }
+  }
+  return null;
+}
+
+/**
+ * Browser GPS snapped to city-center coordinates (locality / town).
+ * Falls back to raw GPS when reverse geocode fails.
+ * Uses language=en so the response shares cache with resolveEnglishPlaceIds /
+ * DDS Place ID lookup (geometry does not depend on localized names).
+ */
+export async function getBrowserCityCoords(options?: {
+  timeoutMs?: number;
+  maximumAge?: number;
+}): Promise<{ lat: number; lon: number } | null> {
+  const coords = await getBrowserCoords(options);
+  if (!coords) return null;
+
+  try {
+    const results = await geocodeByLocation(coords.lat, coords.lon, {
+      language: "en",
+    });
+    return cityCenterFromResults(results) ?? coords;
+  } catch {
+    return coords;
+  }
+}
+
 /**
  * Resolve English/ASCII city + country ids via reverse geocode (language=en).
  * Use when AI returns localized display names but machine ids are missing.
  * Shares the same cached geocode response as DDS Place ID resolution (also language=en).
+ * Reuses a prior browser-locale ("default") reverse geocode when names already ASCII.
  */
 export async function resolveEnglishPlaceIds(
   lat: number,
   lon: number
 ): Promise<EnglishPlaceIds | null> {
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-  // 0,0 is almost never a real trip destination — treat as missing coords.
-  if (lat === 0 && lon === 0) return null;
+  if (!hasUsableMapCoords(lat, lon)) return null;
+
+  const fromDefault = englishIdsFromGeocodeResults(
+    peekGeocodeByLocation(lat, lon)
+  );
+  if (fromDefault) return fromDefault;
+
+  const fromEnCache = englishIdsFromGeocodeResults(
+    peekGeocodeByLocation(lat, lon, { language: "en" })
+  );
+  if (fromEnCache) return fromEnCache;
 
   const place = await reverseGeocode(lat, lon, { language: "en" });
   if (!place) return null;
@@ -160,12 +248,19 @@ export async function resolveEnglishPlaceIdsFromAddress(
   const trimmed = address.trim();
   if (!trimmed) return null;
 
+  const fromDefault = englishIdsFromGeocodeResults(
+    peekGeocodeByAddress(trimmed)
+  );
+  if (fromDefault) return fromDefault;
+
+  const fromEnCache = englishIdsFromGeocodeResults(
+    peekGeocodeByAddress(trimmed, { language: "en" })
+  );
+  if (fromEnCache) return fromEnCache;
+
   try {
     const results = await geocodeByAddress(trimmed, { language: "en" });
-    const components = results[0]?.address_components ?? [];
-    const { city, country, countryCode } = parseCityCountry(components);
-    if (!city && !country) return null;
-    return toEnglishPlaceIds(city, country, countryCode);
+    return englishIdsFromGeocodeResults(results);
   } catch {
     return null;
   }

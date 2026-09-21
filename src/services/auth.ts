@@ -14,6 +14,7 @@ import {
 import { getFirebaseAuth } from "@/lib/firebase/auth";
 import { clearClientDataCaches } from "@/lib/firebase/data-cache";
 import { detectUserLocation } from "@/lib/maps/detectLocation";
+import { devLog } from "@/lib/devLog";
 import { ensureUserProfile } from "@/services/users";
 
 /** Firebase Auth error code thrown when email/password login is blocked. */
@@ -164,7 +165,7 @@ export async function signInWithGoogle(): Promise<UserCredential> {
 
   // Profile is created inside /map (with progress UI). Best-effort kickoff here.
   void createProfileNow(credential.user).catch((err) => {
-    console.error("[signInWithGoogle] profile create", err);
+    devLog.error("[signInWithGoogle] profile create", err);
   });
   backfillLocationLater(credential.user, locationPromise);
 

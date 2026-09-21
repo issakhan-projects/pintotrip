@@ -112,6 +112,8 @@ export function planTripFingerprint(params: {
   lon?: number;
   savedPlacesKey?: string;
   weatherKey?: string;
+  journeyKey?: string;
+  destinationsKey?: string;
 }): string {
   return fingerprintParts("planTrip", {
     city: params.cityName,
@@ -124,9 +126,21 @@ export function planTripFingerprint(params: {
     occupied: params.occupiedDaysKey,
     saved: params.savedPlacesKey,
     weather: params.weatherKey,
+    journey: params.journeyKey,
+    destinations: params.destinationsKey,
     lat:
       typeof params.lat === "number" ? roundCoord(params.lat) : undefined,
     lon:
       typeof params.lon === "number" ? roundCoord(params.lon) : undefined,
+  });
+}
+
+export function resolveCityAirportsFingerprint(params: {
+  citiesKey: string;
+  language: string;
+}): string {
+  return fingerprintParts("resolveCityAirports", {
+    cities: params.citiesKey,
+    language: params.language,
   });
 }

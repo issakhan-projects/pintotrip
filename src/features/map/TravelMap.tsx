@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { devLog } from "@/lib/devLog";
 import {
   CityStatusOverlayController,
   centerMapOnCoords,
-  getBrowserCoords,
+  getBrowserCityCoords,
   googleMapsProvider,
+  hasUsableMapCoords,
+  looksLikeGooglePlaceId,
+  resolveCoordsFromGooglePlaceId,
   resolveMapsMapId,
   type CityPlaceIdBackfill,
   type CityStatusLocation,
@@ -34,9 +38,9 @@ interface TravelMapProps {
   pickMode?: boolean;
   interactionMode?: MapInteractionMode;
   fitToMarkers?: boolean;
-  /** Show a blue-dot marker for the device location. Default true. */
+  /** Show a blue-dot marker for the device city (not street-level GPS). Default true. */
   showCurrentLocation?: boolean;
-  /** Pan/zoom to the device location when the map first opens. Default true. */
+  /** Pan/zoom to the device city when the map first opens. Default true. */
   centerOnCurrentLocation?: boolean;
 }
 
@@ -44,7 +48,7 @@ function markersSignature(markers: MapMarkerInput[]): string {
   return markers
     .map(
       (m) =>
-        `${m.id}:${m.lat}:${m.lon}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}`
+        `${m.id}:${m.lat}:${m.lon}:${m.googlePlaceId ?? ""}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}`
     )
     .sort()
     .join("|");
@@ -58,6 +62,30 @@ function cityLocationsSignature(locations: CityStatusLocation[]): string {
     )
     .sort()
     .join("|");
+}
+
+/**
+ * Fill Null Island / missing coords from googlePlaceId when present.
+ * Drops markers that still have no usable position.
+ */
+async function hydrateMarkerCoords(
+  markers: MapMarkerInput[]
+): Promise<MapMarkerInput[]> {
+  const resolved = await Promise.all(
+    markers.map(async (marker) => {
+      if (hasUsableMapCoords(marker.lat, marker.lon)) return marker;
+
+      const placeId = marker.googlePlaceId?.trim();
+      if (!looksLikeGooglePlaceId(placeId)) return null;
+
+      const coords = await resolveCoordsFromGooglePlaceId(placeId!);
+      if (!coords) return null;
+
+      return { ...marker, lat: coords.lat, lon: coords.lon };
+    })
+  );
+
+  return resolved.filter((m): m is MapMarkerInput => m != null);
 }
 
 /**
@@ -158,7 +186,8 @@ export function TravelMap({
     let cancelled = false;
 
     void (async () => {
-      const coords = await getBrowserCoords({ timeoutMs: 10_000 });
+      // Snap GPS to city center so the blue dot / initial view stay city-level.
+      const coords = await getBrowserCityCoords({ timeoutMs: 10_000 });
       if (cancelled || !coords || !mapRef.current) return;
 
       if (showCurrentLocation) {
@@ -197,37 +226,46 @@ export function TravelMap({
 
     const existingCopy = new Map(markerMapRef.current);
 
-    void googleMapsProvider
-      .syncMarkers(map, markers, existingCopy, (id) => {
-        onMarkerSelectRef.current?.(id);
-      })
-      .then(({ next, removed }) => {
-        if (cancelled) {
-          // Drop only markers created by this stale sync.
-          for (const [id, record] of next) {
-            if (markerMapRef.current.get(id)?.handle !== record.handle) {
-              record.handle.map = null;
-            }
-          }
-          return;
-        }
-        googleMapsProvider.clearMarkers(removed);
-        markerMapRef.current = next;
-        lastMarkersSignatureRef.current = signature;
+    void (async () => {
+      const hydrated = await hydrateMarkerCoords(markers);
+      if (cancelled || !mapRef.current) return;
 
-        // Auto-fit only the first time markers appear (or after the map is
-        // cleared back to empty). Do not re-fit when pick mode ends, city
-        // intelligence opens, or a favorite pin is added — keep the viewport.
-        // Also skip when we already centered on the device location.
-        if (markers.length === 0) {
-          if (lastFitSignatureRef.current !== "__current_location__") {
-            lastFitSignatureRef.current = "";
-          }
-        } else if (fitToMarkers && lastFitSignatureRef.current === "") {
-          googleMapsProvider.fitToMarkers(map, markers);
-          lastFitSignatureRef.current = signature;
+      const { next, removed } = await googleMapsProvider.syncMarkers(
+        mapRef.current,
+        hydrated,
+        existingCopy,
+        (id) => {
+          onMarkerSelectRef.current?.(id);
         }
-      });
+      );
+
+      if (cancelled) {
+        // Drop only markers created by this stale sync.
+        for (const [id, record] of next) {
+          if (markerMapRef.current.get(id)?.handle !== record.handle) {
+            record.handle.map = null;
+          }
+        }
+        return;
+      }
+
+      googleMapsProvider.clearMarkers(removed);
+      markerMapRef.current = next;
+      lastMarkersSignatureRef.current = signature;
+
+      // Auto-fit only the first time markers appear (or after the map is
+      // cleared back to empty). Do not re-fit when pick mode ends, city
+      // intelligence opens, or a favorite pin is added — keep the viewport.
+      // Also skip when we already centered on the device location.
+      if (hydrated.length === 0) {
+        if (lastFitSignatureRef.current !== "__current_location__") {
+          lastFitSignatureRef.current = "";
+        }
+      } else if (fitToMarkers && lastFitSignatureRef.current === "") {
+        googleMapsProvider.fitToMarkers(mapRef.current, hydrated);
+        lastFitSignatureRef.current = signature;
+      }
+    })();
 
     return () => {
       cancelled = true;
@@ -245,7 +283,7 @@ export function TravelMap({
     const controller = cityOverlayRef.current;
     if (!controller) return;
     void controller.sync(cityLocations).catch((err) => {
-      console.error("[PinToTrip DDS] Failed to sync city boundary styles.", err);
+      devLog.error("[PinToTrip DDS] Failed to sync city boundary styles.", err);
     });
   }, [ready, citySig, cityLocations]);
 

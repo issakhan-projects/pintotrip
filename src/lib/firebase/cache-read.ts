@@ -27,12 +27,17 @@ export type CacheReadOptions = {
  * Cache-first query.
  * If IndexedDB/local cache has matching docs, return them and do NOT hit server.
  * Only falls through to getDocs when cache is empty / unavailable.
+ * When offline, never force a server round-trip.
  */
 export async function getDocsCacheFirst<T = unknown>(
   q: Query<T>,
   options?: CacheReadOptions
 ): Promise<QuerySnapshot<T>> {
-  if (!options?.forceServer) {
+  const forceServer =
+    options?.forceServer === true &&
+    !(typeof navigator !== "undefined" && navigator.onLine === false);
+
+  if (!forceServer) {
     try {
       const cached = await getDocsFromCache(q);
       if (!cached.empty) {
@@ -55,12 +60,17 @@ export async function getDocsCacheFirst<T = unknown>(
 
 /**
  * Cache-first document read.
+ * When offline, never force a server round-trip.
  */
 export async function getDocCacheFirst<T = unknown>(
   ref: DocumentReference<T>,
   options?: CacheReadOptions
 ): Promise<DocumentSnapshot<T>> {
-  if (!options?.forceServer) {
+  const forceServer =
+    options?.forceServer === true &&
+    !(typeof navigator !== "undefined" && navigator.onLine === false);
+
+  if (!forceServer) {
     try {
       const cached = await getDocFromCache(ref);
       if (cached.exists()) {

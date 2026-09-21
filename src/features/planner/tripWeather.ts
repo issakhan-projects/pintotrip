@@ -1,12 +1,15 @@
 import type { ItineraryDayWeather } from "@/types/trip-planner";
+import type { TripPlannerAiRequestDayWeather } from "@/types/trip-planner-ai-request";
 import type {
   GetTripWeatherRequest,
   GetTripWeatherResult,
   TripWeatherDay,
 } from "@/types/weather";
+import type { TemperatureUnit } from "@/types/user";
 import { getTripWeather } from "@/services/functions";
 import { addUtcDays, startOfUtcDay } from "@/services/trip-planner";
 import type { TripDestinationStop, TripPlannerDoc } from "@/types/trip-planner";
+import { devLog } from "@/lib/devLog";
 import {
   destinationDateWindow,
   listTripDestinations,
@@ -30,6 +33,12 @@ function roundCoord(value: number): number {
   return Math.round(value * f) / f;
 }
 
+export function openWeatherUnitsFromTemperature(
+  temperatureUnit?: TemperatureUnit
+): "metric" | "imperial" {
+  return temperatureUnit === "fahrenheit" ? "imperial" : "metric";
+}
+
 export function weatherCacheKey(input: {
   lat: number;
   lon: number;
@@ -42,9 +51,7 @@ export function weatherCacheKey(input: {
 }
 
 function enumerateIsoDates(startDate: string, endDate: string): string[] {
-  const start = startOfUtcDay(
-    new Date(`${startDate}T00:00:00.000Z`)
-  );
+  const start = startOfUtcDay(new Date(`${startDate}T00:00:00.000Z`));
   const end = startOfUtcDay(new Date(`${endDate}T00:00:00.000Z`));
   const dates: string[] = [];
   let cursor = start;
@@ -129,10 +136,7 @@ export async function fetchTripWeatherCached(
   const normalized: GetTripWeatherRequest = { ...request, units };
   const key = weatherCacheKey(normalized);
   const cached = weatherCache.get(key);
-  if (
-    cached &&
-    Date.now() - cached.storedAt < WEATHER_CACHE_TTL_MS
-  ) {
+  if (cached && Date.now() - cached.storedAt < WEATHER_CACHE_TTL_MS) {
     return cached.result;
   }
 
@@ -145,7 +149,7 @@ export async function fetchTripWeatherCached(
       weatherCache.set(key, { result, storedAt: Date.now() });
       return result;
     } catch (err) {
-      console.warn("getTripWeather failed", err);
+      devLog.warn("getTripWeather failed", err);
       return unavailableRange(normalized);
     }
   })();
@@ -160,6 +164,7 @@ export async function fetchTripWeatherCached(
 
 export type DayWeatherPayload = {
   date: string;
+  cityId?: string;
   cityName?: string;
   available: boolean;
   tempMin?: number;
@@ -170,24 +175,57 @@ export type DayWeatherPayload = {
   humidity?: number;
   windSpeed?: number;
   precipitationChance?: number;
-  units?: "metric" | "imperial";
+  units: "metric" | "imperial";
 };
+
+function slimAiWeather(
+  weather: ItineraryDayWeather,
+  owner: TripDestinationStop
+): TripPlannerAiRequestDayWeather {
+  const cityId = owner.cityId?.trim().toLowerCase();
+  return {
+    available: weather.available,
+    ...(cityId ? { cityId } : {}),
+    ...(owner.cityName ? { cityName: owner.cityName } : {}),
+    ...(weather.tempMin != null ? { tempMin: weather.tempMin } : {}),
+    ...(weather.tempMax != null ? { tempMax: weather.tempMax } : {}),
+    ...(weather.temp != null ? { temp: weather.temp } : {}),
+    ...(weather.description ? { description: weather.description } : {}),
+    ...(weather.icon ? { icon: weather.icon } : {}),
+    ...(weather.humidity != null ? { humidity: weather.humidity } : {}),
+    ...(weather.windSpeed != null ? { windSpeed: weather.windSpeed } : {}),
+    ...(weather.precipitationChance != null
+      ? { precipitationChance: weather.precipitationChance }
+      : {}),
+    units: weather.units ?? "metric",
+  };
+}
 
 /**
  * Fetch forecasts for each trip city (city dates when set) and map onto
  * overall trip days. Reuses cache; does not invent weather.
+ * Units follow the user's temperature preference (°C metric / °F imperial).
  */
 export async function weatherForTrip(
-  trip: TripPlannerDoc
+  trip: TripPlannerDoc,
+  options?: {
+    units?: "metric" | "imperial";
+    temperatureUnit?: TemperatureUnit;
+  }
 ): Promise<{
   byIsoDate: Map<string, ItineraryDayWeather>;
+  /** Slim rows ready for TripPlannerAiRequest.itinerary[].weather */
+  aiByIsoDate: Map<string, TripPlannerAiRequestDayWeather>;
   payload: DayWeatherPayload[];
 }> {
   const destinations = listTripDestinations(trip);
   const tripStart = trip.startDate.toDate();
   const tripEnd = trip.endDate.toDate();
-  const units = "metric" as const;
+  const units =
+    options?.units ??
+    openWeatherUnitsFromTemperature(options?.temperatureUnit);
   const byIsoDate = new Map<string, ItineraryDayWeather>();
+  const aiByIsoDate = new Map<string, TripPlannerAiRequestDayWeather>();
   const payload: DayWeatherPayload[] = [];
   const seenKeys = new Set<string>();
 
@@ -200,7 +238,7 @@ export async function weatherForTrip(
   );
 
   if (targets.length === 0) {
-    return { byIsoDate, payload };
+    return { byIsoDate, aiByIsoDate, payload };
   }
 
   const results = await Promise.all(
@@ -230,18 +268,22 @@ export async function weatherForTrip(
     const iso = toIsoDate(cursor);
     const owner =
       owningDestinationForDate(destinations, cursor) ?? targets[0]!;
-    const match = results.find(
-      (row) =>
-        row.dest.cityName === owner.cityName &&
-        row.dest.countryName === owner.countryName
-    ) ?? results[0]!;
+    const match =
+      results.find(
+        (row) =>
+          row.dest.cityName === owner.cityName &&
+          row.dest.countryName === owner.countryName
+      ) ?? results[0]!;
     const forecast = match.result.days.find((d) => d.date === iso);
     const weather = forecast
       ? toDayWeather(forecast, match.result.fetchedAt, match.result.units)
       : unavailableDayWeather(match.result.fetchedAt, match.result.units);
+    const aiWeather = slimAiWeather(weather, owner);
     byIsoDate.set(iso, weather);
+    aiByIsoDate.set(iso, aiWeather);
     payload.push({
       date: iso,
+      ...(owner.cityId ? { cityId: owner.cityId } : {}),
       cityName: owner.cityName,
       available: weather.available,
       tempMin: weather.tempMin,
@@ -252,10 +294,10 @@ export async function weatherForTrip(
       humidity: weather.humidity,
       windSpeed: weather.windSpeed,
       precipitationChance: weather.precipitationChance,
-      units: weather.units,
+      units: weather.units ?? units,
     });
     cursor = addUtcDays(cursor, 1);
   }
 
-  return { byIsoDate, payload };
+  return { byIsoDate, aiByIsoDate, payload };
 }

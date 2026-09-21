@@ -26,11 +26,11 @@ service cloud.firestore {
     }
 
     // Travel Intelligence contribution metadata is Admin SDK only.
+    // Use affectedKeys (not value ==) so soft-deletes / status edits are not
+    // denied by map or Timestamp equality quirks on unchanged fields.
     function preservesIntelligenceMetadata() {
-      return request.resource.data.get('intelligenceContribution', null)
-          == resource.data.get('intelligenceContribution', null)
-        && request.resource.data.get('aggregatedAt', null)
-          == resource.data.get('aggregatedAt', null);
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['intelligenceContribution', 'aggregatedAt']);
     }
 
     // users/{userId}
@@ -104,17 +104,10 @@ service cloud.firestore {
           && !('intelligenceContribution' in request.resource.data)
           && !('aggregatedAt' in request.resource.data)
           && request.resource.data.get('aggregated', false) == false;
+        // Shape is enforced on create. Updates only need ownership + TI guards
+        // (keys().hasAll blocked soft-delete of legacy docs missing createdAt).
         allow update: if isOwner(userId)
-          && preservesIntelligenceMetadata()
-          && request.resource.data.keys().hasAll([
-            'cityId',
-            'cityName',
-            'country',
-            'lat',
-            'lon',
-            'status',
-            'createdAt'
-          ]);
+          && preservesIntelligenceMetadata();
         allow delete: if isOwner(userId);
       }
 
@@ -128,7 +121,7 @@ service cloud.firestore {
             'userId',
             'name',
             'from',
-            'destination',
+            'destinations',
             'startDate',
             'endDate',
             'status',
@@ -139,13 +132,20 @@ service cloud.firestore {
             'itinerary',
             'createdAt',
             'updatedAt'
-          ]);
+          ])
+          && request.resource.data.destinations is list
+          && request.resource.data.destinations.size() > 0;
 
         allow update: if isOwner(userId)
           && request.resource.data.userId == resource.data.userId
           && request.resource.data.userId == userId;
 
         allow delete: if isOwner(userId);
+
+        // users/{userId}/tripPlanner/{tripId}/routes/{routeId}
+        match /routes/{routeId} {
+          allow read, create, update, delete: if isOwner(userId);
+        }
       }
 
       // users/{userId}/notifications — inbox (owner read/mark-read; Admin create)
@@ -191,6 +191,12 @@ service cloud.firestore {
 
     // Internal AI result cache — Admin SDK only (never client-readable).
     match /aiCache/{fingerprint} {
+      allow read, write: if false;
+    }
+
+    // Shared city airports / train stations — Admin SDK only.
+    // Filled by onTripPlannerCreated to skip repeat Places Text Search.
+    match /cityTransportCache/{cacheKey} {
       allow read, write: if false;
     }
 

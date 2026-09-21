@@ -67,6 +67,27 @@ export async function uploadProfileAvatar(
   );
 }
 
+/** Wide hero cover — compress before Storage (JPEG). */
+const TRIP_COVER_COMPRESS: CompressImageOptions = {
+  maxSides: [1920, 1600, 1280, 1024],
+  qualities: [0.82, 0.7, 0.55, 0.42],
+  maxDataUrlChars: 1_400_000,
+};
+
+export async function uploadTripCover(
+  userId: string,
+  tripId: string,
+  file: Blob,
+  metadata?: UploadMetadata
+): Promise<string> {
+  return uploadImageBytes(
+    StoragePaths.tripCover(userId, tripId),
+    file,
+    TRIP_COVER_COMPRESS,
+    metadata
+  );
+}
+
 export async function uploadLocationOriginalImage(
   userId: string,
   locationId: string,
@@ -109,6 +130,60 @@ export async function uploadLocationImage(
     undefined,
     metadata
   );
+}
+
+const ROUTE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+function isPdfFile(file: File): boolean {
+  const type = (file.type || "").toLowerCase();
+  if (type === "application/pdf") return true;
+  return file.name.toLowerCase().endsWith(".pdf");
+}
+
+/**
+ * Upload a ticket/boarding-pass attachment for a trip route (image or PDF).
+ * Returns download URL + storage path for Firestore metadata.
+ */
+export async function uploadRouteAttachment(
+  userId: string,
+  tripId: string,
+  routeId: string,
+  fileId: string,
+  file: File,
+  metadata?: UploadMetadata
+): Promise<{ url: string; storagePath: string; contentType: string }> {
+  if (file.size > ROUTE_ATTACHMENT_MAX_BYTES) {
+    throw new Error("File is too large (max 10 MB).");
+  }
+
+  const storagePath = StoragePaths.tripRouteAttachment(
+    userId,
+    tripId,
+    routeId,
+    fileId
+  );
+  const storageRef = ref(getFirebaseStorage(), storagePath);
+
+  if (isPdfFile(file)) {
+    await uploadBytes(storageRef, file, {
+      ...metadata,
+      contentType: "application/pdf",
+    });
+    const url = await getDownloadURL(storageRef);
+    return { url, storagePath, contentType: "application/pdf" };
+  }
+
+  if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif|hif)$/i.test(file.name)) {
+    throw new Error("Only images and PDF files are supported.");
+  }
+
+  const { blob, contentType } = await toUploadBlob(file);
+  await uploadBytes(storageRef, blob, {
+    ...metadata,
+    contentType,
+  });
+  const url = await getDownloadURL(storageRef);
+  return { url, storagePath, contentType };
 }
 
 export async function deleteStorageObject(path: string): Promise<void> {

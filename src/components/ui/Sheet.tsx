@@ -9,6 +9,10 @@ interface SheetProps {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /** Optional subtitle under the title (form sheets). */
+  description?: string;
+  /** Optional leading mark (e.g. feature icon) beside the title. */
+  leading?: ReactNode;
   children: ReactNode;
   size?: "sm" | "md" | "lg";
   showClose?: boolean;
@@ -28,6 +32,8 @@ export function Sheet({
   open,
   onClose,
   title,
+  description,
+  leading,
   children,
   size = "md",
   showClose = true,
@@ -78,7 +84,7 @@ export function Sheet({
       <button
         type="button"
         aria-label="Dismiss"
-        className="absolute inset-0 bg-text/40"
+        className="absolute inset-0 bg-text/35 backdrop-blur-[2px]"
         onClick={() => {
           if (backdropArmed) onClose();
         }}
@@ -90,26 +96,45 @@ export function Sheet({
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
         className={cx(
-          "relative z-10 flex w-full flex-col border border-border bg-surface-elevated shadow-xl",
+          "relative z-10 flex w-full flex-col border border-border bg-surface-elevated shadow-[0_16px_48px_rgba(17,24,39,0.14)]",
           "rounded-t-2xl md:mx-4 md:max-w-lg md:rounded-2xl",
           heightClass,
           className
         )}
       >
         <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border md:hidden" />
-        {(title || showClose || actions) && (
-          <div className="flex items-center justify-between gap-3 border-b border-divider px-4 py-3">
-            <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-text">
-              {title ?? ""}
-            </h2>
-            <div className="flex shrink-0 items-center gap-0.5">
+        {(title || description || leading || showClose || actions) && (
+          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3.5 md:px-5">
+            {title || description || leading ? (
+              <div className="flex min-w-0 flex-1 items-start gap-3 pr-2">
+                {leading ? <div className="shrink-0">{leading}</div> : null}
+                <div className="min-w-0 flex-1">
+                  {title ? (
+                    <h2 className="truncate text-base font-semibold tracking-tight text-text">
+                      {title}
+                    </h2>
+                  ) : null}
+                  {description ? (
+                    <p className="mt-0.5 text-sm leading-snug text-text-secondary">
+                      {description}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            <div
+              className={cx(
+                "flex shrink-0 items-center gap-0.5 pt-0.5",
+                !(title || description || leading) && "min-w-0 flex-1"
+              )}
+            >
               {actions}
               {showClose ? (
                 <button
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-surface hover:text-text"
+                  className="rounded-lg p-1.5 text-text-secondary transition-colors hover:bg-surface hover:text-text"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -119,7 +144,7 @@ export function Sheet({
         )}
         <div
           className={cx(
-            "min-h-0 flex-1 overflow-y-auto px-4 py-4",
+            "min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-5",
             bodyClassName
           )}
         >

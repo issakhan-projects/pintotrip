@@ -35,7 +35,7 @@ export function BottomNav({
       className="pointer-events-none fixed inset-x-0 bottom-0 z-30 sm:absolute sm:flex sm:justify-center sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
       <div className="pointer-events-auto flex w-full items-stretch border-t border-border bg-white pb-[env(safe-area-inset-bottom)] sm:w-auto sm:items-center sm:gap-3 sm:border-0 sm:bg-transparent sm:pb-0">
-        <div className="flex h-14 min-w-0 flex-1 items-center sm:flex-none sm:rounded-full sm:bg-white sm:px-1.5 sm:shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
+        <div className="flex h-13 min-w-0 flex-1 items-center sm:flex-none sm:rounded-full sm:bg-white sm:px-1.5 sm:shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
           <NavSlot
             label="Map"
             active={active === "map"}
@@ -48,6 +48,17 @@ export function BottomNav({
             onClick={onPlaces}
             icon={<List className="h-4 w-4" strokeWidth={2} />}
           />
+
+
+<button
+          type="button"
+          aria-label="Add place"
+          onClick={onAdd}
+          className="flex h-16 w-16 shrink-0 items-center justify-center bg-primary text-white transition-transform active:scale-95 sm:rounded-full sm:shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
+        >
+          <Plus className="h-6 w-6" strokeWidth={3.5} />
+        </button>
+
           <NavSlot
             label="Planner"
             active={active === "planner"}
@@ -63,14 +74,6 @@ export function BottomNav({
           />
         </div>
 
-        <button
-          type="button"
-          aria-label="Add place"
-          onClick={onAdd}
-          className="flex h-14 w-14 shrink-0 items-center justify-center bg-green-600 text-white transition-transform active:scale-95 sm:rounded-full sm:shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
-        >
-          <Plus className="h-6 w-6" strokeWidth={2.5} />
-        </button>
       </div>
     </nav>
   );

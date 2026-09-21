@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Briefcase,
   CalendarDays,
@@ -18,10 +19,11 @@ import {
 } from "lucide-react";
 import { getFlagEmoji } from "country-flag-select";
 import type { SavedLocation } from "@/hooks/useLocations";
-import type { TripDestinationStop, TripPlannerDoc } from "@/types/trip-planner";
+import type { TripDestinationStop, TripPlannerDoc, TripRoute } from "@/types/trip-planner";
 import { SPEND_MONEY_OPTIONS } from "@/types/trip-planner";
 import { LEISURE_TYPE_OPTIONS } from "@/types/trip-plan";
 import { tripDayCount } from "@/services/trip-planner";
+import { subscribeTripRoutes } from "@/services/trip-routes";
 import { Button } from "@/components/ui";
 import {
   formatCoordinates,
@@ -29,17 +31,20 @@ import {
 } from "./tripUtils";
 import { TripCityIntelligenceBlock } from "./TripCityIntelligenceBlock";
 //import { TripWeatherBlock } from "./TripWeatherBlock";
+import { TripRouteTimeBreakdownSection } from "./TripRouteTimeBreakdown";
 import { destinationForLocation } from "./matchTripPlaces";
 import {
+  listTripDestinations,
   destinationCityKey,
   destinationCountryKey,
+  primaryTripDestination,
   formatCityStopDates,
   groupTripDestinationsByCountry,
-  listTripDestinations,
 } from "./tripDestinations";
 
 interface TripDetailsStepProps {
   trip: TripPlannerDoc;
+  userId: string;
   galleryImages?: string[];
   locations?: SavedLocation[];
   onEdit?: () => void;
@@ -48,37 +53,47 @@ interface TripDetailsStepProps {
   onGoToPlaces?: () => void;
 }
 
+function useTripRoutes(userId: string, tripId: string): TripRoute[] {
+  const [routes, setRoutes] = useState<TripRoute[]>([]);
+
+  useEffect(() => {
+    return subscribeTripRoutes(userId, tripId, setRoutes);
+  }, [userId, tripId]);
+
+  return routes;
+}
+
 export function TripDetailsStep(props: TripDetailsStepProps) {
+  const routes = useTripRoutes(props.userId, props.trip.id);
   const cities = listTripDestinations(props.trip);
   if (cities.length > 1) {
-    return <MultiCityTripDetails {...props} cities={cities} />;
+    return <MultiCityTripDetails {...props} cities={cities} routes={routes} />;
   }
-  return <SingleCityTripDetails {...props} />;
+  return <SingleCityTripDetails {...props} routes={routes} />;
 }
 
 function SingleCityTripDetails({
   trip,
+  routes,
   galleryImages = [],
   onEdit,
   onRetryCityIntelligence,
   onGoToPreparation,
   onGoToPlaces,
-}: TripDetailsStepProps) {
+}: TripDetailsStepProps & { routes: TripRoute[] }) {
+  const primaryDest = primaryTripDestination(trip);
   const fromLabel = [trip.from.cityName, trip.from.countryName]
     .filter(Boolean)
     .join(", ");
-  const destLabel = [trip.destination.cityName, trip.destination.countryName]
+  const destLabel = [primaryDest.cityName, primaryDest.countryName]
     .filter(Boolean)
     .join(", ");
   const days = tripDayCount(trip.startDate, trip.endDate);
-  const hasCoords =
-    trip.destination.lat != null && trip.destination.lon != null;
+  const hasCoords = primaryDest.lat != null && primaryDest.lon != null;
   const coverUrl =
-    trip.destination.photos?.find(Boolean) ||
-    galleryImages.find(Boolean) ||
-    null;
+    primaryDest.photos?.find(Boolean) || galleryImages.find(Boolean) || null;
   const mapsLink = hasCoords
-    ? `https://www.google.com/maps/search/?api=1&query=${trip.destination.lat},${trip.destination.lon}`
+    ? `https://www.google.com/maps/search/?api=1&query=${primaryDest.lat},${primaryDest.lon}`
     : null;
 
   const thumbs = galleryImages.slice(0, 4);
@@ -139,18 +154,21 @@ function SingleCityTripDetails({
             />
             <InfoRow
               icon={CircleDollarSign}
-              label="Currency"
+              label="Home Currency" 
               value={`${trip.currency.name} (${trip.currency.code})`}
               chevron
               last
             />
+
+
+            
           </div>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm lg:col-span-2">
           <div className="relative aspect-square bg-gradient-to-br from-primary via-primary-light to-primary-hover">
             {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- remote Google Place / user image URLs
+              // eslint-disable-next-line @next/next/no-img-element -- remote cover / user image URLs
               <img
                 src={coverUrl}
                 alt={destLabel}
@@ -179,10 +197,7 @@ function SingleCityTripDetails({
             <p className="text-sm font-semibold text-text">{destLabel}</p>
             {hasCoords ? (
               <p className="mt-0.5 text-xs text-text-secondary">
-                {formatCoordinates(
-                  trip.destination.lat!,
-                  trip.destination.lon!
-                )}
+                {formatCoordinates(primaryDest.lat!, primaryDest.lon!)}
               </p>
             ) : null}
 
@@ -215,9 +230,11 @@ function SingleCityTripDetails({
         </section>
       </div>
 
+      <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
+
       <TripCityIntelligenceBlock
         status={trip.cityIntelligence.status}
-        result={trip.cityIntelligence.result}
+        results={trip.cityIntelligence.results}
         errorMessage={trip.cityIntelligence.errorMessage}
         lastUpdatedAt={trip.cityIntelligence.lastUpdatedAt}
         onRetry={onRetryCityIntelligence}
@@ -260,6 +277,7 @@ function SingleCityTripDetails({
 
 function MultiCityTripDetails({
   trip,
+  routes,
   galleryImages = [],
   locations = [],
   cities,
@@ -267,7 +285,10 @@ function MultiCityTripDetails({
   onRetryCityIntelligence,
   onGoToPreparation,
   onGoToPlaces,
-}: TripDetailsStepProps & { cities: TripDestinationStop[] }) {
+}: TripDetailsStepProps & {
+  cities: TripDestinationStop[];
+  routes: TripRoute[];
+}) {
   const fromLabel = [trip.from.cityName, trip.from.countryName]
     .filter(Boolean)
     .join(", ");
@@ -288,8 +309,10 @@ function MultiCityTripDetails({
   const thumbs = galleryImages.slice(0, 4);
   const extraCount = Math.max(galleryImages.length - 3, 0);
   const leisureLabel = trip.leisureType
-    ? LEISURE_TYPE_OPTIONS.find((o) => o.value === trip.leisureType)?.label ??
-      trip.leisureType
+    ? trip.leisureType === "custom" && trip.leisureCustom?.trim()
+      ? `Custom — ${trip.leisureCustom.trim()}`
+      : LEISURE_TYPE_OPTIONS.find((o) => o.value === trip.leisureType)?.label ??
+        trip.leisureType
     : null;
   const spendLabel = trip.spendMoney
     ? SPEND_MONEY_OPTIONS.find((o) => o.id === trip.spendMoney)?.label ??
@@ -435,7 +458,7 @@ function MultiCityTripDetails({
         <section className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm lg:col-span-2">
           <div className="relative aspect-square bg-gradient-to-br from-primary via-primary-light to-primary-hover">
             {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- remote Google Place / user image URLs
+              // eslint-disable-next-line @next/next/no-img-element -- remote cover / user image URLs
               <img
                 src={coverUrl}
                 alt={coverLabel}
@@ -497,9 +520,11 @@ function MultiCityTripDetails({
         </section>
       </div>
 
+      <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
+
       <TripCityIntelligenceBlock
         status={trip.cityIntelligence.status}
-        result={trip.cityIntelligence.result}
+        results={trip.cityIntelligence.results}
         errorMessage={trip.cityIntelligence.errorMessage}
         lastUpdatedAt={trip.cityIntelligence.lastUpdatedAt}
         onRetry={onRetryCityIntelligence}

@@ -1,28 +1,127 @@
 import type {
+  TripDestination,
   TripDestinationStop,
+  TripPlanner,
   TripPlannerDoc,
 } from "@/types/trip-planner";
 import { startOfUtcDay } from "@/services/trip-planner";
 import { resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts } from "@/lib/utils";
 
-/** All trip cities — Advanced `destinations` or the primary destination. */
+/** Legacy singular field on older Firestore docs. */
+type TripWithLegacyDestination = TripPlanner & {
+  destination?: TripDestination;
+};
+
+/**
+ * All trip cities. Prefer `destinations[]`; fall back to legacy `destination`.
+ */
 export function listTripDestinations(
-  trip: TripPlannerDoc
+  trip: TripPlannerDoc | TripPlanner
 ): TripDestinationStop[] {
   if (trip.destinations && trip.destinations.length > 0) {
     return trip.destinations;
   }
-  return [
-    {
-      cityName: trip.destination.cityName,
-      countryName: trip.destination.countryName,
-      cityId: trip.destination.cityId,
-      countryId: trip.destination.countryId,
-      lat: trip.destination.lat,
-      lon: trip.destination.lon,
-    },
-  ];
+  const legacy = (trip as TripWithLegacyDestination).destination;
+  if (legacy?.cityName) {
+    return [
+      {
+        cityName: legacy.cityName,
+        countryName: legacy.countryName,
+        cityId: legacy.cityId,
+        countryId: legacy.countryId,
+        lat: legacy.lat,
+        lon: legacy.lon,
+        photos: legacy.photos,
+        transport: legacy.transport,
+      },
+    ];
+  }
+  return [];
+}
+
+/** Primary / first destination city (stay destination preferred when marked). */
+export function primaryTripDestination(
+  trip: TripPlannerDoc | TripPlanner
+): TripDestinationStop {
+  const list = listTripDestinations(trip);
+  return (
+    list.find((stop) => stop.stopType === "destination") ??
+    list[0] ?? {
+      cityName: "",
+      countryName: "",
+    }
+  );
+}
+
+/** Origin + destination cities for flight route labels and airport lookup. */
+export type FlightRouteCity = {
+  cityName: string;
+  countryName?: string;
+  cityId?: string;
+  lat?: number;
+  lon?: number;
+};
+
+export function listFlightRouteCities(trip: TripPlannerDoc): FlightRouteCity[] {
+  const cities: FlightRouteCity[] = [];
+  const seen = new Set<string>();
+
+  const push = (city: FlightRouteCity) => {
+    const name = city.cityName.trim();
+    if (!name) return;
+    const key = destinationCityKey(name, city.cityId);
+    if (seen.has(key)) return;
+    seen.add(key);
+    cities.push({
+      cityName: name,
+      ...(city.countryName?.trim()
+        ? { countryName: city.countryName.trim() }
+        : {}),
+      ...(city.cityId?.trim() ? { cityId: city.cityId.trim() } : {}),
+      ...(typeof city.lat === "number" ? { lat: city.lat } : {}),
+      ...(typeof city.lon === "number" ? { lon: city.lon } : {}),
+    });
+  };
+
+  if (trip.from?.cityName) {
+    push({
+      cityName: trip.from.cityName,
+      countryName: trip.from.countryName,
+      cityId: trip.from.cityId,
+      lat: trip.from.lat,
+      lon: trip.from.lon,
+    });
+  }
+
+  for (const dest of listTripDestinations(trip)) {
+    push({
+      cityName: dest.cityName,
+      countryName: dest.countryName,
+      cityId: dest.cityId,
+      lat: dest.lat,
+      lon: dest.lon,
+    });
+  }
+
+  return cities;
+}
+
+export function flightRouteLabel(cities: FlightRouteCity[]): string {
+  return cities.map((city) => city.cityName).join(" → ");
+}
+
+/** Fingerprint for cached route-airport lists (invalidate when cities change). */
+export function flightRouteAirportsKey(cities: FlightRouteCity[]): string {
+  return cities
+    .map((city) =>
+      [
+        (city.cityId || "").toLowerCase(),
+        city.cityName.trim().toLowerCase(),
+        (city.countryName || "").trim().toLowerCase(),
+      ].join("|")
+    )
+    .join(";");
 }
 
 export function destinationCountryKey(
@@ -34,6 +133,21 @@ export function destinationCountryKey(
     resolveCountryCode(countryId) ||
     resolveCountryCode(countryName);
   return countryIdFromParts(countryName, code || undefined);
+}
+
+/** True when country fields resolve to Saudi Arabia (ISO SA). */
+export function isSaudiArabiaCountry(input: {
+  countryCode?: string | null;
+  countryId?: string | null;
+  countryName?: string | null;
+}): boolean {
+  const fromId = input.countryId?.trim();
+  const code =
+    input.countryCode?.trim().toUpperCase() ||
+    (fromId && fromId.length === 2 ? fromId.toUpperCase() : "") ||
+    resolveCountryCode(fromId) ||
+    resolveCountryCode(input.countryName);
+  return code === "SA";
 }
 
 export function destinationCityKey(cityName: string, cityId?: string): string {

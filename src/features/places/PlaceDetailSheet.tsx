@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, ConfirmModal, TextInput } from "@/components/ui";
+import { Button, DeleteConfirmModal } from "@/components/ui";
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -33,6 +33,29 @@ interface PlaceDetailSheetProps {
     lat: number;
     lon: number;
   }) => void;
+  /**
+   * When false (Free / Plus), skip Google Places / Maps photo URLs so the
+   * sheet does not trigger Place Photos billing. User uploads and Pexels stay.
+   * Pro should pass true.
+   */
+  allowGooglePlacePhotos?: boolean;
+}
+
+/** Billable Place Photos / Maps image hosts — avoid loading on Free/Plus. */
+function isGoogleMapsPhotoUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "maps.googleapis.com" ||
+      host === "places.googleapis.com" ||
+      host.endsWith(".maps.googleapis.com")
+    );
+  } catch {
+    return (
+      url.includes("maps.googleapis.com") ||
+      url.includes("places.googleapis.com")
+    );
+  }
 }
 
 const STATUSES: LocationStatus[] = ["planned", "visited", "cancelled"];
@@ -46,6 +69,7 @@ export function PlaceDetailSheet({
   onDelete,
   onViewOnMap,
   onOpenCity,
+  allowGooglePlacePhotos = false,
 }: PlaceDetailSheetProps) {
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -58,6 +82,7 @@ export function PlaceDetailSheet({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const notePopoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setNote(place?.note ?? "");
@@ -93,10 +118,29 @@ export function PlaceDetailSheet({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [moreMenuOpen]);
 
+  useEffect(() => {
+    if (!noteOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!notePopoverRef.current?.contains(event.target as Node)) {
+        setNote(place?.note ?? "");
+        setNoteOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [noteOpen, place?.note]);
+
   if (!place) return null;
 
   const current = place;
-  const images = current.images.slice(0, 2);
+  const images = current.images
+    .filter((img) => {
+      const url = img.url?.trim();
+      if (!url) return false;
+      if (!allowGooglePlacePhotos && isGoogleMapsPhotoUrl(url)) return false;
+      return true;
+    })
+    .slice(0, 2);
   const confidence = formatConfidenceCopy(current.confidence);
 
   async function handleStatus(status: LocationStatus) {
@@ -186,6 +230,7 @@ export function PlaceDetailSheet({
           aria-expanded={moreMenuOpen}
           onClick={() => {
             setStatusMenuOpen(false);
+            setNoteOpen(false);
             setMoreMenuOpen((v) => !v);
           }}
           className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-surface hover:text-text"
@@ -203,6 +248,7 @@ export function PlaceDetailSheet({
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface"
               onClick={() => {
                 setMoreMenuOpen(false);
+                setNote(current.note ?? "");
                 setNoteOpen(true);
               }}
             >
@@ -239,6 +285,52 @@ export function PlaceDetailSheet({
             ) : null}
           </div>
         ) : null}
+
+        {noteOpen ? (
+          <div
+            ref={notePopoverRef}
+            role="dialog"
+            aria-label="My note"
+            className="absolute right-0 z-30 mt-1 w-[min(18.5rem,calc(100vw-2.5rem))] rounded-xl border border-border bg-surface-elevated p-3 shadow-lg"
+          >
+            <label
+              htmlFor="place-note"
+              className="mb-2 block text-sm font-medium text-text"
+            >
+              My note
+            </label>
+            <textarea
+              id="place-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Go at sunset…"
+              rows={4}
+              autoFocus
+              className="block w-full resize-y rounded-xl border border-border bg-surface-elevated px-3 py-2.5 text-sm leading-relaxed text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setNote(current.note ?? "");
+                  setNoteOpen(false);
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                color="primary"
+                icon={Save}
+                loading={saving}
+                onClick={() => void handleNote()}
+                className="flex-1"
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -251,18 +343,15 @@ export function PlaceDetailSheet({
       size="lg"
       actions={headerActions}
     >
-      <ConfirmModal
+      <DeleteConfirmModal
         open={confirmDeleteOpen}
-        title="Delete this place?"
+        entity="place"
         description={
           <>
             <span className="font-medium text-text">{current.title}</span> will
             be removed from your map and places. This can’t be undone.
           </>
         }
-        confirmLabel="Delete"
-        cancelLabel="Keep"
-        tone="danger"
         loading={deleting}
         onCancel={() => {
           if (!deleting) setConfirmDeleteOpen(false);
@@ -294,32 +383,84 @@ export function PlaceDetailSheet({
         ) : null}
 
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            {onOpenCity ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {onOpenCity ? (
+                <button
+                  type="button"
+                  className="text-left text-sm font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() =>
+                    onOpenCity({
+                      cityName: current.city.name,
+                      countryName: current.country.name,
+                      lat: current.lat,
+                      lon: current.lon,
+                    })
+                  }
+                >
+                  {current.city.name}, {current.country.name}
+                </button>
+              ) : (
+                <p className="text-sm text-text-secondary">
+                  {current.city.name}, {current.country.name}
+                </p>
+              )}
+              {current.category ? (
+                <span className="rounded-full bg-primary-tint px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                  {PLACE_CATEGORY_LABELS[current.category] ?? current.category}
+                </span>
+              ) : null}
+            </div>
+            <div ref={statusMenuRef} className="relative shrink-0">
               <button
                 type="button"
-                className="text-left text-sm font-medium text-primary underline-offset-2 hover:underline"
-                onClick={() =>
-                  onOpenCity({
-                    cityName: current.city.name,
-                    countryName: current.country.name,
-                    lat: current.lat,
-                    lon: current.lon,
-                  })
-                }
+                disabled={statusBusy}
+                aria-haspopup="menu"
+                aria-expanded={statusMenuOpen}
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setNoteOpen(false);
+                  setStatusMenuOpen((v) => !v);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-surface disabled:opacity-60"
               >
-                {current.city.name}, {current.country.name}
+                <StatusBadge status={current.status} />
+                <ChevronDown
+                  className={cx(
+                    "h-3.5 w-3.5 text-text-muted transition-transform",
+                    statusMenuOpen && "rotate-180"
+                  )}
+                />
               </button>
-            ) : (
-              <p className="text-sm text-text-secondary">
-                {current.city.name}, {current.country.name}
-              </p>
-            )}
-            {current.category ? (
-              <span className="rounded-full bg-primary-tint px-2.5 py-0.5 text-[11px] font-medium text-primary">
-                {PLACE_CATEGORY_LABELS[current.category] ?? current.category}
-              </span>
-            ) : null}
+              {statusMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-20 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
+                >
+                  {STATUSES.map((status) => {
+                    const selected = current.status === status;
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        role="menuitem"
+                        disabled={statusBusy}
+                        onClick={() => void handleStatus(status)}
+                        className={cx(
+                          "flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                          selected ? "bg-primary-tint" : "hover:bg-surface"
+                        )}
+                      >
+                        <StatusBadge status={status} />
+                        {selected ? (
+                          <Check className="h-3.5 w-3.5 text-primary" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
           <p className="mt-2 text-sm leading-relaxed text-text">
             {current.description}
@@ -337,60 +478,6 @@ export function PlaceDetailSheet({
           </p>
         </div>
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-medium text-text">Status</p>
-          <div ref={statusMenuRef} className="relative">
-            <button
-              type="button"
-              disabled={statusBusy}
-              aria-haspopup="menu"
-              aria-expanded={statusMenuOpen}
-              onClick={() => {
-                setMoreMenuOpen(false);
-                setNoteOpen(false);
-                setStatusMenuOpen((v) => !v);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-surface disabled:opacity-60"
-            >
-              <StatusBadge status={current.status} />
-              <ChevronDown
-                className={cx(
-                  "h-3.5 w-3.5 text-text-muted transition-transform",
-                  statusMenuOpen && "rotate-180"
-                )}
-              />
-            </button>
-            {statusMenuOpen ? (
-              <div
-                role="menu"
-                className="absolute right-0 z-20 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
-              >
-                {STATUSES.map((status) => {
-                  const selected = current.status === status;
-                  return (
-                    <button
-                      key={status}
-                      type="button"
-                      role="menuitem"
-                      disabled={statusBusy}
-                      onClick={() => void handleStatus(status)}
-                      className={cx(
-                        "flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
-                        selected ? "bg-primary-tint" : "hover:bg-surface"
-                      )}
-                    >
-                      <StatusBadge status={status} />
-                      {selected ? (
-                        <Check className="h-3.5 w-3.5 text-primary" />
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
         {current.status === "planned" ? (
           <Button
             color="primary"
@@ -403,51 +490,26 @@ export function PlaceDetailSheet({
           </Button>
         ) : current.status === "visited" ? (
           <Button color="primary" icon={Check} disabled className="w-full">
-            Visited ✓
+            Visited
           </Button>
         ) : null}
 
-        {noteOpen ? (
-          <div className="rounded-xl border border-border bg-surface p-3">
-            <label className="mb-2 block text-sm font-medium text-text">
-              My note
-            </label>
-            <TextInput
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Go at sunset…"
-              autoFocus
-            />
-            <div className="mt-3 flex gap-2">
-              <Button
-                color="primary"
-                icon={Save}
-                onClick={() => {
-                  setNote(current.note ?? "");
-                  setNoteOpen(false);
-                }}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                icon={Save}
-                loading={saving}
-                onClick={() => void handleNote()}
-                className="flex-1"
-              >
-                Save note
-              </Button>
-            </div>
-          </div>
-        ) : current.note?.trim() ? (
-          <div className="rounded-xl bg-surface px-3 py-3">
+        {current.note?.trim() ? (
+          <button
+            type="button"
+            onClick={() => {
+              setStatusMenuOpen(false);
+              setMoreMenuOpen(false);
+              setNote(current.note ?? "");
+              setNoteOpen(true);
+            }}
+            className="rounded-xl bg-surface px-3 py-3 text-left transition-colors hover:bg-surface-elevated"
+          >
             <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
               My note
             </p>
             <p className="mt-1 text-sm text-text">{current.note}</p>
-          </div>
+          </button>
         ) : null}
       </div>
     </Sheet>

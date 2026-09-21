@@ -1,6 +1,7 @@
 import { Timestamp } from "firebase/firestore";
 import { createMemoryStore } from "@/lib/firebase/memory-store";
 import { createInFlightMap } from "@/lib/firebase/in-flight";
+import { normalizeTripDoc } from "@/lib/planner/normalize-trip";
 import type { UserLocation } from "@/types/location";
 import type { FavoriteCity } from "@/types/favorite-city";
 import type { TripPlannerDoc } from "@/types/trip-planner";
@@ -234,7 +235,11 @@ export function patchTripInCache(
     tripsStore.get(tripsKey(userId))?.items.find((t) => t.id === tripId) ??
     null;
   if (!existing) return null;
-  const next = { ...existing, ...patch, id: tripId };
+  const next = normalizeTripDoc(tripId, {
+    ...existing,
+    ...patch,
+    id: tripId,
+  });
   tripDetailStore.set(detailKey, next);
   upsertTripInListCache(userId, next);
   return next;

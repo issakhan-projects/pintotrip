@@ -21,15 +21,23 @@ export {
 export {
   detectUserLocation,
   getBrowserCoords,
+  getBrowserCityCoords,
   reverseGeocode,
   resolveEnglishPlaceIds,
   resolveEnglishPlaceIdsFromAddress,
+  englishPlaceIdsFromNames,
   type DetectedUserLocation,
   type EnglishPlaceIds,
 } from "./detectLocation";
+export { resolveTimezoneFromCoords } from "./timezone";
 export {
   geocodeByLocation,
   geocodeByAddress,
+  geocodeByPlaceId,
+  resolveCoordsFromGooglePlaceId,
+  peekGeocodeByLocation,
+  peekGeocodeByAddress,
+  hasUsableMapCoords,
 } from "./geocode";
 export {
   cachedRequest,

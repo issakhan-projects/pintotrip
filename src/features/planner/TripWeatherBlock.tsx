@@ -13,6 +13,7 @@ import type { GetTripWeatherResult, TripWeatherDay } from "@/types/weather";
 import { getTripWeather } from "@/services/functions";
 import { startOfUtcDay } from "@/services/trip-planner";
 import { cx } from "@/lib/utils";
+import { primaryTripDestination } from "./tripDestinations";
 
 function toIsoDate(date: Date): string {
   const d = startOfUtcDay(date);
@@ -53,9 +54,10 @@ export function TripWeatherBlock({ trip }: TripWeatherBlockProps) {
   const [data, setData] = useState<GetTripWeatherResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const primary = primaryTripDestination(trip);
 
-  const lat = trip.destination.lat;
-  const lon = trip.destination.lon;
+  const lat = primary.lat;
+  const lon = primary.lon;
   const hasCoords = lat != null && lon != null;
 
   async function load() {
@@ -69,7 +71,7 @@ export function TripWeatherBlock({ trip }: TripWeatherBlockProps) {
         startDate: toIsoDate(trip.startDate.toDate()),
         endDate: toIsoDate(trip.endDate.toDate()),
         units: "metric",
-        cityName: trip.destination.cityName,
+        cityName: primary.cityName,
       });
       setData(result);
     } catch (err) {
@@ -92,7 +94,7 @@ export function TripWeatherBlock({ trip }: TripWeatherBlockProps) {
     lon,
     trip.startDate?.toMillis?.(),
     trip.endDate?.toMillis?.(),
-    trip.destination.cityName,
+    primary.cityName,
   ]);
 
   if (!hasCoords) {
@@ -109,7 +111,7 @@ export function TripWeatherBlock({ trip }: TripWeatherBlockProps) {
   return (
     <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm sm:p-5">
       <div className="flex items-start justify-between gap-3">
-        <Header cityName={trip.destination.cityName} />
+        <Header cityName={primary.cityName} />
         <button
           type="button"
           aria-label="Refresh weather"

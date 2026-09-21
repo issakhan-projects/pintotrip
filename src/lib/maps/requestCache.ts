@@ -58,6 +58,11 @@ export function peekCachedRequest<T>(key: string): T | undefined {
   return hit.value as T;
 }
 
+/** Seed/overwrite a cache entry without a network fetch (e.g. mirror language variants). */
+export function seedCachedRequest<T>(key: string, value: T, ttlMs: number): void {
+  store.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
 export function clearMapsRequestCache(prefix?: string): void {
   if (!prefix) {
     store.clear();

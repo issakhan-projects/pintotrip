@@ -3,11 +3,16 @@
 import { Suspense, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { Lock } from "lucide-react";
+import { Lock, WifiOff } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { isProEntitled } from "@/features/profile/plans";
 import { TripPlannerDetail } from "@/features/planner/TripPlannerDetail";
+import {
+  isBrowserOffline,
+  loadOfflineProfileSnapshot,
+  loadOfflineTrip,
+} from "@/lib/planner/offline-store";
 
 function TripPlannerDetailGate() {
   const router = useRouter();
@@ -15,7 +20,17 @@ function TripPlannerDetailGate() {
   const tripId = params.tripId;
   const { user, loading } = useAuth();
   const { profile, loading: profileLoading } = useUserProfile(user);
-  const isPro = isProEntitled(profile?.subscription);
+
+  const offline = isBrowserOffline();
+  const offlineSnapshot = user
+    ? loadOfflineProfileSnapshot(user.uid)
+    : null;
+  const hasOfflineTrip = Boolean(
+    user && tripId && loadOfflineTrip(user.uid, tripId)
+  );
+  const isPro =
+    isProEntitled(profile?.subscription) ||
+    isProEntitled(offlineSnapshot?.subscription);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -23,10 +38,36 @@ function TripPlannerDetailGate() {
     }
   }, [loading, user, router]);
 
-  if (loading || !user || profileLoading || !profile) {
+  if (loading || !user) {
     return (
       <main className="flex flex-1 items-center justify-center bg-background text-sm text-text-secondary">
         Loading…
+      </main>
+    );
+  }
+
+  if (!tripId) {
+    return (
+      <main className="flex flex-1 items-center justify-center bg-background text-sm text-error">
+        Missing trip id.
+      </main>
+    );
+  }
+
+  // Online: wait for profile. Offline: proceed once we have a device snapshot.
+  if (profileLoading && !profile && !(offline && offlineSnapshot)) {
+    return (
+      <main className="flex flex-1 flex-col items-center justify-center gap-2 bg-background px-6 text-center text-sm text-text-secondary">
+        {offline ? (
+          <>
+            <WifiOff className="h-5 w-5 text-text-muted" aria-hidden />
+            <p>
+              You’re offline. Open this trip once online to save it for later.
+            </p>
+          </>
+        ) : (
+          <p>Loading…</p>
+        )}
       </main>
     );
   }
@@ -61,10 +102,18 @@ function TripPlannerDetailGate() {
     );
   }
 
-  if (!tripId) {
+  if (offline && !hasOfflineTrip && !profile) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-background text-sm text-error">
-        Missing trip id.
+      <main className="flex flex-1 flex-col items-center justify-center gap-2 bg-background px-6 text-center text-sm text-text-secondary">
+        <WifiOff className="h-5 w-5 text-text-muted" aria-hidden />
+        <p>You’re offline and this trip isn’t saved on this device yet.</p>
+        <Button
+          variant="secondary"
+          className="mt-2"
+          onClick={() => router.replace("/map?tab=planner")}
+        >
+          Back
+        </Button>
       </main>
     );
   }

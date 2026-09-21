@@ -2,42 +2,114 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  Binoculars,
+  Building2,
+  Check,
+  CircleDot,
+  Coffee,
+  FerrisWheel,
+  Landmark,
+  MapPin,
   MapPinned,
+  Moon,
   MoreHorizontal,
+  Mountain,
   NotebookPen,
-  ArrowRight,
+  Percent,
   Share2,
+  ShoppingBag,
+  Store,
+  Tag,
+  TrainFront,
+  Trees,
   Trash2,
+  UtensilsCrossed,
+  Waves,
+  type LucideIcon,
 } from "lucide-react";
-import { Button, ConfirmModal, TextInput } from "@/components/ui";
+import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { SavedLocation } from "@/hooks/useLocations";
-import { formatConfidenceCopy } from "@/lib/utils";
+import type { LocationStatus } from "@/types/location";
+import {
+  PLACE_CATEGORY_LABELS,
+  type PlaceCategory,
+} from "@/types/trip-plan";
+import {
+  confidencePercent,
+  formatConfidenceCopy,
+  cx,
+} from "@/lib/utils";
+
+const PLACE_CATEGORY_ICONS: Record<PlaceCategory, LucideIcon> = {
+  attraction: FerrisWheel,
+  beach: Waves,
+  museum: Building2,
+  landmark: Landmark,
+  food: UtensilsCrossed,
+  cafe: Coffee,
+  park: Trees,
+  viewpoint: Binoculars,
+  nightlife: Moon,
+  shopping: ShoppingBag,
+  market: Store,
+  nature: Trees,
+  adventure: Mountain,
+  wellness: Waves,
+  neighborhood: Building2,
+  transport: TrainFront,
+  other: MapPin,
+};
 
 interface PlacePreviewSheetProps {
   place: SavedLocation | null;
   open: boolean;
   onClose: () => void;
-  onOpenDetails: (place: SavedLocation) => void;
+  onUpdateStatus?: (status: LocationStatus) => Promise<void>;
   onSaveNote?: (note: string) => Promise<void>;
   onDelete?: () => Promise<void>;
   onViewOnMap?: (place: SavedLocation) => void;
+  /**
+   * When false (Free / Plus), skip Google Places / Maps photo URLs so the
+   * sheet does not trigger Place Photos billing. User uploads and Pexels stay.
+   * Pro should pass true.
+   */
+  allowGooglePlacePhotos?: boolean;
+}
+
+/** Billable Place Photos / Maps image hosts — avoid loading on Free/Plus. */
+function isGoogleMapsPhotoUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "maps.googleapis.com" ||
+      host === "places.googleapis.com" ||
+      host.endsWith(".maps.googleapis.com")
+    );
+  } catch {
+    return (
+      url.includes("maps.googleapis.com") ||
+      url.includes("places.googleapis.com")
+    );
+  }
 }
 
 export function PlacePreviewSheet({
   place,
   open,
   onClose,
-  onOpenDetails,
+  onUpdateStatus,
   onSaveNote,
   onDelete,
   onViewOnMap,
+  allowGooglePlacePhotos = false,
 }: PlacePreviewSheetProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -52,6 +124,7 @@ export function PlacePreviewSheet({
     setNoteOpen(false);
     setConfirmDeleteOpen(false);
     setDeleting(false);
+    setStatusBusy(false);
   }, [place?.id, open]);
 
   useEffect(() => {
@@ -68,8 +141,23 @@ export function PlacePreviewSheet({
   if (!place) return null;
 
   const current = place;
-  const image = current.images[0]?.url;
-  const confidence = formatConfidenceCopy(current.confidence);
+  const images = current.images
+    .filter((img) => {
+      const url = img.url?.trim();
+      if (!url) return false;
+      if (!allowGooglePlacePhotos && isGoogleMapsPhotoUrl(url)) return false;
+      return true;
+    })
+    .slice(0, 2);
+  const confidenceValue =
+    typeof current.confidence === "number" && Number.isFinite(current.confidence)
+      ? current.confidence
+      : 0;
+  const confidence = formatConfidenceCopy(confidenceValue);
+  const confidencePct = confidencePercent(confidenceValue);
+  const CategoryIcon = current.category
+    ? (PLACE_CATEGORY_ICONS[current.category] ?? MapPin)
+    : null;
 
   async function handleShare() {
     const text = [
@@ -113,6 +201,16 @@ export function PlacePreviewSheet({
     }
   }
 
+  async function handleStatus(status: LocationStatus) {
+    if (!onUpdateStatus || status === current.status) return;
+    setStatusBusy(true);
+    try {
+      await onUpdateStatus(status);
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+
   async function handleConfirmDelete() {
     if (!onDelete) return;
     setDeleting(true);
@@ -127,6 +225,13 @@ export function PlacePreviewSheet({
 
   const headerActions = (
     <>
+      <span className="mr-auto flex min-w-0 items-center gap-1.5 pr-2 text-sm text-text-secondary">
+        <MapPin className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
+        <span className="truncate">
+          {current.city.name}, {current.country.name}
+        </span>
+      </span>
+
       <button
         type="button"
         aria-label="Share"
@@ -143,7 +248,10 @@ export function PlacePreviewSheet({
           aria-label="More options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={() => {
+            setNoteOpen(false);
+            setMenuOpen((v) => !v);
+          }}
           className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-surface hover:text-text"
         >
           <MoreHorizontal className="h-5 w-5" />
@@ -202,25 +310,16 @@ export function PlacePreviewSheet({
   );
 
   return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title={current.title}
-      size="sm"
-      actions={headerActions}
-    >
-      <ConfirmModal
+    <Sheet open={open} onClose={onClose} size="lg" actions={headerActions}>
+      <DeleteConfirmModal
         open={confirmDeleteOpen}
-        title="Delete this place?"
+        entity="place"
         description={
           <>
             <span className="font-medium text-text">{current.title}</span> will
             be removed from your map and places. This can’t be undone.
           </>
         }
-        confirmLabel="Delete"
-        cancelLabel="Keep"
-        tone="danger"
         loading={deleting}
         onCancel={() => {
           if (!deleting) setConfirmDeleteOpen(false);
@@ -228,15 +327,27 @@ export function PlacePreviewSheet({
         onConfirm={() => void handleConfirmDelete()}
       />
 
-      <div className="flex flex-col gap-4">
-        {image ? (
-          <div className="relative aspect-[16/10] overflow-hidden rounded-xl bg-surface">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={image}
-              alt={current.title}
-              className="h-full w-full object-cover"
-            />
+      <div className="flex flex-col gap-5">
+        {images.length > 0 ? (
+          <div
+            className={cx(
+              "grid gap-2",
+              images.length > 1 ? "grid-cols-2" : "grid-cols-1"
+            )}
+          >
+            {images.map((img) => (
+              <div
+                key={img.url}
+                className="relative aspect-[4/3] overflow-hidden rounded-xl bg-surface"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img.url}
+                  alt={current.title}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ))}
           </div>
         ) : (
           <div className="flex aspect-[16/10] items-center justify-center rounded-xl bg-primary-tint text-sm text-primary">
@@ -245,14 +356,79 @@ export function PlacePreviewSheet({
         )}
 
         <div>
-          <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-semibold tracking-tight text-text">
+            {current.title}
+          </h2>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="inline-flex w-24 shrink-0 items-center gap-1.5 text-sm font-medium text-text-secondary">
+              <CircleDot className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+              Status
+            </span>
             <StatusBadge status={current.status} />
-            <span className="text-sm text-text-secondary">
-              {current.city.name}, {current.country.name}
+          </div>
+          {current.category && CategoryIcon ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <span className="inline-flex w-24 shrink-0 items-center gap-1.5 text-sm font-medium text-text-secondary">
+                <Tag className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+                Tags
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/45 bg-primary-tint px-2.5 py-1 text-xs font-medium text-primary">
+                <CategoryIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                {PLACE_CATEGORY_LABELS[current.category] ?? current.category}
+              </span>
+            </div>
+          ) : null}
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="inline-flex w-24 shrink-0 items-center gap-1.5 text-sm font-medium text-text-secondary">
+              <Percent className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+              Confidence
+            </span>
+            <span
+              className={cx(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+                confidenceValue >= 0.85
+                  ? "border-success/45 bg-success-background text-success"
+                  : confidenceValue >= 0.7
+                    ? "border-warning/45 bg-warning-background text-warning"
+                    : "border-error/45 bg-error-background text-error"
+              )}
+            >
+              {confidencePct}% · {confidence.label}
             </span>
           </div>
-          <p className="mt-2 text-sm text-text-muted">{confidence.label}</p>
         </div>
+
+        {current.ai?.why ? (
+          <div className="rounded-xl bg-surface px-3 py-3">
+            <p className="text-sm text-text-secondary">
+              <span className="font-medium text-text">Why we think this: </span>
+              {current.ai.why}
+            </p>
+            {confidence.detail ? (
+              <p className="mt-1 text-sm text-text-muted">{confidence.detail}</p>
+            ) : null}
+          </div>
+        ) : confidence.detail ? (
+          <div className="rounded-xl bg-surface px-3 py-3">
+            <p className="text-sm text-text-muted">{confidence.detail}</p>
+          </div>
+        ) : null}
+
+        {onUpdateStatus && current.status === "planned" ? (
+          <Button
+            color="primary"
+            icon={Check}
+            disabled={statusBusy}
+            onClick={() => void handleStatus("visited")}
+            className="w-full"
+          >
+            Mark as visited
+          </Button>
+        ) : onUpdateStatus && current.status === "visited" ? (
+          <Button color="primary" icon={Check} disabled className="w-full">
+            Visited
+          </Button>
+        ) : null}
 
         {noteOpen && onSaveNote ? (
           <div className="rounded-xl border border-border bg-surface p-3">
@@ -267,6 +443,7 @@ export function PlacePreviewSheet({
             />
             <div className="mt-3 flex gap-2">
               <Button
+                variant="secondary"
                 onClick={() => {
                   setNote(current.note ?? "");
                   setNoteOpen(false);
@@ -276,24 +453,23 @@ export function PlacePreviewSheet({
                 Cancel
               </Button>
               <Button
+                color="primary"
                 loading={savingNote}
                 onClick={() => void handleSaveNote()}
-                className="btn-primary flex-1"
+                className="flex-1"
               >
                 Save note
               </Button>
             </div>
           </div>
+        ) : current.note?.trim() ? (
+          <div className="rounded-xl bg-surface px-3 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              My note
+            </p>
+            <p className="mt-1 text-sm text-text">{current.note}</p>
+          </div>
         ) : null}
-
-        <Button
-          color="primary"
-          icon={ArrowRight}
-          onClick={() => onOpenDetails(current)}
-          className="w-full"
-        >
-          Open details
-        </Button>
       </div>
     </Sheet>
   );

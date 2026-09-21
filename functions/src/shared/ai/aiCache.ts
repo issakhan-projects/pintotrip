@@ -9,7 +9,8 @@ export type AICacheScope =
   | "findPlace"
   | "getCityIntelligence"
   | "getCityIntelligenceSlow"
-  | "planTrip";
+  | "planTrip"
+  | "resolveCityAirports";
 
 export interface AICacheEntry<T = unknown> {
   fingerprint: string;
@@ -110,4 +111,6 @@ export const AI_CACHE_TTL = {
    * (covers double-submit), not long-term reuse.
    */
   planTrip: 5 * 60 * 1000,
+  /** City → primary airport mapping is stable. */
+  resolveCityAirports: 30 * 24 * 60 * 60 * 1000,
 } as const;

@@ -36,13 +36,8 @@ export interface ModelCityIntelligence {
     name: string;
     code: string;
     symbol: string;
-    exchangeRate?: {
-      from: string;
-      to: string;
-      rate: number | null;
-      approximate: boolean;
-    } | null;
   };
+  /** Parsed from the model, then mapped to top-level CityIntelligenceResult.bestTimeToVisit. */
   bestTimeToVisit?: {
     months?: string[];
     season?: string;
@@ -372,7 +367,6 @@ export function parseModelCityIntelligence(
       name: asString(currency.name, "currency.name"),
       code: asString(currency.code, "currency.code").toUpperCase(),
       symbol: asString(currency.symbol, "currency.symbol"),
-      exchangeRate: null,
     },
     bestTimeToVisit,
     visa,
@@ -419,29 +413,6 @@ function buildVisaSummary(
   );
 
   return parts.join(" ");
-}
-
-function pickBudgetAmount(
-  dailyBudget: NonNullable<ModelCityIntelligence["dailyBudget"]>
-): { amount: number; currency: string; summary: string } | undefined {
-  const mid =
-    dailyBudget.midRange?.userCurrency ?? dailyBudget.midRange?.local;
-  const budget =
-    dailyBudget.budget?.userCurrency ?? dailyBudget.budget?.local;
-  const amount = mid ?? budget;
-  if (amount == null || !Number.isFinite(amount)) return undefined;
-
-  const currency = dailyBudget.currency;
-  const summaryParts = [
-    dailyBudget.description?.trim(),
-    "Estimates vary by season, accommodation, and travel style.",
-  ].filter(Boolean);
-
-  return {
-    amount,
-    currency,
-    summary: summaryParts.join(" "),
-  };
 }
 
 /** Slim time-sensitive model payload (visa / local budget — FX from Frankfurter). */
@@ -532,8 +503,6 @@ export function mergeSlowWithTimeSensitive(
     ...slow,
     currency: {
       ...slow.currency,
-      // FX is never taken from the model.
-      exchangeRate: null,
     },
     visa: patch.visa ?? slow.visa,
     dailyBudget: patch.dailyBudget ?? slow.dailyBudget,
@@ -554,8 +523,6 @@ export function toSlowCityIntelligence(
       name: full.currency.name,
       code: full.currency.code,
       symbol: full.currency.symbol,
-      // FX is traveler-specific — omit from slow cache.
-      exchangeRate: null,
     },
     bestTimeToVisit: full.bestTimeToVisit,
     // Visa depends on nationality — omit from slow cache.
@@ -613,7 +580,12 @@ export function buildSlowContextForPrompt(
  */
 export function toCityIntelligenceResult(
   analysis: ModelCityIntelligence,
-  context: { userCountry: string; generatedAt: string }
+  context: {
+    userCountry: string;
+    generatedAt: string;
+    cityId: string;
+    countryId: string;
+  }
 ): CityIntelligenceResult {
   // exchangeRate is attached later via Frankfurter — never from the model.
   const best = analysis.bestTimeToVisit;
@@ -625,34 +597,6 @@ export function toCityIntelligenceResult(
       }
     : undefined;
 
-  const visaRequirements = analysis.visa
-    ? {
-        summary: buildVisaSummary(
-          analysis.visa,
-          context.userCountry,
-          analysis.city.country
-        ),
-        source:
-          "Synthesized travel guidance — verify with official immigration sources",
-        requiresOfficialVerification: true as const,
-      }
-    : undefined;
-
-  const budget = analysis.dailyBudget
-    ? pickBudgetAmount(analysis.dailyBudget)
-    : undefined;
-
-  const approximateDailyBudget = budget
-    ? {
-        amount: budget.amount,
-        currency: budget.currency,
-        summary: budget.summary,
-        source: "Estimated daily mid-range budget",
-      }
-    : undefined;
-
-  const currencyLabel = `${analysis.currency.code} — ${analysis.currency.name}`;
-
   const rawSafe = analysis.practicalInfo?.safeRate;
   let safeScore =
     rawSafe?.score != null && Number.isFinite(rawSafe.score)
@@ -663,7 +607,6 @@ export function toCityIntelligenceResult(
       ? rawSafe.outOf
       : 10;
   if (safeScore != null) {
-    // Normalize to 0–outOf and round to one decimal for display stability.
     safeScore = Math.min(outOf, Math.max(0, safeScore));
     safeScore = Math.round(safeScore * 10) / 10;
   }
@@ -681,29 +624,51 @@ export function toCityIntelligenceResult(
         }
       : undefined;
 
+  const visa = analysis.visa
+    ? {
+        ...analysis.visa,
+        description: buildVisaSummary(
+          analysis.visa,
+          context.userCountry,
+          analysis.city.country
+        ),
+        verificationRequired: true as const,
+      }
+    : undefined;
+
   return {
-    currency: currencyLabel,
+    city: {
+      name: analysis.city.name,
+      country: analysis.city.country,
+      cityId: context.cityId,
+      countryId: context.countryId,
+    },
+    visa,
     safeRate,
     bestTimeToVisit,
-    visaRequirements,
-    approximateDailyBudget,
     usefulApps: analysis.usefulApps,
     disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
     generatedAt: context.generatedAt,
     details: {
-      city: analysis.city,
-      currency: {
-        name: analysis.currency.name,
-        code: analysis.currency.code,
-        symbol: analysis.currency.symbol,
-        exchangeRate: null,
-      },
-      bestTimeToVisit: analysis.bestTimeToVisit,
-      visa: analysis.visa,
-      dailyBudget: analysis.dailyBudget,
+      dailyBudget: analysis.dailyBudget
+        ? {
+            ...analysis.dailyBudget,
+            currency:
+              analysis.dailyBudget.currency?.trim().toUpperCase() ||
+              analysis.currency.code,
+          }
+        : {
+            currency: analysis.currency.code,
+          },
       climate: analysis.climate,
-      practicalInfo: analysis.practicalInfo,
-      usefulApps: analysis.usefulApps,
+      practicalInfo: analysis.practicalInfo
+        ? {
+            transport: analysis.practicalInfo.transport,
+            walkability: analysis.practicalInfo.walkability,
+            payment: analysis.practicalInfo.payment,
+            tips: analysis.practicalInfo.tips,
+          }
+        : undefined,
     },
   };
 }

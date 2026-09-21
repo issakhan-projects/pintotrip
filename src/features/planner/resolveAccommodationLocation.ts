@@ -1,5 +1,5 @@
-import { searchPlacesByName } from "@/features/add-place/placeSearch";
 import { geocodeByAddress } from "@/lib/maps";
+import { resolveCountryCode } from "@/lib/countries";
 
 export type ResolvedAccommodationLocation = {
   lat?: number;
@@ -8,6 +8,17 @@ export type ResolvedAccommodationLocation = {
   placeId?: string;
   cityName?: string;
   countryName?: string;
+};
+
+/** Map-search suggestion from Geocoding (not Places Text Search). */
+export type AccommodationSearchResult = {
+  placeId: string;
+  title: string;
+  cityName: string;
+  countryName: string;
+  address: string;
+  lat: number;
+  lon: number;
 };
 
 /**
@@ -53,13 +64,139 @@ function slugToName(slug: string): string {
     .replace(/[_+]+/g, "-")
     .split("-")
     .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
     .trim();
 }
 
+function readComponent(
+  components: Array<{ long_name: string; types: string[] }> | undefined,
+  type: string
+): string {
+  return (
+    components?.find((c) => c.types.includes(type))?.long_name?.trim() ?? ""
+  );
+}
+
+function parseCityCountry(
+  components: Array<{ long_name: string; types: string[] }> | undefined
+): { cityName: string; countryName: string } {
+  const countryName = readComponent(components, "country");
+  const cityName =
+    readComponent(components, "locality") ||
+    readComponent(components, "postal_town") ||
+    readComponent(components, "administrative_area_level_2") ||
+    readComponent(components, "administrative_area_level_1");
+  return { cityName, countryName };
+}
+
+type GeocodeResultLike = {
+  place_id?: string;
+  formatted_address?: string;
+  address_components?: Array<{ long_name: string; types: string[] }>;
+  geometry?: {
+    location?:
+      | { lat: () => number; lng: () => number }
+      | { lat: number; lng: number };
+  };
+};
+
+function titleFromGeocodeResult(
+  result: GeocodeResultLike,
+  query: string
+): string {
+  const components = result.address_components;
+  const named =
+    readComponent(components, "premise") ||
+    readComponent(components, "establishment") ||
+    readComponent(components, "point_of_interest");
+  if (named) return named;
+
+  const formatted = result.formatted_address?.trim() || "";
+  if (formatted) {
+    const first = formatted.split(",")[0]?.trim();
+    if (first) return first;
+  }
+
+  return query.trim();
+}
+
+function fromGeocodeResult(
+  result: GeocodeResultLike,
+  query: string
+): AccommodationSearchResult | null {
+  const placeId = result.place_id?.trim();
+  const loc = result.geometry?.location;
+  if (!placeId || !loc) return null;
+
+  const lat = typeof loc.lat === "function" ? loc.lat() : Number(loc.lat);
+  const lon = typeof loc.lng === "function" ? loc.lng() : Number(loc.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  const { cityName, countryName } = parseCityCountry(result.address_components);
+  const title = titleFromGeocodeResult(result, query);
+  const address = result.formatted_address?.trim() || title;
+
+  return {
+    placeId,
+    title,
+    address,
+    cityName: cityName || countryName || "Unknown",
+    countryName: countryName || cityName || "Unknown",
+    lat,
+    lon,
+  };
+}
+
+function isoCountryFromParts(
+  countryId?: string,
+  countryName?: string
+): string | undefined {
+  const fromId = countryId?.trim().toUpperCase();
+  if (fromId && /^[A-Z]{2}$/.test(fromId)) return fromId;
+  const fromName = resolveCountryCode(countryName || "");
+  return fromName || undefined;
+}
+
 /**
- * Best-effort lat/lon for a stay: keep existing coords, else Places/Geocode
- * from place name or booking-link slug + destination city.
+ * Stay search via Geocoding (cached). Biased with destination city/country.
+ * Replaces Places Text Search-per-keystroke in AccommodationSheet.
+ */
+export async function searchAccommodationByGeocode(input: {
+  query: string;
+  destinationCity: string;
+  destinationCountry?: string;
+  countryId?: string;
+}): Promise<AccommodationSearchResult[]> {
+  const q = input.query.trim();
+  if (q.length < 2) return [];
+
+  const city = input.destinationCity.trim();
+  const country = input.destinationCountry?.trim() || "";
+  const textQuery = [q, city, country].filter(Boolean).join(", ");
+  const countryCode = isoCountryFromParts(input.countryId, country);
+
+  try {
+    const results = await geocodeByAddress(textQuery, {
+      ...(countryCode ? { country: countryCode } : {}),
+    });
+    const places: AccommodationSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const result of results.slice(0, 6)) {
+      const place = fromGeocodeResult(result, q);
+      if (!place || seen.has(place.placeId)) continue;
+      seen.add(place.placeId);
+      places.push(place);
+    }
+    return places;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Best-effort lat/lon for a stay: keep existing coords, else Geocode from
+ * place name or booking-link slug + destination city.
  */
 export async function resolveAccommodationLocation(input: {
   name?: string;
@@ -72,6 +209,7 @@ export async function resolveAccommodationLocation(input: {
   countryName?: string;
   destinationCity: string;
   destinationCountry?: string;
+  countryId?: string;
 }): Promise<ResolvedAccommodationLocation> {
   if (
     typeof input.lat === "number" &&
@@ -103,45 +241,27 @@ export async function resolveAccommodationLocation(input: {
       : null,
   ].filter((q): q is string => Boolean(q && q.length >= 2));
 
+  const countryCode = isoCountryFromParts(
+    input.countryId,
+    input.destinationCountry
+  );
+
   for (const query of queries) {
     try {
-      const places = await searchPlacesByName(query);
-      const place = places[0];
-      if (place) {
-        return {
-          lat: place.lat,
-          lon: place.lon,
-          address: place.address || input.address,
-          placeId: place.placeId,
-          cityName: place.cityName || input.cityName,
-          countryName: place.countryName || input.countryName,
-        };
-      }
-    } catch {
-      // Fall through to geocoder.
-    }
-
-    try {
-      const results = await geocodeByAddress(query);
+      const results = await geocodeByAddress(query, {
+        ...(countryCode ? { country: countryCode } : {}),
+      });
       const top = results[0];
-      const location = top?.geometry?.location;
-      if (!location) continue;
-      const lat =
-        typeof location.lat === "function"
-          ? location.lat()
-          : Number(location.lat);
-      const lon =
-        typeof location.lng === "function"
-          ? location.lng()
-          : Number(location.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      if (!top) continue;
+      const place = fromGeocodeResult(top, query);
+      if (!place) continue;
       return {
-        lat: lat as number,
-        lon: lon as number,
-        address: top.formatted_address || input.address,
-        placeId: input.placeId,
-        cityName: input.cityName,
-        countryName: input.countryName,
+        lat: place.lat,
+        lon: place.lon,
+        address: place.address || input.address,
+        placeId: place.placeId || input.placeId,
+        cityName: place.cityName || input.cityName,
+        countryName: place.countryName || input.countryName,
       };
     } catch {
       // Try next query.

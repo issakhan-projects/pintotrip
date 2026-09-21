@@ -1,7 +1,7 @@
 /**
  * Attach authoritative Frankfurter FX to a city-intelligence payload.
  * Local currency identity (name/code/symbol) still comes from the model;
- * rates never do.
+ * rates never do — only top-level `exchangeRate` is filled.
  */
 
 import { logger } from "firebase-functions";
@@ -12,14 +12,13 @@ import {
 import type { CityIntelligenceResult } from "./types";
 
 function localCurrencyCode(result: CityIntelligenceResult): string | undefined {
-  const fromDetails = result.details?.currency?.code?.trim().toUpperCase();
-  if (fromDetails && /^[A-Z]{3}$/.test(fromDetails)) return fromDetails;
+  const fromBudget = result.details?.dailyBudget?.currency?.trim().toUpperCase();
+  if (fromBudget && /^[A-Z]{3}$/.test(fromBudget)) return fromBudget;
 
-  // Top-level currency is often "SAR — Saudi Riyal"
-  const label = result.currency?.trim() ?? "";
-  const codeMatch = label.match(/\b([A-Za-z]{3})\b/);
-  const code = codeMatch?.[1]?.toUpperCase();
-  return code && /^[A-Z]{3}$/.test(code) ? code : undefined;
+  const fromFx = result.exchangeRate?.to?.trim().toUpperCase();
+  if (fromFx && /^[A-Z]{3}$/.test(fromFx)) return fromFx;
+
+  return undefined;
 }
 
 function convertLocalToUser(
@@ -41,21 +40,10 @@ export async function attachFrankfurterExchangeRate(
   const from = userCurrency.trim().toUpperCase();
   const to = localCurrencyCode(result);
 
-  // Strip any model-synthesized FX so we never surface AI rates.
+  // Strip any prior FX so we never surface stale / AI rates.
   const withoutAiFx: CityIntelligenceResult = {
     ...result,
     exchangeRate: undefined,
-    details: result.details
-      ? {
-          ...result.details,
-          currency: result.details.currency
-            ? {
-                ...result.details.currency,
-                exchangeRate: null,
-              }
-            : result.details.currency,
-        }
-      : result.details,
   };
 
   if (!from || !to) return withoutAiFx;
@@ -94,45 +82,12 @@ export async function attachFrankfurterExchangeRate(
       };
     }
 
-    let approximateDailyBudget = withoutAiFx.approximateDailyBudget;
-    if (
-      nextDailyBudget &&
-      (!approximateDailyBudget ||
-        approximateDailyBudget.currency.toUpperCase() !== from)
-    ) {
-      const mid =
-        nextDailyBudget.midRange?.userCurrency ??
-        nextDailyBudget.budget?.userCurrency;
-      if (mid != null && Number.isFinite(mid)) {
-        approximateDailyBudget = {
-          amount: mid,
-          currency: from,
-          summary:
-            nextDailyBudget.description?.trim() ||
-            approximateDailyBudget?.summary,
-          source: approximateDailyBudget?.source ?? "Estimated daily mid-range budget",
-        };
-      }
-    }
-
     return {
       ...withoutAiFx,
       exchangeRate,
-      approximateDailyBudget,
       details: withoutAiFx.details
         ? {
             ...withoutAiFx.details,
-            currency: withoutAiFx.details.currency
-              ? {
-                  ...withoutAiFx.details.currency,
-                  exchangeRate: {
-                    from,
-                    to,
-                    rate,
-                    approximate: false,
-                  },
-                }
-              : withoutAiFx.details.currency,
             dailyBudget: nextDailyBudget,
           }
         : withoutAiFx.details,

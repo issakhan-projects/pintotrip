@@ -145,14 +145,18 @@ export function placesProgress(
   locations: SavedLocation[]
 ): { visited: number; total: number; percent: number } {
   const byId = new Map(locations.map((l) => [l.id, l]));
-  const total = trip.savedPlaceIds.length;
+  const savedPlaceIds = trip.savedPlaceIds ?? [];
+  const total = savedPlaceIds.length;
+  const itineraryPlaces = (trip.itinerary?.days ?? []).flatMap(
+    (d) => d.places ?? []
+  );
   let visited = 0;
 
-  for (const id of trip.savedPlaceIds) {
+  for (const id of savedPlaceIds) {
     const place = byId.get(id);
-    const itineraryStatus = trip.itinerary.days
-      .flatMap((d) => d.places)
-      .find((p) => p.locationId === id)?.status;
+    const itineraryStatus = itineraryPlaces.find(
+      (p) => p.locationId === id
+    )?.status;
     if (itineraryStatus === "visited" || place?.status === "visited") {
       visited += 1;
     }

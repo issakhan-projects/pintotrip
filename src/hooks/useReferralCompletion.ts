@@ -9,6 +9,7 @@ import {
   peekPendingReferral,
   shouldRetryReferral,
 } from "@/lib/referral";
+import { devLog } from "@/lib/devLog";
 import { completeReferral } from "@/services/functions";
 import type { CompleteReferralOutcome } from "@/types/referral";
 
@@ -68,7 +69,7 @@ export function useReferralCompletion(options: {
           attemptedKey.current = null;
         }
       } catch (err) {
-        console.error("[useReferralCompletion] complete failed", err);
+        devLog.error("[useReferralCompletion] complete failed", err);
         if (!cancelled) {
           markReferralRetry();
           clearReferralAwaitOnboarding();

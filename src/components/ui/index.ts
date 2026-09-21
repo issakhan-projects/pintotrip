@@ -16,3 +16,5 @@ export { DateRangePicker } from "./DateRangePicker";
 export type { DateRangeValue } from "./DateRangePicker";
 export { ConfirmModal } from "./ConfirmModal";
 export type { ConfirmModalProps } from "./ConfirmModal";
+export { DeleteConfirmModal } from "./DeleteConfirmModal";
+export type { DeleteConfirmModalProps } from "./DeleteConfirmModal";

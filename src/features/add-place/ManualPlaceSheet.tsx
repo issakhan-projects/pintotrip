@@ -7,7 +7,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { createUserLocation } from "@/services/locations";
 import { slugifyId, countryIdFromParts, isAsciiId } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
-import { resolveEnglishPlaceIds, withCityGooglePlaceId } from "@/lib/maps";
+import { resolveEnglishPlaceIds, withCityGooglePlaceId, englishPlaceIdsFromNames } from "@/lib/maps";
 
 interface ManualPlaceSheetProps {
   open: boolean;
@@ -42,7 +42,12 @@ export function ManualPlaceSheet({
       const countryName = country.trim();
       const cityName = city.trim();
       // Localized names slugify to "unknown" — resolve English/ASCII ids from coords.
-      const englishIds = await resolveEnglishPlaceIds(coords.lat, coords.lng);
+      const englishIds =
+        englishPlaceIdsFromNames(
+          cityName,
+          countryName,
+          resolveCountryCode(countryName) || undefined
+        ) ?? (await resolveEnglishPlaceIds(coords.lat, coords.lng));
       const countryCode =
         englishIds?.countryCode ||
         resolveCountryCode(countryName) ||

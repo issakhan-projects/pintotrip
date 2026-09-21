@@ -8,7 +8,11 @@ import {
 } from "@/components/ui";
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import type { SavedLocation } from "@/hooks/useLocations";
-import type { TripDestinationStop } from "@/types/trip-planner";
+import type {
+  TripDestinationStop,
+  TripStopType,
+} from "@/types/trip-planner";
+import { TRIP_STOP_TYPE_OPTIONS } from "@/types/trip-planner";
 import { cx, isAsciiId } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
 import { reverseGeocode } from "@/lib/maps";
@@ -30,6 +34,7 @@ export type EditDestDraft = {
   place: GeocodedPlace;
   savedKey: string | null;
   dateRange: DateRangeValue;
+  stopType: TripStopType;
   original?: TripDestinationStop;
 };
 
@@ -70,6 +75,7 @@ export function stopToEditDraft(
       ...(stop.startDate ? { from: stop.startDate.toDate() } : {}),
       ...(stop.endDate ? { to: stop.endDate.toDate() } : {}),
     },
+    stopType: stop.stopType === "transit" ? "transit" : "destination",
     original: stop,
   };
 }
@@ -144,6 +150,8 @@ interface EditTripDestinationsEditorProps {
   locations: SavedLocation[];
   tripDateRange: DateRangeValue;
   disabled?: boolean;
+  /** When false, hide add/picker — remove existing cities only. */
+  allowAdd?: boolean;
   onError: (message: string | null) => void;
 }
 
@@ -155,6 +163,7 @@ export function EditTripDestinationsEditor({
   locations,
   tripDateRange,
   disabled,
+  allowAdd = true,
   onError,
 }: EditTripDestinationsEditorProps) {
   const [destinationMode, setDestinationMode] = useState<DestinationMode>(
@@ -165,6 +174,9 @@ export function EditTripDestinationsEditor({
   const [searching, setSearching] = useState(false);
   const [mapResolving, setMapResolving] = useState(false);
   const [openCityDateId, setOpenCityDateId] = useState<string | null>(null);
+  const [pendingStopType, setPendingStopType] = useState<TripStopType | null>(
+    null
+  );
 
   const cityGroups = useMemo<CityGroupOption[]>(() => {
     const countries = groupLocationsByCountryCity(locations);
@@ -192,7 +204,7 @@ export function EditTripDestinationsEditor({
     [destinations]
   );
 
-  const showPicker = adding || destinations.length === 0;
+  const showPicker = allowAdd && (adding || destinations.length === 0);
 
   useEffect(() => {
     const q = searchQuery.trim();
@@ -218,6 +230,10 @@ export function EditTripDestinationsEditor({
   }, [searchQuery, showPicker]);
 
   function addDestination(place: GeocodedPlace, savedKey?: string | null) {
+    if (!pendingStopType) {
+      onError("Choose Destination or Transit before adding a city.");
+      return;
+    }
     if (destinations.some((d) => placeFingerprint(d.place) === placeFingerprint(place))) {
       onError("That city is already added.");
       return;
@@ -230,10 +246,12 @@ export function EditTripDestinationsEditor({
         place,
         savedKey: savedKey ?? null,
         dateRange: {},
+        stopType: pendingStopType,
       },
     ];
     onChange(next);
     onAddingChange(false);
+    setPendingStopType(null);
     setSearchQuery("");
     setSearchResults([]);
     onError(null);
@@ -251,9 +269,10 @@ export function EditTripDestinationsEditor({
   }
 
   function removeDestination(id: string) {
+    if (destinations.length <= 1) return;
     const next = destinations.filter((d) => d.id !== id);
     onChange(next);
-    if (next.length === 0) onAddingChange(true);
+    if (allowAdd && next.length === 0) onAddingChange(true);
     setOpenCityDateId((current) => (current === id ? null : current));
   }
 
@@ -330,7 +349,39 @@ export function EditTripDestinationsEditor({
                             <p className="truncate text-sm text-text">
                               {city.place.cityName}
                             </p>
-                            <div className="mt-0.5 flex items-center gap-1">
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {TRIP_STOP_TYPE_OPTIONS.map((option) => {
+                                const selected = city.stopType === option.id;
+                                return (
+                                  <button
+                                    key={option.id}
+                                    type="button"
+                                    disabled={disabled}
+                                    aria-label={`${city.place.cityName}: ${option.label}`}
+                                    onClick={() =>
+                                      onChange(
+                                        destinations.map((d) =>
+                                          d.id === city.id
+                                            ? { ...d, stopType: option.id }
+                                            : d
+                                        )
+                                      )
+                                    }
+                                    className={cx(
+                                      "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                                      selected
+                                        ? option.id === "transit"
+                                          ? "bg-text text-white"
+                                          : "bg-primary text-white"
+                                        : "bg-surface text-text-secondary hover:bg-divider hover:text-text"
+                                    )}
+                                  >
+                                    {option.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <div className="mt-1 flex items-center gap-1">
                               <button
                                 type="button"
                                 disabled={disabled}
@@ -392,10 +443,10 @@ export function EditTripDestinationsEditor({
                             </button>
                             <button
                               type="button"
-                              disabled={disabled}
+                              disabled={disabled || destinations.length <= 1}
                               aria-label={`Remove ${city.place.cityName}`}
                               onClick={() => removeDestination(city.id)}
-                              className="rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
+                              className="rounded-md p-1 text-text-muted hover:bg-surface hover:text-text disabled:opacity-30"
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
@@ -443,40 +494,93 @@ export function EditTripDestinationsEditor({
             <div className="mb-1 flex justify-end">
               <button
                 type="button"
-                onClick={() => onAddingChange(false)}
+                onClick={() => {
+                  setPendingStopType(null);
+                  onAddingChange(false);
+                }}
                 className="text-xs font-medium text-text-secondary hover:text-text"
               >
                 Cancel
               </button>
             </div>
           ) : null}
-          <CreateTripDestinationPicker
-            cityGroups={cityGroups}
-            destinationMode={destinationMode}
-            onDestinationModeChange={setDestinationMode}
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            searchResults={searchResults}
-            searching={searching}
-            selectedLabel={null}
-            selectedSavedKey={null}
-            mapResolving={mapResolving}
-            onPickSaved={pickSaved}
-            onPickSearch={(place) => addDestination(place)}
-            onMapPick={(coords) => void handleMapPick(coords)}
-          />
+
+          <div className="mb-3">
+            <p className="text-xs font-medium text-text-secondary">
+              City type <span className="text-error">*</span>
+            </p>
+            <div className="mt-1.5 grid grid-cols-2 gap-2">
+              {TRIP_STOP_TYPE_OPTIONS.map((option) => {
+                const selected = pendingStopType === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => {
+                      setPendingStopType(option.id);
+                      onError(null);
+                    }}
+                    className={cx(
+                      "rounded-xl border px-3 py-2.5 text-left transition-colors",
+                      selected
+                        ? "border-primary bg-primary-tint text-primary"
+                        : "border-border bg-surface-elevated text-text hover:border-primary/30"
+                    )}
+                  >
+                    <span className="block text-sm font-medium">
+                      {option.label}
+                    </span>
+                    <span
+                      className={cx(
+                        "mt-0.5 block text-[11px] leading-snug",
+                        selected ? "text-primary/80" : "text-text-muted"
+                      )}
+                    >
+                      {option.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {pendingStopType ? (
+            <CreateTripDestinationPicker
+              cityGroups={cityGroups}
+              destinationMode={destinationMode}
+              onDestinationModeChange={setDestinationMode}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              searchResults={searchResults}
+              searching={searching}
+              selectedLabel={null}
+              selectedSavedKey={null}
+              mapResolving={mapResolving}
+              onPickSaved={pickSaved}
+              onPickSearch={(place) => addDestination(place)}
+              onMapPick={(coords) => void handleMapPick(coords)}
+            />
+          ) : (
+            <p className="rounded-xl bg-surface px-3 py-2.5 text-sm text-text-secondary">
+              Select Destination or Transit, then choose a city.
+            </p>
+          )}
         </div>
-      ) : (
+      ) : allowAdd ? (
         <button
           type="button"
           disabled={disabled}
-          onClick={() => onAddingChange(true)}
+          onClick={() => {
+            setPendingStopType(null);
+            onAddingChange(true);
+          }}
           className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2.5 text-sm font-medium text-primary hover:border-primary/40 hover:bg-primary-tint"
         >
           <Plus className="h-4 w-4" />
           Add destination
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

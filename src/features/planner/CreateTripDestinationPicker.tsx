@@ -76,7 +76,7 @@ export function CreateTripDestinationPicker({
         />
       </div>
 
-      <div className="mt-3 flex gap-4 border-b border-divider">
+      <div className="mt-3 flex gap-1 rounded-xl bg-surface p-1">
         {(
           [
             { id: "places", label: "My places" },
@@ -89,16 +89,13 @@ export function CreateTripDestinationPicker({
             type="button"
             onClick={() => onDestinationModeChange(tab.id)}
             className={cx(
-              "relative -mb-px pb-2.5 text-sm font-medium transition-colors",
+              "flex-1 rounded-lg px-2.5 py-2 text-center text-sm font-medium transition-all",
               destinationMode === tab.id
-                ? "text-primary"
+                ? "bg-surface-elevated text-primary shadow-sm ring-1 ring-border/70"
                 : "text-text-secondary hover:text-text"
             )}
           >
             {tab.label}
-            {destinationMode === tab.id ? (
-              <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
-            ) : null}
           </button>
         ))}
       </div>
@@ -106,7 +103,7 @@ export function CreateTripDestinationPicker({
       <div className="mt-3">
         {destinationMode === "places" ? (
           cityGroups.length === 0 ? (
-            <p className="rounded-2xl bg-surface px-4 py-6 text-center text-sm text-text-secondary">
+            <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-6 text-center text-sm text-text-secondary">
               No saved cities yet. Use Search or On map.
             </p>
           ) : (
@@ -119,10 +116,10 @@ export function CreateTripDestinationPicker({
                     type="button"
                     onClick={() => onPickSaved(city.key)}
                     className={cx(
-                      "w-[148px] shrink-0 overflow-hidden rounded-2xl border-2 bg-surface-elevated text-left transition-colors",
+                      "w-[148px] shrink-0 overflow-hidden rounded-2xl border-2 bg-surface-elevated text-left transition-all",
                       selected
-                        ? "border-primary shadow-sm"
-                        : "border-border hover:border-primary/35"
+                        ? "border-primary shadow-md ring-2 ring-primary/15"
+                        : "border-border hover:border-primary/35 hover:shadow-sm"
                     )}
                   >
                     <div className="relative aspect-[5/3.4] bg-surface">
@@ -134,10 +131,15 @@ export function CreateTripDestinationPicker({
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-primary-tint text-primary">
+                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary-tint to-surface text-primary">
                           <MapPin className="h-6 w-6" />
                         </div>
                       )}
+                      {selected ? (
+                        <span className="absolute right-2 top-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                          Selected
+                        </span>
+                      ) : null}
                     </div>
                     <div className="px-3 py-2.5">
                       <p className="truncate text-sm font-semibold text-text">
@@ -166,26 +168,28 @@ export function CreateTripDestinationPicker({
             {visibleSearchResults.length === 0 &&
             searchQuery.trim().length >= 2 &&
             !searching ? (
-              <p className="rounded-2xl bg-surface px-4 py-5 text-center text-sm text-text-secondary">
+              <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-5 text-center text-sm text-text-secondary">
                 No cities found. Try another search.
               </p>
             ) : null}
-            <div className="max-h-48 space-y-1 overflow-y-auto">
+            <div className="max-h-48 space-y-1.5 overflow-y-auto">
               {visibleSearchResults.map((result, i) => (
                 <button
                   key={`${result.label}-${i}`}
                   type="button"
                   onClick={() => onPickSearch(result)}
                   className={cx(
-                    "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors",
+                    "flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all",
                     selectedLabel === result.label
-                      ? "border-primary bg-primary-tint"
-                      : "border-transparent hover:bg-surface"
+                      ? "border-primary bg-primary-tint shadow-sm ring-1 ring-primary/15"
+                      : "border-transparent bg-surface-elevated hover:bg-surface"
                   )}
                 >
-                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <span>
-                    <span className="block text-sm font-medium text-text">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-primary">
+                    <MapPin className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 pt-0.5">
+                    <span className="block truncate text-sm font-medium text-text">
                       {result.cityName}
                     </span>
                     <span className="text-xs text-text-secondary">
@@ -199,8 +203,8 @@ export function CreateTripDestinationPicker({
         ) : null}
 
         {destinationMode === "map" ? (
-          <div className="overflow-hidden rounded-2xl border border-border">
-            <div className="border-b border-divider bg-primary-tint px-3 py-2 text-xs font-medium text-primary">
+          <div className="overflow-hidden rounded-2xl border border-border shadow-sm">
+            <div className="border-b border-divider bg-primary-tint px-3 py-2.5 text-xs font-medium text-primary">
               {mapResolving
                 ? "Finding city…"
                 : "Tap the map to choose your destination"}
