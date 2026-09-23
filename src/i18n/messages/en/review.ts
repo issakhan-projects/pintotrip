@@ -1,0 +1,22 @@
+export const review = {
+  title: "Enjoying PinToTrip?",
+  thankYou: "Thank you",
+  rewardBanner: "Leave a one-time review and we'll add {n} AI credits to your account. You can only do this once.",
+  yourRating: "Your rating",
+  starAria_one: "{count} star",
+  starAria_other: "{count} stars",
+  commentLabel: "Anything we should know?",
+  placeholder: "What you like, or what we could improve…",
+  minChars: "Minimum {n} characters.",
+  notNow: "Not now",
+  submit: "Submit review",
+  alreadyBody: "You already left a review. Each account can review once and receive the AI credit reward one time.",
+  successBody: "Thanks for your feedback. We added {n} AI credits to your balance. This was a one-time reward.",
+  error: {
+    once: "You can only leave a review once.",
+    rating: "Please choose a star rating.",
+    minChars: "Please write at least {n} characters.",
+    maxChars: "Please keep your feedback under {n} characters.",
+    submit: "Could not submit review.",
+  },
+} as const;

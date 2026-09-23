@@ -9,7 +9,8 @@ import {
   MapPinned,
   Play,
 } from "lucide-react";
-import { DEMO_PLACE, HERO_FEATURES, LANDING_IMAGES } from "../constants";
+import { useI18n } from "@/i18n";
+import { HERO_FEATURE_KEYS, LANDING_IMAGES } from "../constants";
 
 const FEATURE_ICONS = [Camera, MapPinned, Info] as const;
 
@@ -18,37 +19,43 @@ const FEATURE_ICONS = [Camera, MapPinned, Info] as const;
  * No phone mockup.
  */
 export function HeroSection() {
+  const { t } = useI18n();
+  const demoCity = t("landing.demo.city");
+  const demoCountry = t("landing.demo.country");
+  const demoPlace = `${demoCity}, ${demoCountry}`;
+
   return (
     <section className="bg-background">
       <div className="mx-auto grid max-w-6xl items-center gap-8 px-4 py-10 sm:gap-10 sm:px-6 sm:py-14 lg:grid-cols-2 lg:gap-12">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-text-muted">
-            Turn inspiration into real journeys
+            {t("landing.hero.eyebrow")}
           </p>
           <h1 className="mt-3 text-4xl font-semibold tracking-tight text-text sm:text-5xl lg:text-[3.25rem] lg:leading-[1.08]">
-            See it. Find it. Save it.
+            {t("landing.hero.title")}
           </h1>
           <p className="mt-3 max-w-md text-base text-text-secondary sm:text-lg">
-            Turn any travel photo into a place on your map.
+            {t("landing.hero.sub")}
           </p>
 
           <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-center">
             <Link href="/login" className="btn-primary h-11 gap-2 px-5">
-              Start for free
+              {t("landing.nav.startForFree")}
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
             <a href="#how-it-works" className="btn-secondary h-11 gap-2 px-5">
               <Play className="h-3.5 w-3.5 fill-current" aria-hidden />
-              See how it works
+              {t("landing.hero.seeHow")}
             </a>
           </div>
 
           <ul className="mt-8 space-y-3">
-            {HERO_FEATURES.map((label, i) => {
+            {HERO_FEATURE_KEYS.map((key, i) => {
               const Icon = FEATURE_ICONS[i]!;
+              const label = t(`landing.hero.features.${key}`);
               return (
                 <li
-                  key={label}
+                  key={key}
                   className="flex items-center gap-3 text-sm text-text-secondary"
                 >
                   <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-tint text-primary">
@@ -59,29 +66,6 @@ export function HeroSection() {
               );
             })}
           </ul>
-
-          {/* <div className="mt-8 flex items-center gap-3">
-            <div className="flex -space-x-2">
-              {[
-                "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=96&q=80",
-                "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=96&q=80",
-                "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=96&q=80",
-                "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=96&q=80",
-              ].map((src) => (
-                <Image
-                  key={src}
-                  src={src}
-                  alt=""
-                  width={32}
-                  height={32}
-                  className="h-8 w-8 rounded-full border-2 border-white object-cover"
-                />
-              ))}
-            </div>
-            <p className="text-xs text-text-secondary sm:text-sm">
-              Join travelers around the world
-            </p>
-          </div> */}
         </div>
 
         {/* Product visual — photo + floating UI, no phone */}
@@ -106,7 +90,7 @@ export function HeroSection() {
                 <MapPinned className="h-7 w-7 fill-planned text-planned drop-shadow" />
               </div>
               <p className="absolute bottom-2 left-2 right-2 truncate rounded-md bg-white/90 px-2 py-1 text-[10px] font-semibold text-text shadow-sm">
-                {DEMO_PLACE.city}, {DEMO_PLACE.country}
+                {demoPlace}
               </p>
             </div>
           </div>
@@ -125,12 +109,14 @@ export function HeroSection() {
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
-                  {DEMO_PLACE.city}, {DEMO_PLACE.country}
+                  {demoPlace}
                 </p>
                 <p className="mt-0.5 truncate text-sm font-semibold text-text">
-                  {DEMO_PLACE.name}
+                  {t("landing.demo.placeName")}
                 </p>
-                <p className="mt-1 text-[11px] text-success">Saved to your map</p>
+                <p className="mt-1 text-[11px] text-success">
+                  {t("landing.hero.saved")}
+                </p>
               </div>
             </div>
           </div>

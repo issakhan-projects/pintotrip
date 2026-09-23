@@ -1,6 +1,7 @@
 "use client";
 
 import { List, Map } from "lucide-react";
+import { useI18n } from "@/i18n";
 import { cx } from "@/lib/utils";
 
 export type MapListMode = "map" | "list";
@@ -10,19 +11,20 @@ interface MapListToggleProps {
   onChange: (mode: MapListMode) => void;
 }
 
-const OPTIONS = [
-  { value: "map" as const, label: "Map", icon: Map },
-  { value: "list" as const, label: "List", icon: List },
-];
-
 export function MapListToggle({ mode, onChange }: MapListToggleProps) {
+  const { t } = useI18n();
+  const options = [
+    { value: "map" as const, label: t("app.nav.map"), icon: Map },
+    { value: "list" as const, label: t("app.toggle.list"), icon: List },
+  ];
+
   return (
     <div
       role="group"
-      aria-label="Map or list view"
+      aria-label={t("app.toggle.mapOrListAria")}
       className="inline-flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 p-1 shadow-sm backdrop-blur sm:h-11"
     >
-      {OPTIONS.map(({ value, label, icon: Icon }) => (
+      {options.map(({ value, label, icon: Icon }) => (
         <button
           key={value}
           type="button"

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Lobster, Montserrat, Manrope } from "next/font/google";
 import { APP_NAME, SITE_URL, SUPPORT_EMAIL } from "@/features/legal";
+import { AppProviders } from "@/components/AppProviders";
 import "./globals.css";
 
 const montserrat = Montserrat({
@@ -104,7 +105,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             __html: JSON.stringify([websiteJsonLd, organizationJsonLd]),
           }}
         />
-        {children}
+        <AppProviders>{children}</AppProviders>
       </body>
     </html>
   );

@@ -10,6 +10,7 @@ import { createReferral } from "@/services/functions";
 import { REFERRAL_REWARD_AI_CREDITS } from "@/types/credits";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { AnalyticsEvents } from "@/types/analytics";
+import { useI18n } from "@/i18n";
 
 interface InviteFriendsSheetProps {
   open: boolean;
@@ -32,6 +33,7 @@ type LoadState =
  * Shareable invite link + code. Creates a pending referral on open.
  */
 export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
+  const { t } = useI18n();
   const { trackEvent } = useAnalytics();
   const [state, setState] = useState<LoadState>({ status: "idle" });
   const [copied, setCopied] = useState<"code" | "url" | null>(null);
@@ -60,10 +62,10 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
         message:
           err instanceof Error && err.message
             ? err.message
-            : "Could not create invite. Try again.",
+            : t("referral.createError"),
       });
     }
-  }, [trackEvent]);
+  }, [trackEvent, t]);
 
   useEffect(() => {
     if (!open) {
@@ -85,7 +87,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
         prev.status === "ready"
           ? {
               status: "error",
-              message: "Could not copy. Select the text and copy manually.",
+              message: t("referral.copyError"),
             }
           : prev
       );
@@ -98,8 +100,8 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
     try {
       if (typeof navigator !== "undefined" && navigator.share) {
         await navigator.share({
-          title: "Join me on PinToTrip",
-          text: `Join PinToTrip with my invite — I get ${state.rewardCredits} AI credits when you sign up.`,
+          title: t("referral.shareTitle"),
+          text: t("referral.shareText", { n: state.rewardCredits }),
           url: state.url,
         });
         trackEvent(AnalyticsEvents.INVITE_SHARED, { method: "web_share" });
@@ -124,7 +126,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
       : REFERRAL_REWARD_AI_CREDITS;
 
   return (
-    <Sheet open={open} onClose={onClose} title="Invite friends" size="sm">
+    <Sheet open={open} onClose={onClose} title={t("referral.title")} size="sm">
       <div className="space-y-5">
         <div className="flex gap-3 rounded-2xl border border-border bg-surface p-4">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-tint text-primary">
@@ -132,17 +134,16 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
           </span>
           <div>
             <p className="text-sm font-semibold text-text">
-              Invite friends · get {reward} credits when they join
+              {t("referral.headline", { n: reward })}
             </p>
             <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-              Share your link. When a friend signs up and finishes setup, you
-              earn AI credits. Each friend can only use one invite.
+              {t("referral.body")}
             </p>
           </div>
         </div>
 
         {state.status === "loading" || state.status === "idle" ? (
-          <p className="text-sm text-text-secondary">Preparing your invite…</p>
+          <p className="text-sm text-text-secondary">{t("referral.preparing")}</p>
         ) : null}
 
         {state.status === "error" ? (
@@ -151,7 +152,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
               {state.message}
             </p>
             <Button variant="secondary" onClick={() => void loadInvite()}>
-              Try again
+              {t("common.tryAgain")}
             </Button>
           </div>
         ) : null}
@@ -160,7 +161,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
           <>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-                Invite code
+                {t("referral.code")}
               </p>
               <div className="mt-1.5 flex items-center gap-2">
                 <code className="flex-1 rounded-xl border border-border bg-background px-3 py-2.5 font-mono text-base font-semibold tracking-widest text-text">
@@ -169,17 +170,17 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
                 <Button
                   variant="secondary"
                   icon={copied === "code" ? Check : Copy}
-                  aria-label="Copy invite code"
+                  aria-label={t("referral.copyCodeAria")}
                   onClick={() => void copyText("code", state.code)}
                 >
-                  {copied === "code" ? "Copied" : "Copy"}
+                  {copied === "code" ? t("common.copied") : t("common.copy")}
                 </Button>
               </div>
             </div>
 
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
-                Invite link
+                {t("referral.link")}
               </p>
               <div className="mt-1.5 flex items-start gap-2">
                 <p className="min-w-0 flex-1 break-all rounded-xl border border-border bg-background px-3 py-2.5 text-xs text-text-secondary">
@@ -192,10 +193,10 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
                 <Button
                   variant="secondary"
                   icon={copied === "url" ? Check : Copy}
-                  aria-label="Copy invite link"
+                  aria-label={t("referral.copyLinkAria")}
                   onClick={() => void copyText("url", state.url)}
                 >
-                  {copied === "url" ? "Copied" : "Copy"}
+                  {copied === "url" ? t("common.copied") : t("common.copy")}
                 </Button>
               </div>
             </div>
@@ -206,7 +207,7 @@ export function InviteFriendsSheet({ open, onClose }: InviteFriendsSheetProps) {
               className="w-full"
               onClick={() => void handleShare()}
             >
-              Share invite
+              {t("referral.share")}
             </Button>
           </>
         ) : null}

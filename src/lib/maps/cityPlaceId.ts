@@ -87,8 +87,15 @@ function matchingGeocodeTypes(featureType?: DdsFeatureType): string[] {
   ];
 }
 
+type GeocodeResultLike = {
+  place_id?: string;
+  types?: string[];
+  address_components?: Array<{ long_name?: string; types: string[] }>;
+  formatted_address?: string;
+};
+
 function pickPlaceIdByTypes(
-  results: Array<{ place_id?: string; types?: string[] }>,
+  results: GeocodeResultLike[],
   preferredTypes: string[]
 ): string | null {
   for (const type of preferredTypes) {
@@ -99,10 +106,40 @@ function pickPlaceIdByTypes(
   return null;
 }
 
-function resultsHavePlaceId(
-  results: Array<{ place_id?: string }>
-): boolean {
+function resultsHavePlaceId(results: GeocodeResultLike[]): boolean {
   return results.some((r) => Boolean(r.place_id?.trim()));
+}
+
+/** Admin / country type string used in Geocoder address_components. */
+function geocodeComponentType(
+  featureType?: DdsFeatureType
+): string | null {
+  if (featureType === "COUNTRY") return "country";
+  if (featureType === "ADMINISTRATIVE_AREA_LEVEL_1") {
+    return "administrative_area_level_1";
+  }
+  if (featureType === "ADMINISTRATIVE_AREA_LEVEL_2") {
+    return "administrative_area_level_2";
+  }
+  return null;
+}
+
+/**
+ * City geocodes often return a locality result whose `types` do not include
+ * Admin1/Admin2, but `address_components` still name the containing region.
+ */
+function componentLongName(
+  results: GeocodeResultLike[],
+  componentType: string
+): string | null {
+  for (const result of results) {
+    const comp = result.address_components?.find((c) =>
+      c.types.includes(componentType)
+    );
+    const name = comp?.long_name?.trim();
+    if (name) return name;
+  }
+  return null;
 }
 
 function logMissingPlaceId(city: CityPlaceIdQuery, reason: string): void {
@@ -125,9 +162,13 @@ function logMissingPlaceId(city: CityPlaceIdQuery, reason: string): void {
  */
 async function resolveViaReverseGeocode(
   city: CityPlaceIdQuery
-): Promise<{ placeId: string | null; hadPlaceIds: boolean }> {
+): Promise<{
+  placeId: string | null;
+  hadPlaceIds: boolean;
+  results: GeocodeResultLike[];
+}> {
   if (!hasUsableMapCoords(city.lat, city.lon)) {
-    return { placeId: null, hadPlaceIds: false };
+    return { placeId: null, hadPlaceIds: false, results: [] };
   }
   const lat = city.lat as number;
   const lon = city.lon as number;
@@ -141,20 +182,7 @@ async function resolveViaReverseGeocode(
     matchingGeocodeTypes(city.featureType)
   );
 
-  if (placeId) {
-    const matched = results.find(
-      (r: { place_id?: string; types?: string[]; formatted_address?: string }) =>
-        r.place_id === placeId
-    );
-    // devLog.info(
-    //   `[PinToTrip DDS] Reverse-geocode Place ID for "${city.cityName}":`,
-    //   placeId,
-    //   matched?.types,
-    //   matched?.formatted_address
-    // );
-  }
-
-  return { placeId, hadPlaceIds };
+  return { placeId, hadPlaceIds, results };
 }
 
 async function resolveViaPlaces(
@@ -222,12 +250,18 @@ async function resolveViaPlaces(
 
 async function resolveViaGeocoder(
   city: CityPlaceIdQuery
-): Promise<{ placeId: string | null; hadPlaceIds: boolean }> {
+): Promise<{
+  placeId: string | null;
+  hadPlaceIds: boolean;
+  results: GeocodeResultLike[];
+}> {
   const isCountry = city.featureType === "COUNTRY";
   const primaryName = isCountry
     ? city.countryName.trim()
     : city.cityName.trim();
-  if (!primaryName) return { placeId: null, hadPlaceIds: false };
+  if (!primaryName) {
+    return { placeId: null, hadPlaceIds: false, results: [] };
+  }
 
   const address = isCountry
     ? primaryName
@@ -242,7 +276,46 @@ async function resolveViaGeocoder(
   return {
     placeId: pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType)),
     hadPlaceIds: resultsHavePlaceId(results),
+    results,
   };
+}
+
+/**
+ * When DDS needs Admin1/Admin2 but geocode returned a locality (e.g. Ella, LK),
+ * re-geocode the containing region named in address_components.
+ */
+async function resolveViaContainingAdmin(
+  city: CityPlaceIdQuery,
+  priorResults: GeocodeResultLike[]
+): Promise<string | null> {
+  const componentType = geocodeComponentType(city.featureType);
+  if (
+    !componentType ||
+    componentType === "country" ||
+    priorResults.length === 0
+  ) {
+    return null;
+  }
+
+  const adminName = componentLongName(priorResults, componentType);
+  if (!adminName) return null;
+
+  // Same query as the city name would not help (already tried).
+  if (
+    normalizeQuery(adminName) === normalizeQuery(city.cityName) ||
+    normalizeQuery(adminName) === normalizeQuery(city.countryName)
+  ) {
+    return null;
+  }
+
+  const address = [adminName, city.countryName.trim()]
+    .filter(Boolean)
+    .join(", ");
+  const results = await geocodeByAddress(address, {
+    language: "en",
+    country: isoCountryCode(city.countryId),
+  });
+  return pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType));
 }
 
 /**
@@ -276,12 +349,14 @@ export async function resolveCityGooglePlaceId(
 
   const request = (async (): Promise<string | null> => {
     let geocodeHadPlaceIds = false;
+    let lastResults: GeocodeResultLike[] = [];
 
     // Reverse geocode first when coords exist — matches DDS Feature Layer IDs.
     if (hasUsableMapCoords(city.lat, city.lon)) {
       try {
         const fromReverse = await resolveViaReverseGeocode(city);
         if (fromReverse.hadPlaceIds) geocodeHadPlaceIds = true;
+        if (fromReverse.results.length) lastResults = fromReverse.results;
         if (fromReverse.placeId) {
           placeIdCache.set(key, fromReverse.placeId);
           return fromReverse.placeId;
@@ -297,6 +372,7 @@ export async function resolveCityGooglePlaceId(
     try {
       const fromGeocoder = await resolveViaGeocoder(city);
       if (fromGeocoder.hadPlaceIds) geocodeHadPlaceIds = true;
+      if (fromGeocoder.results.length) lastResults = fromGeocoder.results;
       if (fromGeocoder.placeId) {
         placeIdCache.set(key, fromGeocoder.placeId);
         return fromGeocoder.placeId;
@@ -306,6 +382,22 @@ export async function resolveCityGooglePlaceId(
         `[PinToTrip DDS] Geocoder Place ID lookup failed for "${label}".`,
         err
       );
+    }
+
+    // Locality geocode → containing Admin1/Admin2 named in address_components.
+    if (lastResults.length > 0) {
+      try {
+        const fromAdmin = await resolveViaContainingAdmin(city, lastResults);
+        if (fromAdmin) {
+          placeIdCache.set(key, fromAdmin);
+          return fromAdmin;
+        }
+      } catch (err) {
+        devLog.warn(
+          `[PinToTrip DDS] Containing-admin Place ID lookup failed for "${label}".`,
+          err
+        );
+      }
     }
 
     // Geocoding already returned place_id(s) — type just didn't match the DDS

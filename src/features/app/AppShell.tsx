@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { Coins, Plus, Search, Sparkles } from "lucide-react";
 import type { User } from "firebase/auth";
+import { useI18n } from "@/i18n";
 import { BottomNav, type AppTab } from "@/features/app/BottomNav";
 import { MapListToggle, type MapListMode } from "@/features/app/MapListToggle";
 import { TravelMap, type MapInteractionMode } from "@/features/map/TravelMap";
@@ -61,9 +62,15 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     removeFavorite,
   } = useFavoriteCities(user.uid);
   const { profile } = useUserProfile(user);
+  const { t, setLocale } = useI18n();
   const aiCreditsBalance = profile?.aiCreditsBalance ?? null;
   const isPro = isProEntitled(profile?.subscription);
   const needsTravelProfile = Boolean(profile) && !profile?.travelProfile;
+
+  useEffect(() => {
+    const lang = profile?.preferences?.language;
+    if (lang) setLocale(lang);
+  }, [profile?.preferences?.language, setLocale]);
 
   const [tab, setTab] = useState<AppTab>(initialTab ?? "map");
   const [viewMode, setViewMode] = useState<MapListMode>("map");
@@ -248,8 +255,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           return;
         }
         openCityInfo({
-          cityName: place.city || "Unknown city",
-          countryName: place.country || "Unknown country",
+          cityName: place.city || t("app.unknownCity"),
+          countryName: place.country || t("app.unknownCountry"),
           lat: place.lat,
           lon: place.lon,
         });
@@ -257,7 +264,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         setCityResolving(false);
       }
     },
-    [pickMode, cityPickMode, openCityInfo]
+    [pickMode, cityPickMode, openCityInfo, t]
   );
 
   return (
@@ -372,7 +379,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           <button
             type="button"
             onClick={() => goToTab("map")}
-            aria-label="PinToTrip"
+            aria-label={t("app.brand")}
             className="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-surface-elevated/95 p-1.5 shadow-sm backdrop-blur sm:py-1.5 sm:pl-1.5 sm:pr-3.5"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -384,7 +391,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               className="h-6 w-6 shrink-0"
             />
             <p className="hidden font-[family-name:var(--font-manrope)] text-sm font-semibold tracking-wide text-accent sm:block">
-              PinToTrip
+              {t("app.brand")}
             </p>
           </button>
 
@@ -393,7 +400,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               type="button"
               onClick={() => router.push("/pricing")}
               className="flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11"
-              title="AI credits available"
+              title={t("app.credits.title")}
             >
               <span className="flex items-center px-2.5 sm:px-3">
                 <Coins className="h-3.5 w-3.5 text-primary" aria-hidden />
@@ -402,7 +409,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               <span className="px-2.5 text-sm font-semibold tabular-nums text-text sm:px-3">
                 {aiCreditsBalance}
               </span>
-              <span className="sr-only">AI credits available — open pricing</span>
+              <span className="sr-only">{t("app.credits.srOpenPricing")}</span>
             </button>
           ) : null}
         </div>
@@ -412,7 +419,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             {viewMode === "map" ? (
               <button
                 type="button"
-                aria-label="City info"
+                aria-label={t("app.cityInfo")}
                 aria-pressed={cityPickMode}
                 onClick={() => {
                   setPickMode(false);
@@ -443,7 +450,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
                   aria-hidden
                 />
                 <span className="px-2.5 text-sm font-medium sm:px-3">
-                  City info
+                  {t("app.cityInfo")}
                 </span>
               </button>
             ) : null}
@@ -457,14 +464,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               onClick={() => setSearchOpen(true)}
               className="!bg-surface-elevated/95 !text-text !border-border"
             >
-              Search
+              {t("app.search")}
             </Button>
             <Button
               icon={Plus}
               onClick={() => setAddOpen(true)}
               className="btn-primary"
             >
-              Add
+              {t("app.add")}
             </Button>
           </div>
         ) : null}
@@ -479,13 +486,13 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       {pickMode ? (
         <div className="absolute inset-x-0 top-20 z-20 flex justify-center px-4">
           <div className="rounded-full border border-primary/30 bg-primary-tint px-4 py-2 text-sm font-medium text-primary shadow-sm">
-            Tap the map to place a pin
+            {t("app.pickPinHint")}
             <button
               type="button"
               className="ml-3 underline"
               onClick={() => setPickMode(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -495,14 +502,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         <div className="absolute inset-x-0 top-20 z-20 flex justify-center px-4">
           <div className="rounded-full border border-primary/30 bg-primary-tint px-4 py-2 text-sm font-medium text-primary shadow-sm">
             {cityResolving
-              ? "Finding city…"
-              : "Tap the map to pick a city"}
+              ? t("app.findingCity")
+              : t("app.pickCityHint")}
             <button
               type="button"
               className="ml-3 underline"
               onClick={() => setCityPickMode(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -528,17 +535,17 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         <div className="pointer-events-none absolute inset-x-0 bottom-28 z-20 flex justify-center px-4">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-border bg-surface-elevated/95 p-4 text-center shadow-lg backdrop-blur">
             <p className="text-sm font-semibold text-text">
-              Your travel map is empty.
+              {t("app.emptyMapTitle")}
             </p>
             <p className="mt-1 text-sm text-text-secondary">
-              Save places you discover and they&apos;ll appear here.
+              {t("app.emptyMapBody")}
             </p>
             <Button
               icon={Plus}
               onClick={() => setAddOpen(true)}
               className="mt-3 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
             >
-              Add your first place
+              {t("app.addFirstPlace")}
             </Button>
           </div>
         </div>

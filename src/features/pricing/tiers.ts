@@ -34,7 +34,7 @@ export const TIERS: Tier[] = [
     description: "Start discovering places with a light AI allowance.",
     features: [
       "30 AI credits / month",
-      "Save places to personal map",
+      "Save up to 10 places",
       "View saved places",
       "Map and list views",
       "Basic travel information",
@@ -47,9 +47,9 @@ export const TIERS: Tier[] = [
     description: "More AI credits for frequent travelers.",
     features: [
       "200 AI credits / month",
-      "Save places to personal map",
       "AI-powered place identification",
       "City intelligence",
+      "Save up to 100 locations",
       "Map and list views",
       "Travel statistics",
     ],
@@ -78,7 +78,7 @@ export const TIERS: Tier[] = [
       "Trip planner",
       "Search places by name",
       "More AI usage",
-      "Save unlimited places",
+      "Save up to 300 places",
       "Travel statistics",
       "Priority access to new AI features",
     ],

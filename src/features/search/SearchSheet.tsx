@@ -6,6 +6,7 @@ import { Search as SearchIcon, Clock } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { SavedLocation } from "@/hooks/useLocations";
+import { useI18n } from "@/i18n";
 
 const RECENT_KEY = "pintototrip.recentSearches";
 
@@ -22,6 +23,7 @@ export function SearchSheet({
   locations,
   onSelectPlace,
 }: SearchSheetProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [recent, setRecent] = useState<string[]>([]);
 
@@ -58,11 +60,11 @@ export function SearchSheet({
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Search" size="md">
+    <Sheet open={open} onClose={onClose} title={t("search.title")} size="md">
       <div className="flex flex-col gap-4">
         <TextInput
           icon={SearchIcon}
-          placeholder="Search places, cities, countries…"
+          placeholder={t("search.placeholder")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoFocus
@@ -71,11 +73,11 @@ export function SearchSheet({
         {!query.trim() ? (
           <div>
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-              Recent searches
+              {t("search.recentSearches")}
             </p>
             {recent.length === 0 ? (
               <p className="text-sm text-text-secondary">
-                No recent searches yet.
+                {t("search.noRecent")}
               </p>
             ) : (
               <ul className="space-y-1">
@@ -97,7 +99,9 @@ export function SearchSheet({
         ) : (
           <div className="space-y-2">
             {results.length === 0 ? (
-              <p className="text-sm text-text-secondary">No matches.</p>
+              <p className="text-sm text-text-secondary">
+                {t("search.noMatches")}
+              </p>
             ) : (
               results.map((place) => (
                 <button
@@ -131,7 +135,7 @@ export function SearchSheet({
             onClick={() => remember(query.trim())}
             className="!bg-surface !text-text-secondary !border-border"
           >
-            Save to recent
+            {t("search.saveToRecent")}
           </Button>
         ) : null}
       </div>

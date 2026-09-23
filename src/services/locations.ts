@@ -36,6 +36,12 @@ import type {
   UserLocationUpdateInput,
 } from "@/types/location";
 import { LOCATION_AGGREGATION_FIELDS } from "@/types/location";
+import type { SubscriptionPlan } from "@/types/user";
+import {
+  LOCATION_LIMITS,
+  locationLimitForSubscription,
+} from "@/features/profile/plans";
+import { getUserProfile } from "@/services/users";
 
 /** Initial / page size for locations (map + list share this cache). */
 export const LOCATIONS_PAGE_SIZE = 40;
@@ -262,10 +268,120 @@ function touchesAggregationFields(
   return false;
 }
 
+export class LocationLimitError extends Error {
+  readonly plan: SubscriptionPlan;
+  readonly limit: number;
+
+  constructor(plan: SubscriptionPlan, limit: number) {
+    super(locationLimitMessage(plan, limit));
+    this.name = "LocationLimitError";
+    this.plan = plan;
+    this.limit = limit;
+  }
+}
+
+function locationLimitMessage(plan: SubscriptionPlan, limit: number): string {
+  if (plan === "plus") {
+    return `You've reached the Plus limit of ${limit} saved places. Upgrade to Pro to save up to ${LOCATION_LIMITS.pro}.`;
+  }
+  if (plan === "pro") {
+    return `You've reached the Pro limit of ${limit} saved places.`;
+  }
+  return `You've reached the free limit of ${limit} saved places. Upgrade to Plus to save up to ${LOCATION_LIMITS.plus}.`;
+}
+
+function activeLocationCount(items: SavedLocation[]): number {
+  return items.filter((location) => location.deleted !== true).length;
+}
+
+/**
+ * Active locations in users/{uid}/locations.
+ * A complete list cache is the count (0 reads). Otherwise the subcollection
+ * is loaded into that cache, then counted.
+ * When `atLeast` is set and the loaded prefix already reaches it, paging stops
+ * and the return value is that prefix (enough to enforce a cap).
+ */
+export async function countUserLocations(
+  userId: string,
+  options?: { atLeast?: number }
+): Promise<number> {
+  const atLeast = options?.atLeast;
+  const key = locationsKey(userId);
+  const cached = locationsStore.get(key);
+  if (cached?.complete) return activeLocationCount(cached.items);
+  if (
+    cached &&
+    atLeast != null &&
+    activeLocationCount(cached.items) >= atLeast
+  ) {
+    return activeLocationCount(cached.items);
+  }
+
+  // A single upsert can seed the store before a list query. That is not the
+  // subcollection size (complete stays false and there is no page cursor).
+  const needsFullLoad = !cached || (!cached.complete && !cached.hasMore);
+  let state = needsFullLoad
+    ? await ensureLocations(userId, { hard: Boolean(cached) })
+    : cached;
+  if (!state) return 0;
+
+  if (atLeast != null && activeLocationCount(state.items) >= atLeast) {
+    return activeLocationCount(state.items);
+  }
+
+  if (!state.complete) {
+    await loadRemainingLocationPages(userId);
+    state = locationsStore.get(key) ?? state;
+  }
+
+  return activeLocationCount(state.items);
+}
+
+/** Throws LocationLimitError when the plan cap is already reached. */
+export async function assertCanAddLocation(userId: string): Promise<void> {
+  const profile = await getUserProfile(userId);
+  const { plan, limit } = locationLimitForSubscription(profile?.subscription);
+  const count = await countUserLocations(userId, { atLeast: limit });
+  if (count >= limit) throw new LocationLimitError(plan, limit);
+}
+
+/** Serializes creates so two parallel saves cannot both pass the same count. */
+const locationCreateQueue = new Map<string, Promise<unknown>>();
+
+function enqueueLocationCreate<T>(
+  userId: string,
+  task: () => Promise<T>
+): Promise<T> {
+  const previous = locationCreateQueue.get(userId) ?? Promise.resolve();
+  const run = previous.then(task, task);
+  const settled = run.then(
+    () => undefined,
+    () => undefined
+  );
+  locationCreateQueue.set(userId, settled);
+  void settled.finally(() => {
+    if (locationCreateQueue.get(userId) === settled) {
+      locationCreateQueue.delete(userId);
+    }
+  });
+  return run;
+}
+
 export async function createUserLocation(
   userId: string,
   input: UserLocationCreateInput
 ): Promise<string> {
+  return enqueueLocationCreate(userId, () =>
+    writeUserLocation(userId, input)
+  );
+}
+
+async function writeUserLocation(
+  userId: string,
+  input: UserLocationCreateInput
+): Promise<string> {
+  await assertCanAddLocation(userId);
+
   const ref = await addDoc(locationsCollection(userId), {
     ...omitUndefined(input as Record<string, unknown>),
     aggregated: false,

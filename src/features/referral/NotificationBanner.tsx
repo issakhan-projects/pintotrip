@@ -8,6 +8,7 @@ import {
   subscribeUnreadNotifications,
   type SavedNotification,
 } from "@/services/notifications";
+import { useI18n } from "@/i18n";
 
 interface NotificationBannerProps {
   userId: string;
@@ -21,6 +22,7 @@ export function NotificationBanner({
   userId,
   onOpenProfile,
 }: NotificationBannerProps) {
+  const { t } = useI18n();
   const [latest, setLatest] = useState<SavedNotification | null>(null);
 
   useEffect(() => {
@@ -71,7 +73,7 @@ export function NotificationBanner({
         </button>
         <button
           type="button"
-          aria-label="Dismiss notification"
+          aria-label={t("referral.dismissAria")}
           onClick={() => void dismiss()}
           className="shrink-0 rounded-lg p-1 text-text-muted hover:bg-surface hover:text-text"
         >

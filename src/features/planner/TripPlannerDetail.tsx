@@ -57,6 +57,7 @@ import { BeforeYouGoStep } from "./BeforeYouGoStep";
 import { PlacesStep } from "./PlacesStep";
 import { RoutesStep } from "./RoutesStep";
 import { EditTripSheet } from "./EditTripSheet";
+import { useI18n } from "@/i18n";
 
 interface TripPlannerDetailProps {
   user: User;
@@ -112,6 +113,7 @@ function destinationStaticMapUrl(
 }
 
 export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const offline = useOfflineBanner();
@@ -153,7 +155,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       await patchTrip({
         cityIntelligence: {
           status: "error",
-          errorMessage: "Destination coordinates are missing.",
+          errorMessage: t("planner.detail.coordsMissing"),
           lastUpdatedAt: Timestamp.now(),
         },
       });
@@ -191,7 +193,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         },
       });
     } catch (err) {
-      let message = "Failed to load city information.";
+      let message = t("planner.detail.cityInfoFailed");
       if (isInsufficientAICreditsError(err)) {
         message = formatInsufficientCreditsMessage(err);
       } else if (err instanceof Error && err.message) {
@@ -207,7 +209,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     } finally {
       setIntelBusy(false);
     }
-  }, [trip, intelBusy, patchTrip, profile]);
+  }, [trip, intelBusy, patchTrip, profile, t]);
 
   useEffect(() => {
     if (!trip) return;
@@ -356,7 +358,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         completed: false,
         category: "other" as const,
         order: maxOrder + 1,
-        ...(link ? { link, linkLabel: "Open link" } : {}),
+        ...(link ? { link, linkLabel: t("common.openLink") } : {}),
       },
     ];
     setTrip({
@@ -415,13 +417,15 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   if (error || !trip) {
     return (
       <main className="flex flex-1 flex-col items-center justify-center gap-3 bg-surface px-6 text-center">
-        <p className="text-sm text-error">{error ?? "Trip not found."}</p>
+        <p className="text-sm text-error">
+          {error ?? t("planner.detail.notFound")}
+        </p>
         <button
           type="button"
           className="text-sm font-medium text-primary underline"
           onClick={() => router.push("/map?tab=planner")}
         >
-          Back to Trips
+          {t("planner.detail.backToTrips")}
         </button>
       </main>
     );
@@ -450,7 +454,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         >
           <p className="inline-flex items-center justify-center gap-2 text-sm font-medium text-warning">
             <WifiOff className="h-4 w-4 shrink-0" aria-hidden />
-            You’re offline — showing the saved copy on this device.
+            {t("planner.detail.offline")}
           </p>
         </div>
       ) : null}
@@ -462,7 +466,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
             className="inline-flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-text"
           >
             <ArrowLeft className="h-4 w-4" />
-            Back to Trips
+            {t("planner.detail.backToTrips")}
           </button>
 
           <div className="flex items-center gap-2">
@@ -472,12 +476,12 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               className="!h-9 !rounded-lg !px-3 !text-[13px]"
               onClick={openEditTrip}
             >
-              Edit trip
+              {t("trip.edit")}
             </Button>
             <div className="relative" ref={menuRef}>
               <button
                 type="button"
-                aria-label="Trip options"
+                aria-label={t("trip.optionsAria")}
                 onClick={() => setMenuOpen((v) => !v)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface-elevated text-text-secondary shadow-sm hover:bg-surface hover:text-text"
               >
@@ -495,7 +499,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                     }}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    Delete trip
+                    {t("trip.delete")}
                   </button>
                 </div>
               ) : null}
@@ -525,7 +529,10 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 <p className="mt-1 text-sm text-white/90 sm:text-[15px]">
                   {formatTripHeroDates(trip.startDate, trip.endDate)}
                   <span className="mx-1.5 text-white/50">•</span>
-                  {days} day{days === 1 ? "" : "s"}
+                  {t(
+                    days === 1 ? "common.day_one" : "common.day_other",
+                    { count: days }
+                  )}
                 </p>
                 <p className="mt-1.5 flex items-center gap-1.5 text-sm text-white/85">
                   <MapPin className="h-3.5 w-3.5 shrink-0" />
@@ -554,7 +561,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                   ) : (
                     <ImageIcon className="h-3.5 w-3.5" />
                   )}
-                  {coverUploading ? "Uploading…" : "Change cover"}
+                  {coverUploading
+                    ? t("planner.detail.uploading")
+                    : t("planner.detail.changeCover")}
                 </button>
                 {coverMenuOpen ? (
                   <div className="absolute bottom-full right-0 mb-2 min-w-[11.5rem] overflow-hidden rounded-xl border border-white/15 bg-black/80 py-1 shadow-lg backdrop-blur-md">
@@ -564,7 +573,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                       onClick={() => coverFileRef.current?.click()}
                     >
                       <Upload className="h-3.5 w-3.5" />
-                      Upload photo
+                      {t("planner.detail.uploadPhoto")}
                     </button>
                     {coverCandidates.length > 1 ? (
                       <button
@@ -578,7 +587,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                         }}
                       >
                         <ImageIcon className="h-3.5 w-3.5" />
-                        Next photo
+                        {t("planner.detail.nextPhoto")}
                       </button>
                     ) : null}
                   </div>
@@ -807,7 +816,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       <DeleteConfirmModal
         open={confirmDeleteOpen}
         entity="trip"
-        description="This removes the trip and its itinerary. This can’t be undone."
+        description={t("planner.detail.deleteDesc")}
         loading={deleting}
         onCancel={() => {
           if (!deleting) setConfirmDeleteOpen(false);

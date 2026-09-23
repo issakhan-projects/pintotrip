@@ -1,0 +1,16 @@
+export const referral = {
+  title: "Invite friends",
+  headline: "Invite friends · get {n} credits when they join",
+  body: "Share your link. When a friend signs up and finishes setup, you earn AI credits. Each friend can only use one invite.",
+  preparing: "Preparing your invite…",
+  code: "Invite code",
+  link: "Invite link",
+  share: "Share invite",
+  shareTitle: "Join me on PinToTrip",
+  shareText: "Join PinToTrip with my invite — I get {n} AI credits when you sign up.",
+  createError: "Could not create invite. Try again.",
+  copyError: "Could not copy. Select the text and copy manually.",
+  dismissAria: "Dismiss notification",
+  copyCodeAria: "Copy invite code",
+  copyLinkAria: "Copy invite link",
+} as const;

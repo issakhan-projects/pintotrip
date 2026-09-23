@@ -1,0 +1,23 @@
+export const map = {
+  legendAria: "City area legend",
+  legend: {
+    visited: "Visited",
+    planned: "Planned",
+  },
+  noPhoto: "No photo yet",
+  status: "Status",
+  tags: "Tags",
+  confidence: "Confidence",
+  saveNote: "Save note",
+  shareAria: "Share",
+  moreAria: "More options",
+  addNote: "Add my note",
+  editNote: "Edit my note",
+  viewOnMap: "View on map",
+  myNote: "My note",
+  notePlaceholder: "Go at sunset…",
+  whyWeThinkThis: "Why we think this:",
+  markVisited: "Mark as visited",
+  visited: "Visited",
+  deleteDesc: "{title} will be removed from your map and places. This can't be undone.",
+} as const;

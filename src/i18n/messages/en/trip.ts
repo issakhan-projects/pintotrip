@@ -1,0 +1,31 @@
+export const trip = {
+  create: "Create trip",
+  edit: "Edit trip",
+  delete: "Delete trip",
+  addRoute: "Add route",
+  editRoute: "Edit route",
+  addAccommodation: "Add accommodation",
+  destination: "Destination",
+  destinations: "Destinations",
+  from: "From",
+  dates: "Dates",
+  currency: "Currency",
+  name: "Trip name",
+  typeOfLeisure: "Type of leisure",
+  spendMoney: "Spend money",
+  optionsAria: "Trip options",
+  stepsAria: "Trip steps",
+  spend: {
+    low: "Budget-friendly",
+    medium: "Balanced",
+    high: "Comfort first",
+  },
+  tickets: {
+    buy: "Buy tickets",
+    info: "Tickets / info",
+  },
+  stop: {
+    destination: "Destination",
+    transit: "Transit",
+  },
+} as const;

@@ -25,7 +25,7 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
     description: "Start discovering places with a light AI allowance.",
     features: [
       "30 AI credits / month",
-      "Save places to personal map",
+      "Save up to 10 places",
       "View saved places",
       "Map and list views",
       "Basic travel information",
@@ -35,13 +35,13 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
   plus: {
     id: "plus",
     name: "Plus",
-    priceMonthly: 4.99,
-    priceYearly: 49.9,
+    priceMonthly: 6.99,
+    priceYearly: 69.9,
     aiCreditsMonthly: 200,
     description: "More AI credits for frequent travelers.",
     features: [
       "200 AI credits / month",
-      "Save places to personal map",
+      "Save up to 100 places",
       "AI-powered place identification",
       "City intelligence",
       "Map and list views",
@@ -53,8 +53,8 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
   pro: {
     id: "pro",
     name: "Pro",
-    priceMonthly: 7.99,
-    priceYearly: 79.9,
+    priceMonthly: 9.99,
+    priceYearly: 99.9,
     aiCreditsMonthly: 500,
     description: "Highest AI allowance for heavy trip planning.",
     features: [
@@ -65,7 +65,7 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
       "Trip planner",
       "Search places by name",
       "More AI usage",
-      "Save unlimited places",
+      "Save up to 300 places",
       "Travel statistics",
       "Priority access to new AI features",
     ],
@@ -74,6 +74,33 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
 };
 
 export const PLAN_ORDER: SubscriptionPlan[] = ["free", "plus", "pro"];
+
+/** Active saved locations allowed on users/{uid}/locations. */
+export const LOCATION_LIMITS: Record<SubscriptionPlan, number> = {
+  free: 10,
+  plus: 100,
+  pro: 300,
+};
+
+/**
+ * Location cap for the subscription that actually grants access.
+ * Canceled, paused, or inactive paid plans fall back to the free cap.
+ */
+export function locationLimitForSubscription(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): { plan: SubscriptionPlan; limit: number } {
+  const plan = subscription?.plan;
+  if (
+    isSubscriptionEntitled(subscription) &&
+    (plan === "plus" || plan === "pro")
+  ) {
+    return { plan, limit: LOCATION_LIMITS[plan] };
+  }
+  return { plan: "free", limit: LOCATION_LIMITS.free };
+}
 
 export type ComparisonValue = boolean | number | string;
 
@@ -92,10 +119,10 @@ export const PLAN_COMPARISON_ROWS: PlanComparisonRow[] = [
     pro: 500,
   },
   {
-    feature: "Save Places",
-    free: true,
-    plus: true,
-    pro: true,
+    feature: "Saved places",
+    free: 10,
+    plus: 100,
+    pro: 300,
   },
   {
     feature: "Personal Map",

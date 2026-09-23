@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { CalendarRange, List, Lock, Map, Plus, UserRound } from "lucide-react";
+import { useI18n } from "@/i18n";
 import { cx } from "@/lib/utils";
 
 export type AppTab = "map" | "places" | "planner" | "profile";
@@ -29,21 +30,23 @@ export function BottomNav({
   onAdd,
   plannerLocked = false,
 }: BottomNavProps) {
+  const { t } = useI18n();
+
   return (
     <nav
-      aria-label="Main"
+      aria-label={t("app.nav.mainAria")}
       className="pointer-events-none fixed inset-x-0 bottom-0 z-30 sm:absolute sm:flex sm:justify-center sm:px-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))]"
     >
       <div className="pointer-events-auto flex w-full items-stretch border-t border-border bg-white pb-[env(safe-area-inset-bottom)] sm:w-auto sm:items-center sm:gap-3 sm:border-0 sm:bg-transparent sm:pb-0">
         <div className="flex h-13 min-w-0 flex-1 items-center sm:flex-none sm:rounded-full sm:bg-white sm:px-1.5 sm:shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
           <NavSlot
-            label="Map"
+            label={t("app.nav.map")}
             active={active === "map"}
             onClick={onMap}
             icon={<Map className="h-4 w-4" strokeWidth={2} />}
           />
           <NavSlot
-            label="Places"
+            label={t("app.nav.places")}
             active={active === "places"}
             onClick={onPlaces}
             icon={<List className="h-4 w-4" strokeWidth={2} />}
@@ -52,7 +55,7 @@ export function BottomNav({
 
 <button
           type="button"
-          aria-label="Add place"
+          aria-label={t("app.nav.addPlaceAria")}
           onClick={onAdd}
           className="flex h-16 w-16 shrink-0 items-center justify-center bg-primary text-white transition-transform active:scale-95 sm:rounded-full sm:shadow-[0_8px_30px_rgba(0,0,0,0.18)]"
         >
@@ -60,14 +63,14 @@ export function BottomNav({
         </button>
 
           <NavSlot
-            label="Planner"
+            label={t("app.nav.planner")}
             active={active === "planner"}
             onClick={onPlanner}
             locked={plannerLocked}
             icon={<CalendarRange className="h-4 w-4" strokeWidth={2} />}
           />
           <NavSlot
-            label="Profile"
+            label={t("app.nav.profile")}
             active={active === "profile"}
             onClick={onProfile}
             icon={<UserRound className="h-4 w-4" strokeWidth={2} />}

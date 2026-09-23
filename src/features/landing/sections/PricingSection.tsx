@@ -35,7 +35,7 @@ const PLAN_META: Record<
     blurb: "Perfect for exploring and trying out the app.",
     features: [
       { label: "30 AI credits / month", included: true },
-      { label: "Save places to your map", included: true },
+      { label: "Save up to 10 places", included: true },
       { label: "Basic travel information", included: true },
       { label: "Access on all devices", included: true },
       { label: "Advanced city insights", included: false },
@@ -48,7 +48,7 @@ const PLAN_META: Record<
     blurb: "More places, more insights, more travel possibilities.",
     features: [
       { label: "200 AI credits / month", included: true },
-      { label: "Save unlimited places", included: true },
+      { label: "Save up to 100 places", included: true },
       { label: "Detailed city insights", included: true },
       { label: "Visa, budget, best time and more", included: true },
       { label: "Access on all devices", included: true },
@@ -61,7 +61,7 @@ const PLAN_META: Record<
     blurb: "Everything you need for bigger journeys.",
     features: [
       { label: "500 AI credits / month", included: true },
-      { label: "Save unlimited places", included: true },
+      { label: "Save up to 300 places", included: true },
       { label: "Detailed city insights", included: true },
       { label: "Visa, budget, best time and more", included: true },
       { label: "Access on all devices", included: true },

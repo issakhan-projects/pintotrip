@@ -2,24 +2,19 @@
 
 import Image from "next/image";
 import { Check, Loader2, Sparkles } from "lucide-react";
-import { DEMO_PLACE, LANDING_IMAGES } from "../constants";
+import { useI18n } from "@/i18n";
+import { LANDING_IMAGES } from "../constants";
 
-const STEPS = [
-  {
-    title: "Drop a photo",
-    body: "Any travel shot from your camera roll.",
-  },
-  {
-    title: "We find it",
-    body: "PinToTrip identifies the place.",
-  },
-  {
-    title: "It’s on your map",
-    body: "Saved and ready for your next trip.",
-  },
-] as const;
+const STEP_KEYS = ["drop", "find", "map"] as const;
 
 export function MagicSection() {
+  const { t } = useI18n();
+  const steps = STEP_KEYS.map((key) => ({
+    key,
+    title: t(`landing.magic.steps.${key}.title`),
+    body: t(`landing.magic.steps.${key}.body`),
+  }));
+
   return (
     <section
       id="how-it-works"
@@ -27,9 +22,9 @@ export function MagicSection() {
     >
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <h2 className="max-w-xl text-2xl font-semibold tracking-tight text-text sm:text-3xl">
-          You don&apos;t need to know where it is.
+          {t("landing.magic.title")}
           <span className="mt-1 block text-text-secondary">
-            Just show us the photo.
+            {t("landing.magic.subtitle")}
           </span>
         </h2>
 
@@ -45,11 +40,11 @@ export function MagicSection() {
                 className="object-cover"
               />
               <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-text shadow-sm">
-                1 · {STEPS[0].title}
+                1 · {steps[0].title}
               </span>
             </div>
             <div className="px-4 py-3">
-              <p className="text-sm text-text-secondary">{STEPS[0].body}</p>
+              <p className="text-sm text-text-secondary">{steps[0].body}</p>
             </div>
           </article>
 
@@ -57,18 +52,18 @@ export function MagicSection() {
           <article className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
             <div className="flex aspect-[4/3] flex-col items-center justify-center gap-3 bg-primary-tint px-4">
               <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-text shadow-sm">
-                2 · {STEPS[1].title}
+                2 · {steps[1].title}
               </span>
               <div className="flex items-center gap-2 rounded-xl border border-primary/15 bg-white px-4 py-3 shadow-sm">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
                 <span className="text-sm font-medium text-text">
-                  Finding this place…
+                  {t("landing.magic.finding")}
                 </span>
                 <Sparkles className="h-4 w-4 text-primary-light" />
               </div>
             </div>
             <div className="px-4 py-3">
-              <p className="text-sm text-text-secondary">{STEPS[1].body}</p>
+              <p className="text-sm text-text-secondary">{steps[1].body}</p>
             </div>
           </article>
 
@@ -83,27 +78,27 @@ export function MagicSection() {
                 className="object-cover"
               />
               <span className="relative z-10 w-fit rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-text shadow-sm">
-                3 · {STEPS[2].title}
+                3 · {steps[2].title}
               </span>
               <div className="relative z-10 rounded-xl border border-border bg-white/95 p-3 shadow-sm backdrop-blur-sm">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-xs font-medium text-primary">
-                      {DEMO_PLACE.city}, {DEMO_PLACE.country}
+                      {t("landing.demo.city")}, {t("landing.demo.country")}
                     </p>
                     <p className="mt-1 text-sm font-semibold text-text">
-                      {DEMO_PLACE.name}
+                      {t("landing.demo.placeName")}
                     </p>
                   </div>
                   <span className="inline-flex items-center gap-1 rounded-full bg-success-background px-2 py-0.5 text-[10px] font-semibold text-success">
                     <Check className="h-3 w-3" strokeWidth={3} />
-                    Saved!
+                    {t("landing.magic.saved")}
                   </span>
                 </div>
               </div>
             </div>
             <div className="border-t border-divider px-4 py-3">
-              <p className="text-sm text-text-secondary">{STEPS[2].body}</p>
+              <p className="text-sm text-text-secondary">{steps[2].body}</p>
             </div>
           </article>
         </div>

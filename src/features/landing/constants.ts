@@ -35,13 +35,12 @@ export const LANDING_IMAGES = {
     "https://images.unsplash.com/photo-1533105079780-92b9be482077?auto=format&fit=crop&w=200&q=80",
   kamari:
     "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=200&q=80",
-    plaka: "https://images.unsplash.com/photo-1536198899635-446f211a8485?q=80&w=1740&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
+  plaka:
+    "https://images.unsplash.com/photo-1536198899635-446f211a8485?q=80&w=1740&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
 } as const;
 
+/** Demo place coords (display copy via `landing.demo.*`). */
 export const DEMO_PLACE = {
-  name: "Ad Deir — The Monastery",
-  city: "Petra",
-  country: "Jordan",
   lat: 30.3381,
   lon: 35.4419,
 } as const;
@@ -76,15 +75,8 @@ export const WORLD_MAP_PINS: LandingMapPin[] = [
   },
 ];
 
+/** Tokyo preview media (display copy via `landing.explore.tokyo.*`). */
 export const TOKYO_PREVIEW = {
-  city: "Tokyo",
-  country: "Japan",
-  bestTime: "March — May, October — November",
-  budget: "$80 — $250",
-  currency: "JPY (¥)",
-  visa: "Check requirements",
-  attractions: ["Shibuya", "Senso-ji", "Tokyo Skytree"],
-  tips: ["Transport", "Apps", "Safety", "and more"],
   image: LANDING_IMAGES.tokyoFuji,
   gallery: [
     LANDING_IMAGES.tokyoStreet,
@@ -94,8 +86,8 @@ export const TOKYO_PREVIEW = {
   ],
 } as const;
 
-export const HERO_FEATURES = [
-  "Find places from photos",
-  "Save to your personal map",
-  "Get travel info before you go",
+export const HERO_FEATURE_KEYS = [
+  "fromPhotos",
+  "saveMap",
+  "travelInfo",
 ] as const;

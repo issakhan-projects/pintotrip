@@ -19,7 +19,10 @@ import { Sheet } from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { findPlace } from "@/services/functions";
 import { uploadLocationDraftImage } from "@/services/storage";
-import { createUserLocation } from "@/services/locations";
+import {
+  assertCanAddLocation,
+  createUserLocation,
+} from "@/services/locations";
 import { resolveUserLanguage } from "@/services/users";
 import {
   formatInsufficientCreditsMessage,
@@ -206,10 +209,11 @@ export function AddPlaceSheet({
       | { type: "image"; imageUrl: string }
       | { type: "link"; link: string }
   ) {
-    setStep("analyzing");
     setError(null);
     setMessageIndex(0);
     try {
+      await assertCanAddLocation(userId);
+      setStep("analyzing");
       const language = await resolveUserLanguage(userId);
       const data = await findPlace({ ...request, language });
       setResult(data);

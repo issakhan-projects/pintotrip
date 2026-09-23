@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { TripPlannerDoc, TripRoute } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 import {
   buildTripRouteTimeBreakdown,
   formatBreakdownDuration,
@@ -16,6 +17,7 @@ export function TripRouteTimeBreakdownSection({
   trip: TripPlannerDoc;
   routes: TripRoute[];
 }) {
+  const { t } = useI18n();
   const breakdown = useMemo(
     () => buildTripRouteTimeBreakdown(routes, trip),
     [routes, trip]
@@ -32,7 +34,7 @@ export function TripRouteTimeBreakdownSection({
   return (
     <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm sm:p-5">
       <div>
-        <p className="text-sm text-text-secondary">Total trip time</p>
+        <p className="text-sm text-text-secondary">{t("planner.timeBreakdown.total")}</p>
         <p className="mt-1 text-2xl font-semibold tracking-tight text-text sm:text-3xl">
           {formatBreakdownDuration(totalMinutes)}
         </p>
@@ -40,7 +42,7 @@ export function TripRouteTimeBreakdownSection({
 
       <div className="mt-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="text-[11px] font-semibold tracking-wide text-text-muted uppercase">
-          Time breakdown
+          {t("planner.timeBreakdown.title")}
         </p>
         <ul className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           {segments.map((segment) => (
