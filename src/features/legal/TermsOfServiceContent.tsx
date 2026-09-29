@@ -289,12 +289,12 @@ export function TermsOfServiceContent({
         </SubSection>
 
         <SubSection title="Plus" titleClass={sectionTitleClass}>
-          <p className={bodyClass}>$3.99/month</p>
+          <p className={bodyClass}>$9.99/month</p>
           <p className={bodyClass}>200 AI credits per month.</p>
         </SubSection>
 
         <SubSection title="Pro" titleClass={sectionTitleClass}>
-          <p className={bodyClass}>$6.99/month</p>
+          <p className={bodyClass}>$14.99/month</p>
           <p className={bodyClass}>500 AI credits per month.</p>
         </SubSection>
 

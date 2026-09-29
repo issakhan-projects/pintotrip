@@ -63,7 +63,7 @@ PART A — PLACES:
      "country": { "id": "iso-alpha2-lowercase", "name": "" },
      "images": [],
      "price": { "amount": 0, "currency": "USD", "label": "Free" },
-     "links": [{ "url": "https://...", "label": "" }],
+     "links": [{ "url": "https://...", "label": "Tickets" }],
      "confidence": 0.7,
      "source": { "type": "manual" },
      "ai": { "why": "", "model": "fillPlaces" }
@@ -77,16 +77,28 @@ PART A — PLACES:
    - 240–480 → 2–3
    - 480+ → 2–4
    Count saved locationIds toward the day's load — do not overfill.
+   Arrival half-days (start after landing) and departure half-days (end before
+   airport) MUST still get places when durationMinutes ≥ 90 — do not leave
+   those slots empty.
 9. leisureType is a preference hint, not a hard filter.
 10. Respect spendMoney (budget): low = free/cheap options; medium = typical tourist prices; high = premium experiences OK. Prefer matching place price when known.
-11. Prefer real named places with plausible lat/lon. Omit place price/links when unknown.
+11. Prefer real named places. Include approximate lat/lon (server verifies against Google Maps).
+12. ALWAYS include price + links on every NEW place when known (do not leave them empty out of habit):
+    - price: typical adult ticket / entry / service cost. Use amount + ISO currency
+      (prefer trip currency) and label like "≈ 45 AED", "from 25 USD", or "Free".
+      Free parks/viewpoints → amount 0, label "Free". Paid museums/attractions/tours →
+      realistic entry/ticket estimate. Food/cafe → typical meal/person when useful.
+    - links: https URLs only — official site, ticket/booking page, or timetable.
+      Label each link ("Tickets", "Book", "Official site", "Reserve"). Prefer the
+      official booking/tickets URL when the place sells entry. Omit a link only when
+      no reliable https URL is known; still include price when the cost is known.
 
 PART B — NON-FLIGHT ROUTES (price + link):
-12. For each route in the input with transport NOT "flight", return fare + official booking/timetable URL when known.
-13. NEVER add priceAmount / priceCurrency / priceLabel / link for transport "flight".
-14. Use approximate one-way adult fare. Prefer trip currency when converting. priceLabel like "≈ 45 USD" or "from 12 EUR".
-15. link must be https official operator / timetable / booking page. Omit if not reliable.
-16. Identify each route by day + routeIndex (0-based index in that day's routes array).
+13. For each route in the input with transport NOT "flight", return fare + official booking/timetable URL when known.
+14. NEVER add priceAmount / priceCurrency / priceLabel / link for transport "flight".
+15. Use approximate one-way adult fare. Prefer trip currency when converting. priceLabel like "≈ 45 USD" or "from 12 EUR".
+16. link must be https official operator / timetable / booking page. Omit if not reliable.
+17. Identify each route by day + routeIndex (0-based index in that day's routes array).
 
 OUTPUT SCHEMA:
 {
@@ -99,7 +111,23 @@ OUTPUT SCHEMA:
           "cityId": "",
           "places": [
             { "locationId": "saved-id" },
-            { "id": "new-slug", "title": "", "description": "", "cityId": "", "status": "planned", "category": "attraction", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "ai": { "why": "", "model": "fillPlaces" }, "source": { "type": "manual" }, "confidence": 0.7 }
+            {
+              "id": "new-slug",
+              "title": "",
+              "description": "",
+              "cityId": "",
+              "status": "planned",
+              "category": "attraction",
+              "location": { "lat": 0, "lon": 0 },
+              "city": { "id": "", "name": "" },
+              "country": { "id": "", "name": "" },
+              "images": [],
+              "price": { "amount": 45, "currency": "AED", "label": "≈ 45 AED" },
+              "links": [{ "url": "https://example.com/tickets", "label": "Tickets" }],
+              "ai": { "why": "", "model": "fillPlaces" },
+              "source": { "type": "manual" },
+              "confidence": 0.7
+            }
           ]
         }
       ],
@@ -117,7 +145,7 @@ OUTPUT SCHEMA:
   ]
 }
 
-Return strict JSON only. Include routes[] only for non-flight legs that need price/link.`;
+Return strict JSON only. Include routes[] only for non-flight legs that need price/link. Every new place should include price and links when available.`;
 
 const SPEND_MONEY_HINT: Record<"low" | "medium" | "high", string> = {
   low: "budget — prefer free/cheap places and lower-cost transport options",
@@ -152,10 +180,11 @@ export function buildFillPlacesUserPrompt(input: {
     "",
     "ITINERARY TO FILL:",
     "- places[] = free-time city slots (saved locationId first, then new places)",
+    "- For every NEW place: include price (ticket/entry/service) and links (Tickets/Book/Official site) when known",
     "- routes[] = include non-flight legs with routeIndex; fill priceAmount/priceCurrency/priceLabel/link (never for flight)",
     input.itineraryJson,
     "",
-    "Return itinerary with places filled and non-flight route fare/link enrichment.",
+    "Return itinerary with places filled (price + links on new places) and non-flight route fare/link enrichment.",
   ].join("\n");
 }
 
@@ -197,6 +226,21 @@ function parseCategory(value: unknown): PlaceCategory | undefined {
   const s = asString(value)?.toLowerCase();
   if (!s || !PLACE_CATEGORY_SET.has(s)) return undefined;
   return s as PlaceCategory;
+}
+
+function defaultLinkLabel(
+  url: string,
+  category?: PlaceCategory
+): string {
+  const lower = url.toLowerCase();
+  if (
+    /ticket|booking|book\.|reserve|checkout|buy/.test(lower) ||
+    category === "transport"
+  ) {
+    return category === "transport" ? "Buy tickets" : "Tickets";
+  }
+  if (/timetable|schedule/.test(lower)) return "Timetable";
+  return "Official site";
 }
 
 export function slimDestinationsForPrompt(
@@ -348,10 +392,19 @@ function parseLocationPlace(
   const note = asString(row.note) ?? undefined;
   const category = parseCategory(row.category);
 
+  // Accept price object, flat priceAmount/*, or prices[] (first usable entry).
+  const priceFromArray = (() => {
+    if (!Array.isArray(row.prices)) return null;
+    for (const item of row.prices) {
+      if (!item || typeof item !== "object") continue;
+      return item as Record<string, unknown>;
+    }
+    return null;
+  })();
   const priceRaw =
     row.price && typeof row.price === "object"
       ? (row.price as Record<string, unknown>)
-      : null;
+      : priceFromArray;
   const priceAmount = priceRaw
     ? asNumber(priceRaw.amount)
     : asNumber(row.priceAmount);
@@ -369,11 +422,16 @@ function parseLocationPlace(
       if (!url) continue;
       const label =
         asString((item as Record<string, unknown>).label) ?? undefined;
-      links.push({ url, ...(label ? { label } : {}) });
+      links.push({
+        url,
+        label: label || defaultLinkLabel(url, category),
+      });
     }
   } else {
     const single = asHttpUrl(row.link);
-    if (single) links.push({ url: single });
+    if (single) {
+      links.push({ url: single, label: defaultLinkLabel(single, category) });
+    }
   }
 
   const aiRaw =

@@ -16,6 +16,7 @@ import { openCheckout, previewPrices } from "@/lib/paddle/client";
 import { hasPaddlePublicEnvConfigured } from "@/lib/paddle/env";
 import { devLog } from "@/lib/devLog";
 import { cx } from "@/lib/utils";
+import { formatYearlyCompareAt } from "./paddleMoney";
 import {
   TIERS,
   getTierPriceId,
@@ -36,7 +37,14 @@ export interface PricingViewProps {
   countryCode?: string;
 }
 
-type PriceMap = Record<string, string>;
+type PriceEntry = {
+  formatted: string;
+  /** Lowest-unit total string from Paddle (for compare-at math). */
+  total: string;
+  currencyCode: string;
+};
+
+type PriceMap = Record<string, PriceEntry>;
 
 export function PricingView({ countryCode }: PricingViewProps) {
   const router = useRouter();
@@ -104,10 +112,14 @@ export function PricingView({ countryCode }: PricingViewProps) {
         const result = await previewPrices(request);
         if (cancelled) return;
 
+        const currencyCode = result.data.currencyCode;
         const next: PriceMap = {};
         for (const item of result.data.details.lineItems) {
-          // Display Paddle's formatted string only — no frontend price math / re-format.
-          next[item.price.id] = item.formattedTotals.total;
+          next[item.price.id] = {
+            formatted: item.formattedTotals.total,
+            total: item.totals.total,
+            currencyCode,
+          };
         }
         setPricesById(next);
       } catch (error) {
@@ -233,11 +245,20 @@ export function PricingView({ countryCode }: PricingViewProps) {
             {TIERS.map((tier) => {
               const paid = isPaidTier(tier);
               const priceId = peekTierPriceId(tier, billingInterval);
+              const priceEntry = paid && priceId ? pricesById[priceId] : null;
               const priceLabel = paid
-                ? priceId
-                  ? (pricesById[priceId] ?? null)
-                  : null
+                ? (priceEntry?.formatted ?? null)
                 : "Free";
+              const monthlyPriceId = peekTierPriceId(tier, "month");
+              const monthlyEntry =
+                paid && monthlyPriceId ? pricesById[monthlyPriceId] : null;
+              const compareAtLabel =
+                billingInterval === "year" && monthlyEntry
+                  ? formatYearlyCompareAt(
+                      monthlyEntry.total,
+                      monthlyEntry.currencyCode
+                    )
+                  : null;
               const isCurrent = currentPlan === tier.name;
               const isActive =
                 isCurrent &&
@@ -254,6 +275,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
                   tier={tier}
                   interval={billingInterval}
                   priceLabel={priceLabel}
+                  compareAtLabel={compareAtLabel}
                   pricesLoading={paid && pricesLoading}
                   isCurrent={isCurrent}
                   isActive={isActive}
@@ -332,7 +354,7 @@ function BillingIntervalToggle({
             )}
           >
             <Gift className="h-3 w-3" aria-hidden />
-            2 mo free
+            2 months free
           </span>
         </button>
       </div>
@@ -359,6 +381,7 @@ function TierCard({
   tier,
   interval,
   priceLabel,
+  compareAtLabel,
   pricesLoading,
   isCurrent,
   isActive,
@@ -371,6 +394,7 @@ function TierCard({
   tier: Tier;
   interval: BillingInterval;
   priceLabel: string | null;
+  compareAtLabel: string | null;
   pricesLoading: boolean;
   isCurrent: boolean;
   isActive: boolean;
@@ -383,6 +407,10 @@ function TierCard({
   const recommended = Boolean(tier.recommended) && !isCurrent;
   const paid = isPaidTier(tier);
   const periodLabel = interval === "year" ? "/ year" : "/ month";
+  const showCompareAt =
+    interval === "year" &&
+    Boolean(compareAtLabel) &&
+    compareAtLabel !== priceLabel;
 
   return (
     <article
@@ -436,13 +464,20 @@ function TierCard({
             Loading price…
           </span>
         ) : priceLabel ? (
-          <p className="text-3xl font-semibold tracking-tight text-text">
-            {priceLabel}
-            <span className="text-base font-normal text-text-secondary">
-              {" "}
-              {periodLabel}
-            </span>
-          </p>
+          <div>
+            <p className="text-3xl font-semibold tracking-tight text-text">
+              {priceLabel}
+              <span className="text-base font-normal text-text-secondary">
+                {" "}
+                {periodLabel}
+              </span>
+            </p>
+            {showCompareAt ? (
+              <p className="mt-1 text-sm text-text-muted line-through">
+                {compareAtLabel}
+              </p>
+            ) : null}
+          </div>
         ) : (
           <p className="text-sm text-text-secondary">Price unavailable</p>
         )}
@@ -530,8 +565,16 @@ function HowCreditsWork() {
       <ul className="mt-6 space-y-3 rounded-2xl border border-border bg-surface px-4 py-4">
         <CreditRow label="Find a Place" credits={AI_CREDIT_COSTS.findPlace} />
         <CreditRow
+          label="Place name search (5 searches)"
+          credits={AI_CREDIT_COSTS.searchPlaces}
+        />
+        <CreditRow
           label="City Intelligence"
           credits={AI_CREDIT_COSTS.getCityIntelligence}
+        />
+        <CreditRow
+          label="Around Me"
+          credits={AI_CREDIT_COSTS.findAroundMe}
         />
         <CreditRow
           label="Plan trip (ordinary)"

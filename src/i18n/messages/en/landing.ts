@@ -155,7 +155,7 @@ export const landing = {
     eyebrow: "Pricing",
     title: "Start saving the places you love.",
     sub: "Turn travel inspiration into a personal map. Choose the plan that fits your journey.",
-    save20: "Save 20%",
+    twoMonthsFree: "2 months free",
     planMeta: {
       free: {
         tagline: "Get started",

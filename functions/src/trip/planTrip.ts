@@ -10,6 +10,7 @@ import { logger } from "firebase-functions";
 import { requireAuth, assertNonEmptyString } from "../shared/auth";
 import {
   DEFAULT_FUNCTIONS_REGION,
+  googlePrivateApiKey,
   openaiApiKey,
   openWeatherMapApiKey,
 } from "../shared/config";
@@ -43,6 +44,7 @@ import {
   extractJsonObject,
   mergeAiPlacesIntoItinerary,
 } from "./ai/fillPlacesAi";
+import { enrichItineraryPlaceCoordinates } from "./ai/enrichPlaceCoordinates";
 import type {
   PlanTripAiCallableRequest,
   PlanTripAiCallableResult,
@@ -120,12 +122,13 @@ export type PlanTripResponse =
  * 5. AI fill missing routes
  * 6. Deterministic freeTime + saved locationId refs
  * 7. AI fill places + non-flight fares (soft-fail → return routes)
- * 8. Deduct credits on success; return itinerary
+ * 8. Resolve place coords: placesLocation cache → Google Places → save cache
+ * 9. Deduct credits on success; return itinerary
  */
 export const planTrip = onCall(
   {
     region: DEFAULT_FUNCTIONS_REGION,
-    secrets: [openaiApiKey, openWeatherMapApiKey],
+    secrets: [openaiApiKey, openWeatherMapApiKey, googlePrivateApiKey],
     invoker: "public",
     cors: true,
     timeoutSeconds: 180,
@@ -259,6 +262,24 @@ export const planTrip = onCall(
           aiRequest.destinations
         );
         stages.push("places");
+
+        // Cache → Google Places → save (AI lat/lon are approximate).
+        try {
+          itinerary = await enrichItineraryPlaceCoordinates(
+            itinerary,
+            aiRequest.destinations
+          );
+          stages.push("placeCoords");
+        } catch (enrichErr) {
+          logger.warn("planTrip place coordinate enrichment skipped", {
+            uid,
+            tripId: input.tripId,
+            error:
+              enrichErr instanceof Error
+                ? enrichErr.message
+                : String(enrichErr),
+          });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn("planTrip place fill skipped", {

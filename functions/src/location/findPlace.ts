@@ -93,9 +93,11 @@ export type FindPlaceResponse =
  * 3. Validate AI credits (findPlace = 10) BEFORE OpenAI
  * 4. Accept image URL or link
  * 5. Initial vision/text identification (no web search)
- * 6. If uncertain → web-search verification
- * 7. On success: deduct credits only when billable + record aiUsage
- * 8. On AI failure: do not deduct credits
+ * 6. If photo has no travel place (people/things/etc.) → unidentified immediately
+ *    (still billable — initial AI call ran)
+ * 7. If uncertain place → web-search verification
+ * 8. On success: deduct credits only when billable + record aiUsage
+ * 9. On AI failure: do not deduct credits
  */
 export const findPlace = onCall(
   {

@@ -187,3 +187,227 @@ body {
     animation: none;
   }
 }
+
+/* =============================================================================
+   Journal / Travel Blog — editorial article body
+   Styles semantic HTML from Firestore `content.en` (may also carry Tailwind classes).
+   ============================================================================= */
+
+.journal-prose {
+  color: var(--color-text);
+  font-size: 1.0625rem;
+  line-height: 1.8;
+}
+
+.journal-prose > *:first-child {
+  margin-top: 0;
+}
+
+.journal-prose > *:last-child {
+  margin-bottom: 0;
+}
+
+.journal-prose h1,
+.journal-prose h2,
+.journal-prose h3,
+.journal-prose h4 {
+  font-family: var(--font-manrope), var(--font-montserrat), sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--color-text);
+  line-height: 1.2;
+  scroll-margin-top: 5.5rem;
+  margin-top: 2.75em;
+  margin-bottom: 0.75em;
+}
+
+.journal-prose h1 {
+  font-size: 1.75rem;
+}
+
+.journal-prose h2 {
+  font-size: 1.65rem;
+}
+
+.journal-prose h3 {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.journal-prose p {
+  margin-top: 1.2em;
+  margin-bottom: 1.2em;
+  color: #374151;
+}
+
+.journal-prose a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color 0.15s ease;
+}
+
+.journal-prose a:hover {
+  color: var(--color-primary-hover);
+}
+
+.journal-prose ul,
+.journal-prose ol {
+  margin-top: 1.2em;
+  margin-bottom: 1.2em;
+  padding-left: 1.35em;
+  color: #374151;
+}
+
+.journal-prose li {
+  margin-top: 0.45em;
+  margin-bottom: 0.45em;
+}
+
+.journal-prose ul {
+  list-style-type: disc;
+}
+
+.journal-prose ol {
+  list-style-type: decimal;
+}
+
+.journal-prose blockquote {
+  margin: 1.75em 0;
+  padding: 1rem 1.15rem;
+  border-radius: 1rem;
+  border-left: none;
+  background: #eff6ff;
+  color: #1e3a5f;
+  font-style: normal;
+}
+
+.journal-prose img,
+.journal-prose .journal-img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 1.85em 0;
+  border-radius: 1.25rem;
+  object-fit: cover;
+}
+
+.journal-prose figure {
+  margin: 1.85em 0;
+}
+
+.journal-prose figure img {
+  margin: 0;
+}
+
+.journal-prose figcaption {
+  margin-top: 0.65em;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.journal-prose hr {
+  margin: 2.75em 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.journal-prose strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* Soft callout boxes authors may use in CMS HTML */
+.journal-prose .travel-tip,
+.journal-prose .tip,
+.journal-prose [data-tip] {
+  margin: 1.75em 0;
+  padding: 1.15rem 1.25rem;
+  border-radius: 1rem;
+  background: #eff6ff;
+  color: #1e3a5f;
+}
+
+.journal-prose .journal-maps-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0.75em 0;
+  padding: 0.7em 1.15em;
+  border: none;
+  border-radius: 0.85rem;
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+.journal-prose .journal-maps-link:hover {
+  background: #1e293b;
+  color: #fff;
+  border-color: transparent;
+}
+
+.journal-prose .journal-cta,
+.journal-prose a.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 1.25em 0;
+  height: 2.75rem;
+  padding: 0 1.25rem;
+  border-radius: 0.85rem;
+  border: 1px solid transparent;
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  box-shadow: none;
+  transition: background-color 0.15s ease;
+}
+
+.journal-prose .journal-cta:hover,
+.journal-prose a.btn-primary:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+@media (min-width: 640px) {
+  .journal-prose {
+    font-size: 1.125rem;
+    line-height: 1.85;
+  }
+
+  .journal-prose h1 {
+    font-size: 2rem;
+  }
+
+  .journal-prose h2 {
+    font-size: 1.85rem;
+  }
+}
+
+/* Journal end CTA — wavy photo edge (desktop) */
+@media (min-width: 1024px) {
+  .journal-cta-photo {
+    clip-path: polygon(
+      12% 0%,
+      8% 18%,
+      14% 36%,
+      7% 54%,
+      13% 72%,
+      9% 88%,
+      12% 100%,
+      100% 100%,
+      100% 0%
+    );
+  }
+}

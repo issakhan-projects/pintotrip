@@ -1,5 +1,5 @@
 import { loadPlacesLibrary } from "@/lib/maps/loader";
-import { fetchPexelsPhoto } from "@/lib/pexels";
+import { fetchPexelsPhoto, fetchPexelsPhotos } from "@/lib/pexels";
 import {
   PLACES_SEARCH_TTL_MS,
   cachedRequest,
@@ -66,20 +66,47 @@ function buildPhotoQuery(parts: Array<string | undefined | null>): string {
     .join(", ");
 }
 
-/** Stable id for Pexels query dedupe across a plan (not a Google Place id). */
-function pexelsPhotoId(query: string, page = 1): string {
-  const base = `pexels:${normalizeQuery(query)}`;
-  return page > 1 ? `${base}:p${page}` : base;
+/** Stable id for a concrete Pexels photo (dedupe by photo, not by query). */
+function pexelsPhotoResultId(photo: {
+  id?: number | null;
+  url: string;
+}): string {
+  if (photo.id != null && Number.isFinite(photo.id)) {
+    return `pexels:id:${photo.id}`;
+  }
+  return pexelsPhotoUrlExcludeId(photo.url);
+}
+
+/** Exclude key from an already-assigned image URL (itinerary / plan thumbs). */
+export function pexelsPhotoUrlExcludeId(url: string): string {
+  return `pexels:url:${normalizeQuery(url)}`;
+}
+
+function photoIsExcluded(
+  photo: { id?: number | null; url: string },
+  exclude?: ReadonlySet<string>
+): boolean {
+  if (!exclude || exclude.size === 0) return false;
+  if (exclude.has(pexelsPhotoUrlExcludeId(photo.url))) return true;
+  if (photo.id != null && Number.isFinite(photo.id)) {
+    if (exclude.has(`pexels:id:${photo.id}`)) return true;
+  }
+  return false;
 }
 
 /** Find places by name via Google Places Text Search (cached + deduped). */
 export async function searchPlacesByName(
-  query: string
+  query: string,
+  options?: { maxResultCount?: number }
 ): Promise<SearchedPlace[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
 
-  const key = `places:search:${normalizeQuery(trimmed)}`;
+  const maxResultCount = Math.min(
+    10,
+    Math.max(1, options?.maxResultCount ?? 6)
+  );
+  const key = `places:search:${normalizeQuery(trimmed)}:n${maxResultCount}`;
 
   try {
     return await cachedRequest(
@@ -97,7 +124,7 @@ export async function searchPlacesByName(
             "location",
             "addressComponents",
           ],
-          maxResultCount: 6,
+          maxResultCount,
         });
 
         const results: SearchedPlace[] = [];
@@ -163,8 +190,8 @@ export async function fetchPlacePhotoUrl(input: {
 
 /**
  * Resolve a Pexels photo for an AI-suggested place (title + city).
- * Skips query keys already used in the same plan so nearby suggestions
- * don't reuse the same search page; falls back to page 2 when needed.
+ * Prefer place-name queries first so thumbs match the landmark, not the city.
+ * Picks the first photo whose id/url is not already used in this plan.
  * Returns null when no match — callers should keep UI fallbacks.
  */
 export async function fetchSuggestedPlacePhoto(input: {
@@ -173,29 +200,32 @@ export async function fetchSuggestedPlacePhoto(input: {
   countryName?: string;
   lat: number;
   lon: number;
-  /** Photo query ids already assigned in this plan — avoid duplicate thumbs. */
+  /**
+   * Photo result ids already assigned in this plan (`pexels:id:…` / `pexels:url:…`).
+   * Avoids the same stock image on every day place.
+   */
   excludePlaceIds?: ReadonlySet<string>;
 }): Promise<{ photoUrl: string; placeId: string } | null> {
   const title = input.title.trim();
   const cityName = input.cityName.trim();
   if (!title || !cityName) return null;
 
+  // Title-first: "Burj Khalifa" beats "Burj Khalifa, Dubai, UAE" which often
+  // ranks a generic Dubai skyline ahead of the landmark.
   const queries = [
-    buildPhotoQuery([title, cityName, input.countryName]),
-    buildPhotoQuery([title, cityName]),
     title,
+    buildPhotoQuery([title, cityName]),
+    buildPhotoQuery([title, cityName, input.countryName]),
   ].filter((q, i, arr) => q.length > 0 && arr.indexOf(q) === i);
 
   const exclude = input.excludePlaceIds;
 
   for (const query of queries) {
-    for (const page of [1, 2] as const) {
-      const placeId = pexelsPhotoId(query, page);
-      if (exclude?.has(placeId)) continue;
-
-      const photo = await fetchPexelsPhoto({ query, page });
-      if (!photo?.url) continue;
-
+    const photos = await fetchPexelsPhotos({ query, perPage: 10 });
+    for (const photo of photos) {
+      if (!photo.url) continue;
+      if (photoIsExcluded(photo, exclude)) continue;
+      const placeId = pexelsPhotoResultId(photo);
       return { photoUrl: photo.url, placeId };
     }
   }

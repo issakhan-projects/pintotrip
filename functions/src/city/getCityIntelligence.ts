@@ -1,7 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/https";
 import { logger } from "firebase-functions";
 import { requireAuth, assertNonEmptyString } from "../shared/auth";
-import { DEFAULT_FUNCTIONS_REGION, openaiApiKey } from "../shared/config";
+import {
+  DEFAULT_FUNCTIONS_REGION,
+  googlePrivateApiKey,
+  openaiApiKey,
+} from "../shared/config";
 import {
   createOpenAICityIntelligenceAnalyzer,
   toSlowCityIntelligence,
@@ -18,12 +22,15 @@ import {
   cityIntelligenceFullFingerprint,
   cityIntelligenceSlowFingerprint,
   executeCachedAI,
-  getAICache,
   logAICallMetrics,
   setAICache,
 } from "../shared/ai";
-import type { ModelCityIntelligence } from "./parseModelResponse";
+import { resolveEnglishPlaceIdsFromCoords } from "../shared/resolveEnglishPlaceIds";
 import { attachFrankfurterExchangeRate } from "./attachFrankfurterExchangeRate";
+import {
+  getReadyCityIntelligence,
+  setReadyCityIntelligence,
+} from "./readyCityIntelligence";
 import {
   CITY_INTELLIGENCE_DISCLAIMER,
   type CityIntelligenceCityInput,
@@ -51,20 +58,63 @@ function asciiSlug(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-function resolveCityId(input: CityIntelligenceCityInput): string {
-  const preferred = input.cityId?.trim().toLowerCase();
-  if (preferred && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(preferred) && preferred !== "unknown") {
-    return preferred;
-  }
-  const slug = asciiSlug(input.city);
-  return slug && slug !== "unknown" ? slug : "city";
+function isIsoCountryId(value: string | undefined): value is string {
+  if (!value) return false;
+  const trimmed = value.trim().toLowerCase();
+  // "xx" was the old broken fallback — never treat it as a real country.
+  if (!trimmed || trimmed === "xx" || trimmed === "unknown") return false;
+  return /^[a-z]{2}$/.test(trimmed);
 }
 
-function resolveCountryId(input: CityIntelligenceCityInput): string {
-  const preferred = input.countryId?.trim().toLowerCase();
-  if (preferred && /^[a-z]{2}$/.test(preferred)) return preferred;
-  const slug = asciiSlug(input.country);
-  return slug.slice(0, 2) || "xx";
+function isAsciiCityId(value: string | undefined): value is string {
+  if (!value) return false;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || trimmed === "unknown" || trimmed === "city") return false;
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmed);
+}
+
+/**
+ * Resolve ISO countryId + ASCII cityId.
+ * Prefer caller ids; otherwise reverse-geocode (language=en).
+ * Never returns the sentinel "xx".
+ */
+async function resolvePlaceIds(input: CityIntelligenceCityInput): Promise<{
+  cityId: string;
+  countryId: string;
+}> {
+  let cityId = isAsciiCityId(input.cityId)
+    ? input.cityId.trim().toLowerCase()
+    : "";
+  let countryId = isIsoCountryId(input.countryId)
+    ? input.countryId.trim().toLowerCase()
+    : "";
+
+  if (!cityId) {
+    const fromName = asciiSlug(input.city);
+    if (isAsciiCityId(fromName)) cityId = fromName;
+  }
+
+  if (cityId && countryId) {
+    return { cityId, countryId };
+  }
+
+  const english = await resolveEnglishPlaceIdsFromCoords(input.lat, input.lon);
+  if (english) {
+    if (!countryId && isIsoCountryId(english.countryId)) {
+      countryId = english.countryId;
+    }
+    if (!cityId && isAsciiCityId(english.cityId)) {
+      cityId = english.cityId;
+    }
+  }
+
+  // Last-resort city slug so the callable still returns a result payload.
+  if (!cityId) {
+    const fallback = asciiSlug(input.city);
+    cityId = isAsciiCityId(fallback) ? fallback : "city";
+  }
+
+  return { cityId, countryId };
 }
 
 function parseCityEntry(raw: unknown, index: number): CityIntelligenceCityInput {
@@ -226,8 +276,7 @@ async function resolveOneCity(params: {
     checkCredits,
   } = params;
 
-  const cityId = resolveCityId(city);
-  const countryId = resolveCountryId(city);
+  const { cityId, countryId } = await resolvePlaceIds(city);
 
   const fullFingerprint = cityIntelligenceFullFingerprint({
     city: city.city,
@@ -267,36 +316,38 @@ async function resolveOneCity(params: {
       }
 
       const analyzer = createOpenAICityIntelligenceAnalyzer();
-      const slowCached =
-        await getAICache<ModelCityIntelligence>(slowFingerprint);
+      const userLanguage = language.trim() || "en";
+      const primaryLanguage =
+        userLanguage.split(/[-_]/)[0]?.toLowerCase() || "en";
 
-      if (slowCached?.result) {
+      // Shared, language-agnostic city facts — reuse for every traveler.
+      const ready = await getReadyCityIntelligence({
+        countryId,
+        cityId,
+        cityName: city.city,
+        countryName: city.country,
+      });
+
+      // Complete ready → only AI for visa (cheapest). FX via Frankfurter after.
+      if (ready.complete && ready.model) {
         logAICallMetrics({
           functionName: "getCityIntelligence",
           outcome: "partial_cache",
-          fingerprint: slowFingerprint,
+          fingerprint: `${countryId}/${cityId}`,
           cacheHit: true,
           durationMs: Date.now() - started,
-          extra: { phase: "slow_hit_time_sensitive" },
+          extra: { phase: "ready_complete_visa_only" },
         });
 
-        const { result, raw, metrics } = await analyzer.analyzeTimeSensitive({
+        const { result, raw, metrics } = await analyzer.analyzeVisaOnly({
           city: city.city,
           country: city.country,
-          lat: city.lat,
-          lon: city.lon,
           userCountry,
-          userCurrency,
-          language,
+          language: userLanguage,
           cityId,
           countryId,
-          slow: slowCached.result,
+          slow: ready.model,
         });
-
-        const payload: CityIntelligenceResult = {
-          ...result,
-          disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
-        };
 
         await setAICache({
           fingerprint: slowFingerprint,
@@ -307,29 +358,82 @@ async function resolveOneCity(params: {
         });
 
         return {
-          result: payload,
+          result: {
+            ...result,
+            disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
+          },
           model: metrics.model,
           usage: metrics.usage,
           cost: metrics.cost,
         };
       }
 
-      const { result, raw, metrics } = await analyzer.analyze({
+      // Missing / incomplete ready → generate shared facts in English once,
+      // save flat for everyone, then localize visa if the user isn't on English.
+      logAICallMetrics({
+        functionName: "getCityIntelligence",
+        outcome: "miss",
+        fingerprint: `${countryId}/${cityId}`,
+        cacheHit: false,
+        durationMs: Date.now() - started,
+        extra: {
+          phase: "seed_ready_english",
+          missing: ready.missing.join(",") || "all",
+        },
+      });
+
+      const seeded = await analyzer.analyze({
         city: city.city,
         country: city.country,
         lat: city.lat,
         lon: city.lon,
         userCountry,
         userCurrency,
-        language,
+        language: "en",
         cityId,
         countryId,
       });
 
-      const payload: CityIntelligenceResult = {
-        ...result,
-        disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
-      };
+      await setReadyCityIntelligence({
+        countryId,
+        cityId,
+        cityName: city.city,
+        countryName: city.country,
+        raw: seeded.raw,
+      });
+
+      let result = seeded.result;
+      let raw = seeded.raw;
+      let metrics = seeded.metrics;
+
+      if (primaryLanguage !== "en") {
+        const localized = await analyzer.analyzeVisaOnly({
+          city: city.city,
+          country: city.country,
+          userCountry,
+          language: userLanguage,
+          cityId,
+          countryId,
+          slow: toSlowCityIntelligence(seeded.raw),
+        });
+        result = localized.result;
+        raw = localized.raw;
+        metrics = {
+          model: seeded.metrics.model,
+          usage: {
+            promptTokens:
+              seeded.metrics.usage.promptTokens +
+              localized.metrics.usage.promptTokens,
+            completionTokens:
+              seeded.metrics.usage.completionTokens +
+              localized.metrics.usage.completionTokens,
+            totalTokens:
+              seeded.metrics.usage.totalTokens +
+              localized.metrics.usage.totalTokens,
+          },
+          cost: seeded.metrics.cost + localized.metrics.cost,
+        };
+      }
 
       await setAICache({
         fingerprint: slowFingerprint,
@@ -343,7 +447,10 @@ async function resolveOneCity(params: {
       });
 
       return {
-        result: payload,
+        result: {
+          ...result,
+          disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
+        },
         model: metrics.model,
         usage: metrics.usage,
         cost: metrics.cost,
@@ -376,7 +483,7 @@ export type GetCityIntelligenceResponse =
 export const getCityIntelligence = onCall(
   {
     region: DEFAULT_FUNCTIONS_REGION,
-    secrets: [openaiApiKey],
+    secrets: [openaiApiKey, googlePrivateApiKey],
     invoker: "public",
     cors: true,
     timeoutSeconds: 180,
@@ -411,16 +518,23 @@ export const getCityIntelligence = onCall(
       let totalCost = 0;
       let totalTokens = 0;
 
-      for (const city of input.cities) {
-        const outcome = await resolveOneCity({
-          uid,
-          city,
-          userCountry,
-          userCurrency,
-          language,
-          started,
-          checkCredits: false,
-        });
+      // Resolve cities in parallel — sequential AI calls stacked latency badly
+      // on multi-destination trips (and gpt-6-luna cold seeds).
+      const outcomes = await Promise.all(
+        input.cities.map((city) =>
+          resolveOneCity({
+            uid,
+            city,
+            userCountry,
+            userCurrency,
+            language,
+            started,
+            checkCredits: false,
+          })
+        )
+      );
+
+      for (const outcome of outcomes) {
         results.push(outcome.result);
         if (outcome.billable) billableUnits += 1;
         totalCost += outcome.cost;

@@ -22,7 +22,10 @@ export async function withCityGooglePlaceId(
   }
 
   const placeId = await resolveCityGooglePlaceId({
-    key: city.id || `${country.id}:${city.name}`,
+    key:
+      city.id && country.id
+        ? `${country.id}:${city.id}`
+        : city.id || `${country.id}:${city.name}`,
     cityName: city.name,
     countryName: country.name,
     countryId: country.id,

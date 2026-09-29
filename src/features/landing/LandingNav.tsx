@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: "#trip-planner", label: "Trip Planner" },
   { href: "#how-it-works", label: "How it works" },
   { href: "#pricing", label: "Pricing" },
+  { href: "/journal", label: "Journal" },
 ] as const;
 
 export function LandingNav() {
@@ -59,15 +60,25 @@ export function LandingNav() {
         </Link>
 
         <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
-            >
-              {link.label}
-            </a>
-          ))}
+          {NAV_LINKS.map((link) =>
+            link.href.startsWith("#") ? (
+              <a
+                key={link.href}
+                href={link.href}
+                className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+              >
+                {link.label}
+              </a>
+            ) : (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+              >
+                {link.label}
+              </Link>
+            )
+          )}
         </div>
 
         <div className="hidden items-center gap-1 md:flex">
@@ -100,16 +111,27 @@ export function LandingNav() {
           className="border-t border-border bg-white px-4 py-3 md:hidden"
         >
           <div className="flex flex-col gap-0.5">
-            {NAV_LINKS.map((link) => (
-              <a
-                key={link.href}
-                href={link.href}
-                onClick={() => setOpen(false)}
-                className="rounded-lg px-3 py-2.5 text-sm font-medium text-text"
-              >
-                {link.label}
-              </a>
-            ))}
+            {NAV_LINKS.map((link) =>
+              link.href.startsWith("#") ? (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setOpen(false)}
+                  className="rounded-lg px-3 py-2.5 text-sm font-medium text-text"
+                >
+                  {link.label}
+                </a>
+              ) : (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setOpen(false)}
+                  className="rounded-lg px-3 py-2.5 text-sm font-medium text-text"
+                >
+                  {link.label}
+                </Link>
+              )
+            )}
             <Link
               href="/login"
               onClick={() => setOpen(false)}

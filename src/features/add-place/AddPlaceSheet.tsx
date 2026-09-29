@@ -6,11 +6,13 @@ import { Button, TextInput } from "@/components/ui";
 import {
   Check,
   ChevronRight,
+  Coins,
   ImageIcon,
   Info,
   Link2,
   Loader2,
   Lock,
+  MapPin,
   Save,
   Search,
 } from "lucide-react";
@@ -25,6 +27,7 @@ import {
 } from "@/services/locations";
 import { resolveUserLanguage } from "@/services/users";
 import {
+  AI_CREDIT_COSTS,
   formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
@@ -66,8 +69,13 @@ interface AddPlaceSheetProps {
   onClose: () => void;
   userId: string;
   onSaved: () => void;
-  /** Google Maps name search is Pro-only. */
+  /** Google Maps name search — gated by canUsePlaceNameSearch (Free off). */
   isPro?: boolean;
+  /**
+   * Enter map pick mode (like city intelligence): close this sheet and let the
+   * user tap the main map to drop a pin.
+   */
+  onPickFromMap?: () => void;
 }
 
 const ANALYZE_MESSAGES = [
@@ -83,6 +91,7 @@ export function AddPlaceSheet({
   userId,
   onSaved,
   isPro = false,
+  onPickFromMap,
 }: AddPlaceSheetProps) {
   const router = useRouter();
   const [step, setStep] = useState<AddStep>("menu");
@@ -243,7 +252,7 @@ export function AddPlaceSheet({
     setSaving(true);
     try {
       let storedImageUrl = imageUrl;
-      // Persist compressed JPEG to Storage (not the AI data URL / raw HEIC).
+      // Persist ≤300 KB JPEG to Storage (recompressed from the AI preview blob).
       if (jpegBlob) {
         const draftId = crypto.randomUUID();
         storedImageUrl = await uploadLocationDraftImage(
@@ -497,6 +506,22 @@ export function AddPlaceSheet({
           />
           <MenuOptionCard
             variant="link"
+            icon={<MapPin className="h-5 w-5" />}
+            title="Pick from map"
+            subtitle="Tap the map to drop a pin"
+            tags={[
+              { label: "Pin" },
+              { label: "Any spot" },
+              { label: "Manual" },
+            ]}
+            visual={<MapPickVisual />}
+            onClick={() => {
+              handleClose();
+              onPickFromMap?.();
+            }}
+          />
+          <MenuOptionCard
+            variant="link"
             icon={<Link2 className="h-5 w-5" />}
             title="Add from link"
             subtitle="Paste a post or place URL"
@@ -616,7 +641,10 @@ export function AddPlaceSheet({
             onClick={() => void analyzePhoto()}
             className="w-full disabled:!opacity-40"
           >
-            Analyze location
+            <span className="inline-flex items-center gap-2">
+              Analyze location
+              <AiCreditCostBadge credits={AI_CREDIT_COSTS.findPlace} />
+            </span>
           </Button>
           <button
             type="button"
@@ -645,7 +673,10 @@ export function AddPlaceSheet({
             className="w-full disabled:!opacity-40"
             color="neutral"
           >
-            Analyze location
+            <span className="inline-flex items-center gap-2">
+              Analyze location
+              <AiCreditCostBadge credits={AI_CREDIT_COSTS.findPlace} />
+            </span>
           </Button>
           <button
             type="button"
@@ -963,6 +994,18 @@ function LinkInputVisual() {
   );
 }
 
+function MapPickVisual() {
+  return (
+    <span className="relative mr-0.5 flex h-[72px] w-[84px] items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-tint via-white to-surface shadow-sm ring-1 ring-border">
+      <span className="absolute inset-x-3 top-4 h-px bg-border/80" />
+      <span className="absolute inset-x-5 top-8 h-px bg-border/60" />
+      <span className="absolute inset-y-3 left-5 w-px bg-border/70" />
+      <span className="absolute inset-y-5 left-10 w-px bg-border/50" />
+      <MapPin className="relative z-[1] h-7 w-7 text-primary drop-shadow-sm" />
+    </span>
+  );
+}
+
 function SearchInputVisual() {
   return (
     <span className="flex h-[56px] w-[108px] items-center justify-center rounded-xl bg-[#eef0f3] p-2 shadow-sm">
@@ -1106,6 +1149,15 @@ function AiResultView({
         Not this place
       </Button>
     </div>
+  );
+}
+
+function AiCreditCostBadge({ credits }: { credits: number }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-warning">
+      <Coins className="h-3 w-3" aria-hidden />
+      {credits}
+    </span>
   );
 }
 

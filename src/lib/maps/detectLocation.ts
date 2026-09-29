@@ -98,7 +98,8 @@ function englishIdsFromGeocodeResults(
 
 function getBrowserPosition(
   timeoutMs: number,
-  maximumAge = 0
+  maximumAge = 0,
+  enableHighAccuracy = false
 ): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -107,7 +108,7 @@ function getBrowserPosition(
     }
 
     navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: false,
+      enableHighAccuracy,
       timeout: timeoutMs,
       maximumAge,
     });
@@ -118,11 +119,13 @@ function getBrowserPosition(
 export async function getBrowserCoords(options?: {
   timeoutMs?: number;
   maximumAge?: number;
+  enableHighAccuracy?: boolean;
 }): Promise<{ lat: number; lon: number } | null> {
   try {
     const position = await getBrowserPosition(
       options?.timeoutMs ?? 8_000,
-      options?.maximumAge ?? 60_000
+      options?.maximumAge ?? 60_000,
+      options?.enableHighAccuracy ?? false
     );
     return {
       lat: position.coords.latitude,

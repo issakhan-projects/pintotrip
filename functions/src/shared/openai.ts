@@ -26,8 +26,10 @@ import type { AnalyzeLocationResult } from "../location/types";
 import {
   CITY_INTELLIGENCE_SYSTEM_PROMPT,
   CITY_TIME_SENSITIVE_SYSTEM_PROMPT,
+  CITY_VISA_ONLY_SYSTEM_PROMPT,
   buildCityIntelligenceUserPrompt,
   buildCityTimeSensitiveUserPrompt,
+  buildCityVisaOnlyUserPrompt,
 } from "../city/prompts";
 import {
   buildSlowContextForPrompt,
@@ -60,21 +62,31 @@ import {
   FILL_PLACES_SYSTEM_PROMPT,
   buildFillPlacesUserPrompt,
 } from "../trip/fillPlacesPrompts";
+import {
+  AROUND_ME_SYSTEM_PROMPT,
+  buildAroundMeUserPrompt,
+} from "../location/aroundMePrompts";
+import type { AroundMeTypeId } from "../location/aroundMeTypes";
 
 /** Vision-capable / lightweight text model for landmark + metadata enrichment. */
-export const LOCATION_MODEL = "gpt-5.6-luna";
+export const LOCATION_MODEL = "gpt-6-luna";
 
 /** Text model for city travel intelligence synthesis. */
-const CITY_INTELLIGENCE_MODEL = "gpt-5.6-luna";
+const CITY_INTELLIGENCE_MODEL = "gpt-6-luna";
+
+/** Keep city intel snappy — full JSON does not need deep reasoning. */
+const CITY_INTELLIGENCE_REASONING: "minimal" | "low" = "low";
+const CITY_VISA_REASONING: "minimal" | "low" = "minimal";
 
 /** Text + web search model for AI trip day filling. */
-const PLAN_TRIP_MODEL = "gpt-5.6-luna";
+const PLAN_TRIP_MODEL = "gpt-6-luna";
 
 /** Output caps — enough for required JSON, blocks runaway verbosity. */
 const LOCATION_MAX_TOKENS = 2200;
 const LOCATION_VERIFY_MAX_TOKENS = 2200;
 const CITY_MAX_TOKENS = 2800;
 const CITY_TIME_SENSITIVE_MAX_TOKENS = 900;
+const CITY_VISA_ONLY_MAX_TOKENS = 500;
 const PLAN_TRIP_MAX_TOKENS = 4500;
 
 /**
@@ -156,6 +168,25 @@ export interface OpenAICityIntelligenceAnalyzer {
     raw: ModelCityIntelligence;
     metrics: Omit<OpenAICallMetrics, "verificationPerformed">;
   }>;
+  /**
+   * Cheapest path when readyCityIntelligence is complete:
+   * visa only (nationality-specific). Budget stays from ready; FX via Frankfurter.
+   */
+  analyzeVisaOnly(
+    input: {
+      city: string;
+      country: string;
+      userCountry: string;
+      language: string;
+      cityId: string;
+      countryId: string;
+      slow: ModelCityIntelligence;
+    }
+  ): Promise<{
+    result: CityIntelligenceResult;
+    raw: ModelCityIntelligence;
+    metrics: Omit<OpenAICallMetrics, "verificationPerformed">;
+  }>;
 }
 
 export interface OpenAITripPlanner {
@@ -205,6 +236,7 @@ function compactInitialForVerification(
   initial: ModelInitialIdentification
 ): string {
   return JSON.stringify({
+    containsTravelPlace: initial.containsTravelPlace,
     identified: initial.identified,
     placeName: initial.placeName,
     city: initial.city,
@@ -370,6 +402,12 @@ async function runAdaptivePipeline(params: {
   );
 
   if (!needsVerification(initial.raw)) {
+    if (!initial.raw.containsTravelPlace) {
+      logger.info("findPlace skipped verification: no travel place in input", {
+        reason: initial.raw.reason,
+        sourceType: params.sourceType,
+      });
+    }
     return {
       raw: initial.raw,
       result: toAnalyzeLocationResult(initial.raw, {
@@ -456,6 +494,7 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
       const completion = await client.chat.completions.create({
         model: CITY_INTELLIGENCE_MODEL,
         max_completion_tokens: CITY_MAX_TOKENS,
+        reasoning_effort: CITY_INTELLIGENCE_REASONING,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: CITY_INTELLIGENCE_SYSTEM_PROMPT },
@@ -507,6 +546,7 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
       const completion = await client.chat.completions.create({
         model: CITY_INTELLIGENCE_MODEL,
         max_completion_tokens: CITY_TIME_SENSITIVE_MAX_TOKENS,
+        reasoning_effort: CITY_VISA_REASONING,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: CITY_TIME_SENSITIVE_SYSTEM_PROMPT },
@@ -536,6 +576,63 @@ export function createOpenAICityIntelligenceAnalyzer(): OpenAICityIntelligenceAn
       const usage = usageFromCompletion(completion.usage);
       const patch = parseModelCityTimeSensitive(extractCityJsonObject(text));
       const raw = mergeSlowWithTimeSensitive(input.slow, patch);
+      const result = toCityIntelligenceResult(raw, {
+        userCountry: input.userCountry,
+        generatedAt,
+        cityId: input.cityId,
+        countryId: input.countryId,
+      });
+
+      return {
+        raw,
+        result,
+        metrics: {
+          model: CITY_INTELLIGENCE_MODEL,
+          usage,
+          cost: estimateGpt4oCost(usage),
+        },
+      };
+    },
+
+    async analyzeVisaOnly(input) {
+      const generatedAt = new Date().toISOString();
+
+      const completion = await client.chat.completions.create({
+        model: CITY_INTELLIGENCE_MODEL,
+        max_completion_tokens: CITY_VISA_ONLY_MAX_TOKENS,
+        reasoning_effort: CITY_VISA_REASONING,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: CITY_VISA_ONLY_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: buildCityVisaOnlyUserPrompt({
+              city: input.city,
+              country: input.country,
+              userCountry: input.userCountry,
+              language: input.language,
+              currentDateIso: generatedAt,
+            }),
+          },
+        ],
+      });
+
+      const text = completion.choices[0]?.message?.content;
+      if (!text) {
+        throw new Error(
+          "OpenAI returned an empty visa-only city intelligence response."
+        );
+      }
+
+      const usage = usageFromCompletion(completion.usage);
+      const patch = parseModelCityTimeSensitive(extractCityJsonObject(text));
+      const raw = mergeSlowWithTimeSensitive(input.slow, {
+        visa: patch.visa,
+        lastCheckedAt: patch.lastCheckedAt,
+        warning: patch.warning,
+        // Keep ready dailyBudget — do not let a visa-only call wipe it.
+        dailyBudget: undefined,
+      });
       const result = toCityIntelligenceResult(raw, {
         userCountry: input.userCountry,
         generatedAt,
@@ -622,6 +719,45 @@ export function createOpenAITripPlanner(): OpenAITripPlanner {
 }
 
 const FILL_PLACES_MAX_TOKENS = 4500;
+const AROUND_ME_MAX_TOKENS = 4500;
+
+export type OpenAIAroundMeEnricher = {
+  enrich(input: {
+    language?: string;
+    typeId: AroundMeTypeId;
+    cityNameEn?: string;
+    countryNameEn?: string;
+    countryId?: string;
+    cityId?: string;
+    userLat: number;
+    userLon: number;
+    placesJson: string;
+  }): Promise<{
+    text: string;
+    metrics: { model: string; usage: AITokenUsage; cost: number };
+  }>;
+};
+
+/**
+ * Enrich Nearby Search hits into locations-subcollection shaped places.
+ * Uses Chat Completions JSON mode for reliable structured output.
+ */
+export function createOpenAIAroundMeEnricher(): OpenAIAroundMeEnricher {
+  return {
+    async enrich(input) {
+      const userPrompt = buildAroundMeUserPrompt(input);
+      // Prefer JSON mode over Responses+web_search — web_search often returns
+      // non-JSON / truncated payloads that fail parseAroundMePlaces.
+      const { text, metrics } = await completeTripPlannerAiJson({
+        system: AROUND_ME_SYSTEM_PROMPT,
+        user: userPrompt,
+        maxCompletionTokens: AROUND_ME_MAX_TOKENS,
+        reasoningEffort: "low",
+      });
+      return { text, metrics };
+    },
+  };
+}
 
 export type OpenAIPlacesFiller = {
   fill(input: {

@@ -25,7 +25,7 @@ import type {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MODEL = process.env.OPENAI_TRIP_PLACES_MODEL?.trim() || "gpt-5.6-luna";
+const MODEL = process.env.OPENAI_TRIP_PLACES_MODEL?.trim() || "gpt-6-luna";
 
 /** gpt-5.* counts reasoning against max_completion_tokens — keep headroom. */
 const ROUTES_MAX_TOKENS = 8_000;

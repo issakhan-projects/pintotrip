@@ -22,6 +22,7 @@ export type AIUsageMonthly = {
 /** Known AI callable operation keys. */
 export type AIOperationName =
   | "findPlace"
+  | "findAroundMe"
   | "getCityIntelligence"
   | "planTrip"
   | "planTripAdvanced"

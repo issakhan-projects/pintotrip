@@ -279,6 +279,11 @@ export type ItineraryPlace = {
   description?: string;
   /** Plan preview image URL for place slots (kept in sync with AI thumb). */
   imageUrl?: string;
+  /**
+   * True when Pexels (and other) image lookup failed — do not retry automatically.
+   * Cleared when a real imageUrl is set.
+   */
+  noImage?: boolean;
   /** Gap length when type is `"gap"`. */
   durationMinutes?: number;
   /** City the gap is spent in (when known). */

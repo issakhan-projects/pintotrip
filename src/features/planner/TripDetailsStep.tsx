@@ -2,18 +2,24 @@
 
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
+  BedDouble,
   Briefcase,
   CalendarDays,
+  Check,
   ChevronRight,
   CircleDollarSign,
+  CloudSun,
   Compass,
-  Expand,
+  CreditCard,
   FileText,
   Flag,
+  Luggage,
   Map as MapIcon,
   MapPin,
   Pencil,
   Plane,
+  Stamp,
   Tag,
   Wallet,
 } from "lucide-react";
@@ -25,10 +31,7 @@ import { LEISURE_TYPE_OPTIONS } from "@/types/trip-plan";
 import { tripDayCount } from "@/services/trip-planner";
 import { subscribeTripRoutes } from "@/services/trip-routes";
 import { Button } from "@/components/ui";
-import {
-  formatCoordinates,
-  formatTripCompactDateRange,
-} from "./tripUtils";
+import { formatTripCompactDateRange } from "./tripUtils";
 import { TripCityIntelligenceBlock } from "./TripCityIntelligenceBlock";
 //import { TripWeatherBlock } from "./TripWeatherBlock";
 import { TripRouteTimeBreakdownSection } from "./TripRouteTimeBreakdown";
@@ -41,6 +44,11 @@ import {
   formatCityStopDates,
   groupTripDestinationsByCountry,
 } from "./tripDestinations";
+import {
+  computeTripReadiness,
+  type ReadinessItem,
+  type ReadinessItemId,
+} from "./tripReadiness";
 
 interface TripDetailsStepProps {
   trip: TripPlannerDoc;
@@ -75,7 +83,7 @@ export function TripDetailsStep(props: TripDetailsStepProps) {
 function SingleCityTripDetails({
   trip,
   routes,
-  galleryImages = [],
+  locations = [],
   onEdit,
   onRetryCityIntelligence,
   onGoToPreparation,
@@ -89,15 +97,7 @@ function SingleCityTripDetails({
     .filter(Boolean)
     .join(", ");
   const days = tripDayCount(trip.startDate, trip.endDate);
-  const hasCoords = primaryDest.lat != null && primaryDest.lon != null;
-  const coverUrl =
-    primaryDest.photos?.find(Boolean) || galleryImages.find(Boolean) || null;
-  const mapsLink = hasCoords
-    ? `https://www.google.com/maps/search/?api=1&query=${primaryDest.lat},${primaryDest.lon}`
-    : null;
-
-  const thumbs = galleryImages.slice(0, 4);
-  const extraCount = Math.max(galleryImages.length - 3, 0);
+  const readiness = computeTripReadiness(trip, routes, locations);
 
   return (
     <div className="space-y-6">
@@ -154,79 +154,18 @@ function SingleCityTripDetails({
             />
             <InfoRow
               icon={CircleDollarSign}
-              label="Home Currency" 
+              label="Home Currency"
               value={`${trip.currency.name} (${trip.currency.code})`}
               chevron
               last
             />
-
-
-            
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm lg:col-span-2">
-          <div className="relative aspect-square bg-gradient-to-br from-primary via-primary-light to-primary-hover">
-            {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- remote cover / user image URLs
-              <img
-                src={coverUrl}
-                alt={destLabel}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-white/80">
-                <MapPin className="h-8 w-8" />
-                <span className="text-sm">{destLabel || "Destination"}</span>
-              </div>
-            )}
-            {mapsLink ? (
-              <a
-                href={mapsLink}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open in Google Maps"
-                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-text shadow-sm ring-1 ring-border hover:bg-white"
-              >
-                <Expand className="h-3.5 w-3.5" />
-              </a>
-            ) : null}
-          </div>
-
-          <div className="border-t border-divider px-4 py-3">
-            <p className="text-sm font-semibold text-text">{destLabel}</p>
-            {hasCoords ? (
-              <p className="mt-0.5 text-xs text-text-secondary">
-                {formatCoordinates(primaryDest.lat!, primaryDest.lon!)}
-              </p>
-            ) : null}
-
-            {/* {thumbs.length > 0 ? (
-              <div className="mt-3 grid grid-cols-4 gap-2">
-                {thumbs.map((url, index) => {
-                  const isOverflow = index === 3 && extraCount > 0;
-                  return (
-                    <div
-                      key={`${url}-${index}`}
-                      className="relative aspect-square overflow-hidden rounded-lg bg-surface"
-                    >
-                      <img
-                        src={url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      {isOverflow ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm font-semibold text-white">
-                          +{extraCount}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null} */}
-          </div>
-        </section>
+        <TripReadinessCard
+          readiness={readiness}
+          onComplete={onGoToPreparation}
+        />
       </div>
 
       <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
@@ -277,7 +216,6 @@ function SingleCityTripDetails({
 function MultiCityTripDetails({
   trip,
   routes,
-  galleryImages = [],
   locations = [],
   cities,
   onEdit,
@@ -293,20 +231,7 @@ function MultiCityTripDetails({
     .join(", ");
   const days = tripDayCount(trip.startDate, trip.endDate);
   const groups = groupTripDestinationsByCountry(cities);
-  const coverCity =
-    cities.find((city) => city.photos?.some(Boolean)) ?? cities[0]!;
-  const coverUrl =
-    coverCity.photos?.find(Boolean) ||
-    galleryImages.find(Boolean) ||
-    null;
-  const hasCoords =
-    coverCity.lat != null && coverCity.lon != null;
-  const mapsLink = hasCoords
-    ? `https://www.google.com/maps/search/?api=1&query=${coverCity.lat},${coverCity.lon}`
-    : null;
-  const coverLabel = cities.map((city) => city.cityName).join(", ");
-  const thumbs = galleryImages.slice(0, 4);
-  const extraCount = Math.max(galleryImages.length - 3, 0);
+  const readiness = computeTripReadiness(trip, routes, locations);
   const leisureLabel = trip.leisureType
     ? trip.leisureType === "custom" && trip.leisureCustom?.trim()
       ? `Custom — ${trip.leisureCustom.trim()}`
@@ -454,69 +379,10 @@ function MultiCityTripDetails({
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm lg:col-span-2">
-          <div className="relative aspect-square bg-gradient-to-br from-primary via-primary-light to-primary-hover">
-            {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- remote cover / user image URLs
-              <img
-                src={coverUrl}
-                alt={coverLabel}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-white/80">
-                <MapPin className="h-8 w-8" />
-                <span className="text-sm">{coverLabel || "Destinations"}</span>
-              </div>
-            )}
-            {mapsLink ? (
-              <a
-                href={mapsLink}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open in Google Maps"
-                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/90 text-text shadow-sm ring-1 ring-border hover:bg-white"
-              >
-                <Expand className="h-3.5 w-3.5" />
-              </a>
-            ) : null}
-          </div>
-
-          <div className="border-t border-divider px-4 py-3">
-            <p className="text-sm font-semibold text-text">{coverLabel}</p>
-            {hasCoords ? (
-              <p className="mt-0.5 text-xs text-text-secondary">
-                {formatCoordinates(coverCity.lat!, coverCity.lon!)}
-              </p>
-            ) : null}
-
-            {thumbs.length > 0 ? (
-              <div className="mt-3 grid grid-cols-4 gap-2">
-                {thumbs.map((url, index) => {
-                  const isOverflow = index === 3 && extraCount > 0;
-                  return (
-                    <div
-                      key={`${url}-${index}`}
-                      className="relative aspect-square overflow-hidden rounded-lg bg-surface"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      {isOverflow ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm font-semibold text-white">
-                          +{extraCount}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        </section>
+        <TripReadinessCard
+          readiness={readiness}
+          onComplete={onGoToPreparation}
+        />
       </div>
 
       <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
@@ -583,6 +449,120 @@ function savedPlaceCountForCity(
       destinationCountryKey(owner.countryName, owner.countryId) === countryKey
     );
   }).length;
+}
+
+const READINESS_ICON: Record<
+  ReadinessItemId,
+  typeof Plane
+> = {
+  flights: Plane,
+  accommodation: BedDouble,
+  places: MapPin,
+  visa: Stamp,
+  payments: CreditCard,
+  weather: CloudSun,
+  packing: Luggage,
+};
+
+function TripReadinessCard({
+  readiness,
+  onComplete,
+}: {
+  readiness: ReturnType<typeof computeTripReadiness>;
+  onComplete?: () => void;
+}) {
+  const complete = readiness.percent >= 100;
+
+  return (
+    <section className="flex flex-col rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm lg:col-span-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text">
+            Your trip is {readiness.percent}% ready
+          </p>
+          <p className="mt-0.5 text-xs text-text-secondary">
+            {complete
+              ? "Everything looks set for departure."
+              : "Finish the items below to reach 100%."}
+          </p>
+        </div>
+        <span className="shrink-0 text-lg font-semibold tabular-nums text-text">
+          {readiness.percent}%
+        </span>
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface">
+        <div
+          className="h-full rounded-full bg-primary transition-all"
+          style={{ width: `${readiness.percent}%` }}
+        />
+      </div>
+
+      <ul className="mt-4 flex-1 space-y-1">
+        {readiness.items.map((item) => (
+          <ReadinessRow key={item.id} item={item} />
+        ))}
+      </ul>
+
+      {!complete ? (
+        <Button
+          type="button"
+          className="mt-4 w-full !rounded-xl"
+          onClick={onComplete}
+        >
+          Complete trip → 100%
+        </Button>
+      ) : (
+        <div className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-xl bg-success-background px-3 py-2.5 text-sm font-medium text-success">
+          <Check className="h-4 w-4" />
+          Trip fully ready
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReadinessRow({ item }: { item: ReadinessItem }) {
+  const Icon = READINESS_ICON[item.id];
+  return (
+    <li className="flex items-center gap-2.5 rounded-lg px-1 py-1.5">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm text-text">
+        {item.label}
+      </span>
+      <ReadinessStatus item={item} />
+    </li>
+  );
+}
+
+function ReadinessStatus({ item }: { item: ReadinessItem }) {
+  if (item.tone === "done") {
+    return (
+      <span
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-success-background text-success"
+        aria-label="Done"
+      >
+        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+      </span>
+    );
+  }
+  if (item.tone === "progress") {
+    return (
+      <span className="text-sm font-semibold tabular-nums text-text-secondary">
+        {item.score}%
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-warning-background text-warning"
+      aria-label="Needs attention"
+    >
+      <AlertTriangle className="h-3.5 w-3.5" />
+    </span>
+  );
 }
 
 function InfoRow({

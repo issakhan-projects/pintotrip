@@ -9,6 +9,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   googleMapsProvider,
+  isReusableMap,
+  popCachedMap,
+  pushCachedMap,
   resolveMapsMapId,
   type MapInstance,
   type MapMarkerHandle,
@@ -19,6 +22,13 @@ import type { TripRouteTransport } from "@/types/trip-planner";
 import type { TimelineMapLeg, TimelineMapPoint } from "./timelineHelpers";
 
 const FLIGHT_TRANSPORTS = new Set<TripRouteTransport>(["flight"]);
+
+function createMapHost(): HTMLDivElement {
+  const host = document.createElement("div");
+  host.style.width = "100%";
+  host.style.height = "100%";
+  return host;
+}
 
 function isFlight(transport: TripRouteTransport): boolean {
   return FLIGHT_TRANSPORTS.has(transport);
@@ -112,22 +122,65 @@ export function RoutesTimelineMap({
 
   useEffect(() => {
     if (!configured) return;
-    const element = containerRef.current;
-    if (!element || mapRef.current) return;
+    const container = containerRef.current;
+    if (!container || mapRef.current) return;
 
     let cancelled = false;
     const { mapId } = resolveMapsMapId();
 
+    const recycleMap = (map: MapInstance) => {
+      const host = map.getDiv();
+      if (host.parentElement) host.remove();
+      pushCachedMap(mapId, map);
+    };
+
+    const release = () => {
+      for (const line of polylinesRef.current) line.setMap(null);
+      polylinesRef.current = [];
+      googleMapsProvider.clearMarkers(markersRef.current);
+      markersRef.current = [];
+      const map = mapRef.current;
+      mapRef.current = null;
+      if (map) recycleMap(map);
+    };
+
+    const cached = popCachedMap(mapId);
+    if (cached && isReusableMap(cached)) {
+      container.appendChild(cached.getDiv());
+      cached.setOptions({ gestureHandling: "cooperative" });
+      const center = cached.getCenter();
+      if (center) {
+        window.setTimeout(() => {
+          if (!cancelled && mapRef.current === cached) {
+            cached.setCenter(center);
+          }
+        }, 0);
+      }
+      mapRef.current = cached;
+      setReady(true);
+      return () => {
+        cancelled = true;
+        setReady(false);
+        release();
+      };
+    }
+
+    const host = createMapHost();
+    container.appendChild(host);
+
     googleMapsProvider
       .createMap({
-        element,
+        element: host,
         center: { lat: 20, lng: 0 },
         zoom: 2,
         mapId,
         gestureHandling: "cooperative",
       })
       .then((map) => {
-        if (cancelled) return;
+        if (cancelled) {
+          recycleMap(map);
+          return;
+        }
         mapRef.current = map;
         setReady(true);
       })
@@ -140,11 +193,8 @@ export function RoutesTimelineMap({
 
     return () => {
       cancelled = true;
-      for (const line of polylinesRef.current) line.setMap(null);
-      polylinesRef.current = [];
-      googleMapsProvider.clearMarkers(markersRef.current);
-      markersRef.current = [];
-      mapRef.current = null;
+      setReady(false);
+      release();
     };
   }, [configured]);
 

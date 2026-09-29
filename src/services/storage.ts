@@ -7,25 +7,29 @@ import {
 } from "firebase/storage";
 import { getFirebaseStorage, StoragePaths } from "@/lib/firebase/storage";
 import {
+  ImageUploadError,
+  STORAGE_IMAGE_MAX_BYTES,
   prepareClientImage,
+  storageImageCompressOptions,
   type CompressImageOptions,
 } from "@/lib/images";
 
-const AVATAR_COMPRESS: CompressImageOptions = {
+const AVATAR_COMPRESS = storageImageCompressOptions({
   maxSides: [512, 384],
   qualities: [0.82, 0.68, 0.52, 0.4],
-  maxDataUrlChars: 600_000,
-};
+});
+
+const TRIP_COVER_COMPRESS = storageImageCompressOptions({
+  maxSides: [1920, 1600, 1280, 1024, 800, 640],
+  qualities: [0.82, 0.7, 0.55, 0.42, 0.32],
+});
+
+const LOCATION_STORAGE_COMPRESS = storageImageCompressOptions();
 
 async function toUploadBlob(
   file: Blob,
-  options?: CompressImageOptions
+  options: CompressImageOptions
 ): Promise<{ blob: Blob; contentType: string }> {
-  // Already-compressed JPEG from prepareClientImage / dataUrlToBlob.
-  if (file.type === "image/jpeg" && !(file instanceof File)) {
-    return { blob: file, contentType: "image/jpeg" };
-  }
-
   if (file instanceof File) {
     const prepared = await prepareClientImage(file, options);
     return { blob: prepared.blob, contentType: "image/jpeg" };
@@ -42,14 +46,19 @@ async function toUploadBlob(
 async function uploadImageBytes(
   path: string,
   file: Blob,
-  options?: CompressImageOptions,
+  options: CompressImageOptions,
   metadata?: UploadMetadata
 ): Promise<string> {
-  const { blob, contentType } = await toUploadBlob(file, options);
+  // Always re-apply the 300 KB JPEG cap — never trust a pre-sized blob alone.
+  const capped = storageImageCompressOptions(options);
+  const { blob } = await toUploadBlob(file, capped);
+  if (blob.size <= 0 || blob.size > STORAGE_IMAGE_MAX_BYTES) {
+    throw new ImageUploadError("too_large", "Photo too large (max 300 KB).");
+  }
   const storageRef = ref(getFirebaseStorage(), path);
   await uploadBytes(storageRef, blob, {
     ...metadata,
-    contentType,
+    contentType: "image/jpeg",
   });
   return getDownloadURL(storageRef);
 }
@@ -66,13 +75,6 @@ export async function uploadProfileAvatar(
     metadata
   );
 }
-
-/** Wide hero cover — compress before Storage (JPEG). */
-const TRIP_COVER_COMPRESS: CompressImageOptions = {
-  maxSides: [1920, 1600, 1280, 1024],
-  qualities: [0.82, 0.7, 0.55, 0.42],
-  maxDataUrlChars: 1_400_000,
-};
 
 export async function uploadTripCover(
   userId: string,
@@ -97,7 +99,7 @@ export async function uploadLocationOriginalImage(
   return uploadImageBytes(
     StoragePaths.locationOriginal(userId, locationId),
     file,
-    undefined,
+    LOCATION_STORAGE_COMPRESS,
     metadata
   );
 }
@@ -112,7 +114,7 @@ export async function uploadLocationDraftImage(
   return uploadImageBytes(
     StoragePaths.locationDraftOriginal(userId, draftId),
     file,
-    undefined,
+    LOCATION_STORAGE_COMPRESS,
     metadata
   );
 }
@@ -127,7 +129,7 @@ export async function uploadLocationImage(
   return uploadImageBytes(
     StoragePaths.locationImage(userId, locationId, imageKey),
     file,
-    undefined,
+    LOCATION_STORAGE_COMPRESS,
     metadata
   );
 }
@@ -142,7 +144,7 @@ function isPdfFile(file: File): boolean {
 
 /**
  * Upload a ticket/boarding-pass attachment for a trip route (image or PDF).
- * Returns download URL + storage path for Firestore metadata.
+ * Images are JPEG-compressed to ≤ 300 KB; PDFs keep the 10 MB cap.
  */
 export async function uploadRouteAttachment(
   userId: string,
@@ -177,15 +179,34 @@ export async function uploadRouteAttachment(
     throw new Error("Only images and PDF files are supported.");
   }
 
-  const { blob, contentType } = await toUploadBlob(file);
+  const { blob } = await toUploadBlob(
+    file,
+    storageImageCompressOptions()
+  );
+  if (blob.size <= 0 || blob.size > STORAGE_IMAGE_MAX_BYTES) {
+    throw new ImageUploadError("too_large", "Photo too large (max 300 KB).");
+  }
   await uploadBytes(storageRef, blob, {
     ...metadata,
-    contentType,
+    contentType: "image/jpeg",
   });
   const url = await getDownloadURL(storageRef);
-  return { url, storagePath, contentType };
+  return { url, storagePath, contentType: "image/jpeg" };
 }
 
 export async function deleteStorageObject(path: string): Promise<void> {
   await deleteObject(ref(getFirebaseStorage(), path));
+}
+
+/** Best-effort delete from a Firebase Storage download URL. */
+export async function deleteStorageObjectByUrl(url: string): Promise<void> {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("firebasestorage.googleapis.com")) return;
+    const match = parsed.pathname.match(/\/o\/(.+)$/);
+    if (!match?.[1]) return;
+    await deleteStorageObject(decodeURIComponent(match[1]));
+  } catch {
+    // Ignore missing/unauthorized objects — caller already updated metadata.
+  }
 }

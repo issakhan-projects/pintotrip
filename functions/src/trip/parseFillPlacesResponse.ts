@@ -137,11 +137,21 @@ function parseLocationPlace(
   const note = asString(row.note) ?? undefined;
   const category = parseCategory(row.category);
 
+  const priceFromArray = (() => {
+    if (!Array.isArray(row.prices)) return null;
+    for (const item of row.prices) {
+      if (!item || typeof item !== "object") continue;
+      return item as Record<string, unknown>;
+    }
+    return null;
+  })();
   const priceRaw =
     row.price && typeof row.price === "object"
       ? (row.price as Record<string, unknown>)
-      : null;
-  const priceAmount = priceRaw ? asNumber(priceRaw.amount) : asNumber(row.priceAmount);
+      : priceFromArray;
+  const priceAmount = priceRaw
+    ? asNumber(priceRaw.amount)
+    : asNumber(row.priceAmount);
   const priceCurrency =
     (priceRaw ? asString(priceRaw.currency) : null) ||
     asString(row.priceCurrency);
@@ -155,12 +165,23 @@ function parseLocationPlace(
       if (!item || typeof item !== "object") continue;
       const url = asHttpUrl((item as Record<string, unknown>).url);
       if (!url) continue;
-      const label = asString((item as Record<string, unknown>).label) ?? undefined;
-      links.push({ url, ...(label ? { label } : {}) });
+      const label =
+        asString((item as Record<string, unknown>).label) ?? undefined;
+      links.push({
+        url,
+        label:
+          label ||
+          (category === "transport" ? "Buy tickets" : "Tickets"),
+      });
     }
   } else {
     const single = asHttpUrl(row.link);
-    if (single) links.push({ url: single });
+    if (single) {
+      links.push({
+        url: single,
+        label: category === "transport" ? "Buy tickets" : "Tickets",
+      });
+    }
   }
 
   const aiRaw =

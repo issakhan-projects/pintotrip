@@ -19,6 +19,7 @@ export type AIUsageMonthly = {
 
 export type AIOperationName =
   | "findPlace"
+  | "findAroundMe"
   | "getCityIntelligence"
   | "planTrip"
   | "planTripAdvanced"

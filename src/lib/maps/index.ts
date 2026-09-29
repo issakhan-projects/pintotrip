@@ -93,3 +93,8 @@ export {
   CityStatusOverlayController,
   type CityPlaceIdBackfill,
 } from "./cityStatusOverlays";
+export {
+  popCachedMap,
+  pushCachedMap,
+  isReusableMap,
+} from "./mapInstanceCache";

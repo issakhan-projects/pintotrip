@@ -319,7 +319,7 @@ export function CheckoutConfirmModal({
 
                 {interval === "year" && totals.yearlyDiscountAmount > 0 ? (
                   <SummaryRow
-                    label={`${totals.yearlyDiscountPercent}% yearly discount`}
+                    label="2 months free"
                     value={`−${formatCheckoutAmount(totals.yearlyDiscountAmount, currency)}`}
                     valueClassName="text-success"
                   />

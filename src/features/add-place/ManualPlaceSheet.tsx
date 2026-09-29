@@ -1,13 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, TextInput } from "@/components/ui";
 import { Timestamp } from "firebase/firestore";
 import { Sheet } from "@/components/ui/Sheet";
 import { createUserLocation } from "@/services/locations";
 import { slugifyId, countryIdFromParts, isAsciiId } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
-import { resolveEnglishPlaceIds, withCityGooglePlaceId, englishPlaceIdsFromNames } from "@/lib/maps";
+import {
+  resolveEnglishPlaceIds,
+  reverseGeocode,
+  withCityGooglePlaceId,
+  englishPlaceIdsFromNames,
+} from "@/lib/maps";
 
 interface ManualPlaceSheetProps {
   open: boolean;
@@ -29,7 +34,38 @@ export function ManualPlaceSheet({
   const [country, setCountry] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Prefill city/country from reverse geocode (same idea as city intelligence pick).
+  useEffect(() => {
+    if (!open || !coords) {
+      setTitle("");
+      setCity("");
+      setCountry("");
+      setNote("");
+      setError(null);
+      setResolving(false);
+      return;
+    }
+
+    let cancelled = false;
+    setResolving(true);
+    setError(null);
+    void reverseGeocode(coords.lat, coords.lng)
+      .then((place) => {
+        if (cancelled || !place) return;
+        if (place.city) setCity(place.city);
+        if (place.country) setCountry(place.country);
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, coords?.lat, coords?.lng]);
 
   async function handleSave() {
     if (!coords || !title.trim() || !city.trim() || !country.trim()) {
@@ -115,12 +151,14 @@ export function ManualPlaceSheet({
         {coords ? (
           <p className="text-xs text-text-muted">
             {coords.lat.toFixed(5)}, {coords.lng.toFixed(5)}
+            {resolving ? " · Finding city…" : ""}
           </p>
         ) : null}
         <TextInput
           placeholder="Place title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          autoFocus
         />
         <TextInput
           placeholder="City"

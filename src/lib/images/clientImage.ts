@@ -33,17 +33,50 @@ const DEFAULT_QUALITIES = [0.8, 0.68, 0.52, 0.4] as const;
 const DEFAULT_MAX_DATA_URL_CHARS = 1_800_000;
 /** Reject enormous camera dumps before decoding into memory. */
 const ABSOLUTE_MAX_FILE_BYTES = 40 * 1024 * 1024;
+/** Hard cap for every JPEG written to Firebase Storage. */
+export const STORAGE_IMAGE_MAX_BYTES = 300 * 1024;
+/** @deprecated Prefer STORAGE_IMAGE_MAX_BYTES — same 300 KB Storage cap. */
+export const LOCATION_STORAGE_MAX_BYTES = STORAGE_IMAGE_MAX_BYTES;
+
+const STORAGE_MAX_DATA_URL_CHARS =
+  Math.ceil(STORAGE_IMAGE_MAX_BYTES * (4 / 3)) + 64;
 
 export type CompressImageOptions = {
   maxSides?: readonly number[];
   qualities?: readonly number[];
   maxDataUrlChars?: number;
+  /** Hard JPEG binary size cap (e.g. Firebase Storage). */
+  maxBytes?: number;
 };
 
 export type PreparedClientImage = {
   dataUrl: string;
   blob: Blob;
 };
+
+/**
+ * Compress options for Firebase Storage uploads — always ≤ 300 KB JPEG.
+ * Pass dimension/quality overrides; maxBytes stays capped.
+ */
+export function storageImageCompressOptions(
+  overrides?: CompressImageOptions
+): CompressImageOptions {
+  const maxBytes = Math.min(
+    overrides?.maxBytes ?? STORAGE_IMAGE_MAX_BYTES,
+    STORAGE_IMAGE_MAX_BYTES
+  );
+  const maxDataUrlChars = Math.min(
+    overrides?.maxDataUrlChars ?? STORAGE_MAX_DATA_URL_CHARS,
+    Math.ceil(maxBytes * (4 / 3)) + 64
+  );
+  return {
+    maxSides: [1280, 1024, 800, 640, 480, 360],
+    qualities: [0.75, 0.6, 0.48, 0.36, 0.28],
+    ...overrides,
+    maxBytes,
+    maxDataUrlChars,
+  };
+}
 
 function fileExtension(name: string): string {
   const i = name.lastIndexOf(".");
@@ -195,11 +228,31 @@ function drawScaledJpegDataUrl(
   return dataUrl;
 }
 
+/** Approx binary length of a base64 data URL without allocating a Blob. */
+function jpegBinarySize(dataUrl: string): number {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return dataUrl.length;
+  const b64 = dataUrl.slice(comma + 1);
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((b64.length * 3) / 4) - padding);
+}
+
+function meetsCompressTargets(
+  dataUrl: string,
+  maxDataUrlChars: number,
+  maxBytes?: number
+): boolean {
+  if (dataUrl.length > maxDataUrlChars) return false;
+  if (maxBytes != null && jpegBinarySize(dataUrl) > maxBytes) return false;
+  return true;
+}
+
 function ladderCompress(
   bitmap: ImageBitmap,
   options: Required<
     Pick<CompressImageOptions, "maxSides" | "qualities" | "maxDataUrlChars">
-  >
+  > &
+    Pick<CompressImageOptions, "maxBytes">
 ): string {
   let best: string | null = null;
 
@@ -207,7 +260,13 @@ function ladderCompress(
     for (const quality of options.qualities) {
       const dataUrl = drawScaledJpegDataUrl(bitmap, maxSide, quality);
       if (!best || dataUrl.length < best.length) best = dataUrl;
-      if (dataUrl.length <= options.maxDataUrlChars) {
+      if (
+        meetsCompressTargets(
+          dataUrl,
+          options.maxDataUrlChars,
+          options.maxBytes
+        )
+      ) {
         return dataUrl;
       }
     }
@@ -216,12 +275,18 @@ function ladderCompress(
   if (!best) {
     throw new ImageUploadError("unreadable", "Could not read photo.");
   }
+  if (
+    options.maxBytes != null &&
+    jpegBinarySize(best) > options.maxBytes
+  ) {
+    throw new ImageUploadError("too_large", "Photo too large.");
+  }
   return best;
 }
 
 /**
  * Decode (incl. HEIC), apply EXIF orientation, downscale + JPEG quality ladder
- * until the data URL is ≤ ~1.8M chars. Never send raw HEIC or multi‑MB originals.
+ * until under maxDataUrlChars / maxBytes. Never send raw HEIC or multi‑MB originals.
  */
 export async function compressImageToDataUrl(
   file: Blob,
@@ -238,7 +303,8 @@ export async function compressImageToDataUrl(
   const maxSides = options.maxSides ?? DEFAULT_MAX_SIDES;
   const qualities = options.qualities ?? DEFAULT_QUALITIES;
   const maxDataUrlChars = options.maxDataUrlChars ?? DEFAULT_MAX_DATA_URL_CHARS;
-  const ladderOpts = { maxSides, qualities, maxDataUrlChars };
+  const maxBytes = options.maxBytes;
+  const ladderOpts = { maxSides, qualities, maxDataUrlChars, maxBytes };
 
   let source = await decodeSourceBlob(file);
   let convertedFromHeic = source.convertedFromHeic;
@@ -313,8 +379,13 @@ export async function prepareClientImage(
     throw new ImageUploadError("too_large", "Photo too large.");
   }
 
+  const blob = dataUrlToBlob(dataUrl);
+  if (options?.maxBytes != null && blob.size > options.maxBytes) {
+    throw new ImageUploadError("too_large", "Photo too large.");
+  }
+
   return {
     dataUrl,
-    blob: dataUrlToBlob(dataUrl),
+    blob,
   };
 }

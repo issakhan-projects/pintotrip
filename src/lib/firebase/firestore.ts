@@ -135,4 +135,7 @@ export const FirestorePaths = {
   travelIntelligenceDaily: "travelIntelligence/daily/items",
   travelIntelligenceDailyDay: (date: string) =>
     `travelIntelligence/daily/items/${date}`,
+  /** Public travel journal / blog: journals/{journalId} */
+  journals: "journals",
+  journal: (journalId: string) => `journals/${journalId}`,
 } as const;

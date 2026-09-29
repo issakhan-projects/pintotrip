@@ -10,6 +10,7 @@ const PRODUCT_LINKS = [
   { href: "#trip-planner", label: "Trip Planner" },
   { href: "#how-it-works", label: "How it works" },
   { href: "#explore", label: "Explore" },
+  { href: "/journal", label: "Journal" },
   { href: "/login", label: "Start for free" },
 ] as const;
 

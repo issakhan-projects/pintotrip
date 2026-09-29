@@ -2,9 +2,9 @@
  * PinToTrip Cloud Functions entrypoint.
  * AI and privileged work runs here — never in the browser.
  *
- * Callables: findPlace, getCityIntelligence, planTrip, fillTripPlannerAiPlaces,
- * getTripWeather, resolveCityAirports, submitReview, createReferral,
- * completeReferral.
+ * Callables: findPlace, findAroundMe, getCityIntelligence, planTrip,
+ * fillTripPlannerAiPlaces, getTripWeather, resolveCityAirports,
+ * purchasePlaceSearchPack, submitReview, createReferral, completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
  * onTripPlannerCreated (tripPlanner create → transport discovery + transportLocations).
@@ -14,6 +14,8 @@
 import { setGlobalOptions } from "firebase-functions";
 import { DEFAULT_FUNCTIONS_REGION } from "./shared/config";
 import { findPlace } from "./location/findPlace";
+import { findAroundMe } from "./location/findAroundMe";
+import { purchasePlaceSearchPack } from "./location/purchasePlaceSearchPack";
 import { getCityIntelligence } from "./city/getCityIntelligence";
 import { planTrip } from "./trip/planTrip";
 import { fillTripPlannerAiPlaces } from "./trip/fillTripPlannerAiPlaces";
@@ -36,6 +38,8 @@ setGlobalOptions({
 
 export {
   findPlace,
+  findAroundMe,
+  purchasePlaceSearchPack,
   getCityIntelligence,
   planTrip,
   fillTripPlannerAiPlaces,

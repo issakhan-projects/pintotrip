@@ -23,7 +23,7 @@ import type {
   ResolvedCityAirport,
 } from "./airportTypes";
 
-const MODEL = "gpt-5.6-luna";
+const MODEL = "gpt-6-luna";
 const MAX_TOKENS = 900;
 const MAX_CITIES = 12;
 

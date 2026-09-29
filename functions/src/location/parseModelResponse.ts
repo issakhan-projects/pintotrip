@@ -26,6 +26,11 @@ export interface ModelLocationAlternative {
 
 /** Initial vision/text identification (no web verification). */
 export interface ModelInitialIdentification {
+  /**
+   * False when the image is mainly people/things/objects with no place cues.
+   * When false, skip verification and return unidentified immediately.
+   */
+  containsTravelPlace: boolean;
   identified: boolean;
   placeName: string | null;
   placeId: string | null;
@@ -51,6 +56,9 @@ export interface ModelInitialIdentification {
   visualClues: string[];
   suggestedSearchQueries: string[];
 }
+
+export const NO_LOCATION_IN_PHOTOS_REASON =
+  "No location was found in the photos.";
 
 /** Final result after optional verification. */
 export interface ModelVerifiedIdentification {
@@ -416,47 +424,60 @@ export function parseModelInitialIdentification(
   );
 
   const identified = asBoolean(body.identified, Boolean(placeName && country));
+  // Default true when omitted so uncertain landmarks still verify; model must
+  // explicitly set false for people/things/non-place photos.
+  const containsTravelPlace = asBoolean(body.containsTravelPlace, true);
 
   return {
-    identified: identified && Boolean(placeName),
-    placeName,
-    placeId,
-    description:
-      asOptionalString(body.description) ??
-      asOptionalString(body.reason) ??
-      "",
-    city,
-    cityId,
-    country,
-    countryId,
-    countryCode,
-    category: parseCategory(body.category),
-    latitude: coords.latitude,
-    longitude: coords.longitude,
+    containsTravelPlace,
+    identified: identified && Boolean(placeName) && containsTravelPlace,
+    placeName: containsTravelPlace ? placeName : null,
+    placeId: containsTravelPlace ? placeId : null,
+    description: containsTravelPlace
+      ? (asOptionalString(body.description) ??
+        asOptionalString(body.reason) ??
+        "")
+      : "",
+    city: containsTravelPlace ? city : null,
+    cityId: containsTravelPlace ? cityId : null,
+    country: containsTravelPlace ? country : null,
+    countryId: containsTravelPlace ? countryId : null,
+    countryCode: containsTravelPlace ? countryCode : null,
+    category: containsTravelPlace ? parseCategory(body.category) : null,
+    latitude: containsTravelPlace ? coords.latitude : null,
+    longitude: containsTravelPlace ? coords.longitude : null,
     coordinatesAccuracy: asAccuracy(
       body.coordinatesAccuracy ??
         (body.coordinates && typeof body.coordinates === "object"
           ? (body.coordinates as Record<string, unknown>).accuracy
           : undefined)
     ),
-    confidence,
-    confidenceLevel,
-    reason: asOptionalString(body.reason) ?? asOptionalString(body.why) ?? "",
-    isDistinctive: asBoolean(body.isDistinctive, confidence >= 0.85),
-    isSpecificPlace: asBoolean(body.isSpecificPlace, identified),
-    hasDistinctiveEvidence: asBoolean(
-      body.hasDistinctiveEvidence,
-      confidence >= 0.85
-    ),
-    couldMatchMultipleLandmarks: asBoolean(
-      body.couldMatchMultipleLandmarks,
-      false
-    ),
-    possibleAlternatives: parseAlternatives(
-      body.possibleAlternatives ?? body.alternatives
-    ),
-    visualClues: asStringArray(body.visualClues),
-    suggestedSearchQueries: asStringArray(body.suggestedSearchQueries),
+    confidence: containsTravelPlace ? confidence : 0,
+    confidenceLevel: containsTravelPlace ? confidenceLevel : "low",
+    reason: containsTravelPlace
+      ? (asOptionalString(body.reason) ?? asOptionalString(body.why) ?? "")
+      : (asOptionalString(body.reason) ??
+        asOptionalString(body.why) ??
+        NO_LOCATION_IN_PHOTOS_REASON),
+    isDistinctive: containsTravelPlace
+      ? asBoolean(body.isDistinctive, confidence >= 0.85)
+      : false,
+    isSpecificPlace: containsTravelPlace
+      ? asBoolean(body.isSpecificPlace, identified)
+      : false,
+    hasDistinctiveEvidence: containsTravelPlace
+      ? asBoolean(body.hasDistinctiveEvidence, confidence >= 0.85)
+      : false,
+    couldMatchMultipleLandmarks: containsTravelPlace
+      ? asBoolean(body.couldMatchMultipleLandmarks, false)
+      : false,
+    possibleAlternatives: containsTravelPlace
+      ? parseAlternatives(body.possibleAlternatives ?? body.alternatives)
+      : [],
+    visualClues: containsTravelPlace ? asStringArray(body.visualClues) : [],
+    suggestedSearchQueries: containsTravelPlace
+      ? asStringArray(body.suggestedSearchQueries)
+      : [],
   };
 }
 
@@ -549,12 +570,18 @@ export function parseModelVerifiedIdentification(
 
 /**
  * Adaptive verification gate.
- * Skip verification only when identification is clearly specific and distinctive.
+ * Skip verification when the image has no travel place (people/things/etc.).
+ * Otherwise skip only when identification is clearly specific and distinctive.
  * Famous lookalikes / multi-landmark ambiguity always require verification.
  */
 export function needsVerification(
   initial: ModelInitialIdentification
 ): boolean {
+  // Non-place photos: do not burn a web-search verification pass.
+  if (!initial.containsTravelPlace) {
+    return false;
+  }
+
   const seriousAlternatives = initial.possibleAlternatives.filter(
     (alt) =>
       alt.confidence >= 0.45 ||
@@ -640,6 +667,17 @@ export function toAnalyzeLocationResult(
     "alternatives" in analysis
       ? analysis.alternatives
       : analysis.possibleAlternatives;
+
+  if (
+    "containsTravelPlace" in analysis &&
+    analysis.containsTravelPlace === false
+  ) {
+    return emptyUnidentifiedResult(
+      analysis.reason || NO_LOCATION_IN_PHOTOS_REASON,
+      [],
+      verificationPerformed
+    );
+  }
 
   if (!analysis.identified || !analysis.placeName) {
     return emptyUnidentifiedResult(

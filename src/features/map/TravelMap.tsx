@@ -8,7 +8,10 @@ import {
   getBrowserCityCoords,
   googleMapsProvider,
   hasUsableMapCoords,
+  isReusableMap,
   looksLikeGooglePlaceId,
+  popCachedMap,
+  pushCachedMap,
   resolveCoordsFromGooglePlaceId,
   resolveMapsMapId,
   type CityPlaceIdBackfill,
@@ -18,17 +21,33 @@ import {
   type MapMarkerInput,
   type MarkerRecord,
 } from "@/lib/maps";
+import {
+  LivingRoutesController,
+  type LivingRouteLeg,
+} from "@/features/map/livingRoutes";
 
 const DEFAULT_CENTER = { lat: 20, lng: 0 };
 const DEFAULT_ZOOM = 2;
 
 export type MapInteractionMode = "browse" | "pick-place" | "pick-city";
 
+export type { LivingRouteLeg };
+
 interface TravelMapProps {
   className?: string;
   markers?: MapMarkerInput[];
   /** Locations used only for DDS city-boundary highlights (pins unchanged). */
   cityLocations?: CityStatusLocation[];
+  /**
+   * Living Travel Map — animated route for an upcoming trip
+   * (from → destinations). Hidden while picking on the map.
+   */
+  livingRoutes?: LivingRouteLeg[];
+  /**
+   * When false (Planner/Profile/list), pause living-route animation.
+   * Map stays mounted; default true.
+   */
+  livingRoutesActive?: boolean;
   /** Persist resolved locality Place IDs back onto location docs. */
   onCityPlaceIdResolved?: (batch: CityPlaceIdBackfill[]) => void;
   onMarkerSelect?: (id: string) => void;
@@ -42,6 +61,15 @@ interface TravelMapProps {
   showCurrentLocation?: boolean;
   /** Pan/zoom to the device city when the map first opens. Default true. */
   centerOnCurrentLocation?: boolean;
+}
+
+function livingRoutesSignature(legs: LivingRouteLeg[]): string {
+  return legs
+    .map(
+      (l) =>
+        `${l.id}:${l.from.lat}:${l.from.lon}:${l.to.lat}:${l.to.lon}:${l.style}`
+    )
+    .join("|");
 }
 
 function markersSignature(markers: MapMarkerInput[]): string {
@@ -88,14 +116,25 @@ async function hydrateMarkerCoords(
   return resolved.filter((m): m is MapMarkerInput => m != null);
 }
 
+function createMapHost(): HTMLDivElement {
+  const host = document.createElement("div");
+  host.style.width = "100%";
+  host.style.height = "100%";
+  return host;
+}
+
 /**
  * Google Maps canvas — custom by design (not a Tremor concern).
  * Marker logic is unchanged; city boundaries use a separate DDS controller.
+ * Map instances are cached and reattached so remounts do not bill another
+ * Dynamic Maps load.
  */
 export function TravelMap({
   className,
   markers = [],
   cityLocations = [],
+  livingRoutes = [],
+  livingRoutesActive = true,
   onCityPlaceIdResolved,
   onMarkerSelect,
   onMapReady,
@@ -108,9 +147,14 @@ export function TravelMap({
 }: TravelMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapInstance | null>(null);
+  const mapHostRef = useRef<HTMLDivElement | null>(null);
   const markerMapRef = useRef<Map<string, MarkerRecord>>(new Map());
+  const markersRef = useRef(markers);
+  const markersSyncGenRef = useRef(0);
   const currentLocationMarkerRef = useRef<MapMarkerHandle | null>(null);
   const cityOverlayRef = useRef<CityStatusOverlayController | null>(null);
+  const livingRoutesRef = useRef<LivingRoutesController | null>(null);
+  const livingRoutesLegsRef = useRef(livingRoutes);
   const onCityPlaceIdResolvedRef = useRef(onCityPlaceIdResolved);
   const clickListenerRef = useRef<{ remove: () => void } | null>(null);
   const onMarkerSelectRef = useRef(onMarkerSelect);
@@ -120,6 +164,8 @@ export function TravelMap({
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
+  markersRef.current = markers;
+  livingRoutesLegsRef.current = livingRoutes;
   onMarkerSelectRef.current = onMarkerSelect;
   onCityPlaceIdResolvedRef.current = onCityPlaceIdResolved;
 
@@ -127,30 +173,105 @@ export function TravelMap({
     interactionMode ?? (pickMode ? "pick-place" : "browse");
   const clickEnabled = mode === "pick-place" || mode === "pick-city";
   const citySig = cityLocationsSignature(cityLocations);
+  const livingSig = livingRoutesSignature(livingRoutes);
 
   useEffect(() => {
-    const element = containerRef.current;
-    if (!element || mapRef.current) return;
+    const container = containerRef.current;
+    if (!container || mapRef.current) return;
 
     let cancelled = false;
     const { mapId } = resolveMapsMapId();
 
+    const recycleMap = (map: MapInstance) => {
+      const host = map.getDiv();
+      if (host.parentElement) host.remove();
+      pushCachedMap(mapId, map);
+    };
+
+    const releaseUi = () => {
+      setReady(false);
+      const handles = Array.from(markerMapRef.current.values()).map(
+        (r) => r.handle
+      );
+      googleMapsProvider.clearMarkers(handles);
+      markerMapRef.current = new Map();
+      lastMarkersSignatureRef.current = "";
+      markersSyncGenRef.current += 1;
+      if (currentLocationMarkerRef.current) {
+        googleMapsProvider.clearMarkers([currentLocationMarkerRef.current]);
+        currentLocationMarkerRef.current = null;
+      }
+      cityOverlayRef.current?.clear();
+      cityOverlayRef.current = null;
+      livingRoutesRef.current?.destroy();
+      livingRoutesRef.current = null;
+      clickListenerRef.current?.remove();
+      clickListenerRef.current = null;
+      const map = mapRef.current;
+      mapRef.current = null;
+      mapHostRef.current = null;
+      if (map) recycleMap(map);
+    };
+
+    const attachControllers = (map: MapInstance) => {
+      mapRef.current = map;
+      map.setOptions({
+        gestureHandling: "greedy",
+        draggableCursor: null,
+        draggingCursor: null,
+      });
+      cityOverlayRef.current = new CityStatusOverlayController(map, mapId, {
+        onPlaceIdResolved: (batch) => {
+          onCityPlaceIdResolvedRef.current?.(batch);
+        },
+      });
+      livingRoutesRef.current = new LivingRoutesController(map);
+      setReady(true);
+      onMapReady?.(map);
+    };
+
+    const cached = popCachedMap(mapId);
+    if (cached && isReusableMap(cached)) {
+      const host = cached.getDiv();
+      mapHostRef.current = host;
+      container.appendChild(host);
+      // Detach/reattach can collapse tile layout — nudge a camera update.
+      const center = cached.getCenter();
+      if (center) {
+        window.setTimeout(() => {
+          if (!cancelled && mapRef.current === cached) {
+            cached.setCenter(center);
+          }
+        }, 0);
+      }
+      // Keep the reused camera; skip first device-city snap / fit-to-markers.
+      didCenterOnUserRef.current = true;
+      lastFitSignatureRef.current = "__reused_map__";
+      lastMarkersSignatureRef.current = "";
+      attachControllers(cached);
+      return () => {
+        cancelled = true;
+        releaseUi();
+      };
+    }
+
+    const host = createMapHost();
+    mapHostRef.current = host;
+    container.appendChild(host);
+
     googleMapsProvider
       .createMap({
-        element,
+        element: host,
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
       })
       .then((map) => {
-        if (cancelled) return;
-        mapRef.current = map;
-        cityOverlayRef.current = new CityStatusOverlayController(map, mapId, {
-          onPlaceIdResolved: (batch) => {
-            onCityPlaceIdResolvedRef.current?.(batch);
-          },
-        });
-        setReady(true);
-        onMapReady?.(map);
+        if (cancelled) {
+          // Strict Mode / fast unmount — keep the paid load for the next mount.
+          recycleMap(map);
+          return;
+        }
+        attachControllers(map);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -161,19 +282,7 @@ export function TravelMap({
 
     return () => {
       cancelled = true;
-      const handles = Array.from(markerMapRef.current.values()).map(
-        (r) => r.handle
-      );
-      googleMapsProvider.clearMarkers(handles);
-      markerMapRef.current = new Map();
-      if (currentLocationMarkerRef.current) {
-        googleMapsProvider.clearMarkers([currentLocationMarkerRef.current]);
-        currentLocationMarkerRef.current = null;
-      }
-      cityOverlayRef.current?.clear();
-      cityOverlayRef.current = null;
-      clickListenerRef.current?.remove();
-      mapRef.current = null;
+      releaseUi();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
   }, []);
@@ -218,32 +327,42 @@ export function TravelMap({
     const map = mapRef.current;
     if (!map || !ready) return;
 
-    let cancelled = false;
     const signature = markersSignature(markers);
     if (signature === lastMarkersSignatureRef.current) {
       return;
     }
 
-    const existingCopy = new Map(markerMapRef.current);
+    // Generation guard: overlapping hydrate/sync can mutate shared AdvancedMarker
+    // handles, leaving a pin at stale coords while markerMapRef reflects a newer set.
+    const syncGen = ++markersSyncGenRef.current;
 
     void (async () => {
-      const hydrated = await hydrateMarkerCoords(markers);
-      if (cancelled || !mapRef.current) return;
+      const snapshot = markersRef.current;
+      const snapshotSig = markersSignature(snapshot);
+      const hydrated = await hydrateMarkerCoords(snapshot);
+      if (syncGen !== markersSyncGenRef.current || !mapRef.current) return;
 
       const { next, removed } = await googleMapsProvider.syncMarkers(
         mapRef.current,
         hydrated,
-        existingCopy,
+        new Map(markerMapRef.current),
         (id) => {
           onMarkerSelectRef.current?.(id);
         }
       );
 
-      if (cancelled) {
+      if (syncGen !== markersSyncGenRef.current) {
         // Drop only markers created by this stale sync.
         for (const [id, record] of next) {
           if (markerMapRef.current.get(id)?.handle !== record.handle) {
             record.handle.map = null;
+          }
+        }
+        // syncMarkers already moved shared handles — restore current positions.
+        for (const m of markersRef.current) {
+          const record = markerMapRef.current.get(m.id);
+          if (record && hasUsableMapCoords(m.lat, m.lon)) {
+            record.handle.position = { lat: m.lat, lng: m.lon };
           }
         }
         return;
@@ -251,25 +370,24 @@ export function TravelMap({
 
       googleMapsProvider.clearMarkers(removed);
       markerMapRef.current = next;
-      lastMarkersSignatureRef.current = signature;
+      lastMarkersSignatureRef.current = snapshotSig;
 
       // Auto-fit only the first time markers appear (or after the map is
       // cleared back to empty). Do not re-fit when pick mode ends, city
       // intelligence opens, or a favorite pin is added — keep the viewport.
-      // Also skip when we already centered on the device location.
+      // Also skip when we already centered on the device location / reused map.
       if (hydrated.length === 0) {
-        if (lastFitSignatureRef.current !== "__current_location__") {
+        if (
+          lastFitSignatureRef.current !== "__current_location__" &&
+          lastFitSignatureRef.current !== "__reused_map__"
+        ) {
           lastFitSignatureRef.current = "";
         }
       } else if (fitToMarkers && lastFitSignatureRef.current === "") {
         googleMapsProvider.fitToMarkers(mapRef.current, hydrated);
-        lastFitSignatureRef.current = signature;
+        lastFitSignatureRef.current = snapshotSig;
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [markers, ready, fitToMarkers]);
 
   // Keep backfill handler current without recreating the controller.
@@ -286,6 +404,16 @@ export function TravelMap({
       devLog.error("[PinToTrip DDS] Failed to sync city boundary styles.", err);
     });
   }, [ready, citySig, cityLocations]);
+
+  // Living Travel Map — sync by signature only (no fitBounds / no remount).
+  useEffect(() => {
+    if (!ready) return;
+    const controller = livingRoutesRef.current;
+    if (!controller) return;
+    controller.setActive(livingRoutesActive);
+    controller.setVisible(!clickEnabled);
+    controller.sync(livingRoutesLegsRef.current);
+  }, [ready, livingSig, livingRoutesActive, clickEnabled]);
 
   useEffect(() => {
     const map = mapRef.current;

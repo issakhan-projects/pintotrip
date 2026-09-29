@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Button, ConfirmModal } from "@/components/ui";
+import { Button, ConfirmModal, TextInput } from "@/components/ui";
 import {
   Check,
   ChevronDown,
@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Search,
   Sparkles,
   Trash2,
   TrainFront,
@@ -38,11 +39,22 @@ import type {
   TripRoute,
 } from "@/types/trip-planner";
 import type { LocationPrice, LocationStatus } from "@/types/location";
-import { getBrowserCoords, type MapMarkerInput } from "@/lib/maps";
+import {
+  getBrowserCoords,
+  resolveEnglishPlaceIds,
+  withCityGooglePlaceId,
+  type MapMarkerInput,
+} from "@/lib/maps";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
-import { planTripRegenerateCost } from "@/types/credits";
+import {
+  AI_CREDIT_COSTS,
+  formatInsufficientCreditsMessage,
+  isInsufficientAICreditsError,
+  PLACE_SEARCH_PACK_SIZE,
+  planTripRegenerateCost,
+} from "@/types/credits";
 import { formatAvailableDuration } from "./timelineHelpers";
-import { cx } from "@/lib/utils";
+import { countryIdFromParts, cx, isAsciiId, slugifyId } from "@/lib/utils";
 import { distanceKm } from "./clusterPlaces";
 import {
   matchLocationsToDestinations,
@@ -61,8 +73,27 @@ import {
   ROUTE_TRANSPORT_ICON,
   ROUTE_TRANSPORT_LABEL,
 } from "./RouteLegCard";
+import {
+  fetchSuggestedPlacePhoto,
+  pexelsPhotoUrlExcludeId,
+  searchPlacesByName,
+  type SearchedPlace,
+} from "@/features/add-place/placeSearch";
+import { purchasePlaceSearchPack } from "@/services/functions";
+import { createUserLocation } from "@/services/locations";
+import { Timestamp } from "firebase/firestore";
+import { resolveCountryCode } from "@/lib/countries";
 
 type Coords = { lat: number; lon: number };
+
+function itinerarySlotHasImage(
+  slot: ItineraryPlace,
+  place: SavedLocation | undefined
+): boolean {
+  if (slot.imageUrl?.trim()) return true;
+  if (place?.images?.some((img) => img.url?.trim())) return true;
+  return false;
+}
 
 function weatherIconUrl(icon: string): string {
   return `https://openweathermap.org/img/wn/${icon}@2x.png`;
@@ -100,12 +131,15 @@ function formatPlacePrice(price: LocationPrice): string | null {
 }
 
 type PlacesView = "map" | "itinerary";
+type AddPlaceTab = "list" | "map" | "search";
 
 interface PlacesStepProps {
   trip: TripPlannerDoc;
   locations: SavedLocation[];
   userId: string;
   aiCreditsBalance: number;
+  /** Google Places Text Search — Free is always off. */
+  canSearchPlaces?: boolean;
   language?: string;
   onUpdateSavedPlaces: (ids: string[]) => Promise<void>;
   onUpdateItinerary: (itinerary: TripItinerary) => Promise<void>;
@@ -125,6 +159,7 @@ export function PlacesStep({
   locations,
   userId,
   aiCreditsBalance,
+  canSearchPlaces = false,
   language,
   onUpdateSavedPlaces,
   onUpdateItinerary,
@@ -134,7 +169,17 @@ export function PlacesStep({
 }: PlacesStepProps) {
   const [view, setView] = useState<PlacesView>("itinerary");
   const [addOpen, setAddOpen] = useState(false);
+  const [addTab, setAddTab] = useState<AddPlaceTab>("list");
   const [addDayIndex, setAddDayIndex] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchedPlace[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchPackRemaining, setSearchPackRemaining] = useState(0);
+  const [buyingSearchPack, setBuyingSearchPack] = useState(false);
+  const [addingSearchPlaceId, setAddingSearchPlaceId] = useState<string | null>(
+    null
+  );
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [planIntent, setPlanIntent] = useState<"generate" | "regenerate">(
     "generate"
@@ -311,6 +356,20 @@ export function PlacesStep({
     return sortLocationsForDestination(matched, destinations);
   }, [locations, trip]);
 
+  const availableToAddMarkers: MapMarkerInput[] = useMemo(
+    () =>
+      availableToAdd.map((place) => ({
+        id: place.id,
+        lat: place.lat,
+        lon: place.lon,
+        title: place.title,
+        status: place.status,
+        kind: "place" as const,
+        googlePlaceId: place.city.googlePlaceId,
+      })),
+    [availableToAdd]
+  );
+
   async function toggleItineraryPlace(
     dayIndex: number,
     locationId: string,
@@ -387,10 +446,178 @@ export function PlacesStep({
     if (nextItinerary) {
       await onUpdateItinerary(nextItinerary);
     }
+
+    return {
+      savedPlaceIds: nextIds,
+      itinerary: nextItinerary ?? trip.itinerary,
+    };
   }
+
+  const lastChargedSearchQueryRef = useRef("");
+  const searchPackRemainingRef = useRef(searchPackRemaining);
+  searchPackRemainingRef.current = searchPackRemaining;
+
+  async function buySearchPack() {
+    setSearchError(null);
+    if (!canSearchPlaces) {
+      setSearchError("Place name search is not included in your plan.");
+      return;
+    }
+    if (aiCreditsBalance < AI_CREDIT_COSTS.searchPlaces) {
+      setSearchError(
+        `Not enough AI credits. Need ${AI_CREDIT_COSTS.searchPlaces}, you have ${aiCreditsBalance}.`
+      );
+      return;
+    }
+    setBuyingSearchPack(true);
+    try {
+      const pack = await purchasePlaceSearchPack();
+      const granted = pack.searchesGranted || PLACE_SEARCH_PACK_SIZE;
+      const q = searchQuery.trim();
+      if (q.length >= 2) {
+        lastChargedSearchQueryRef.current = q;
+        setSearchPackRemaining(granted - 1);
+        setSearching(true);
+        try {
+          const results = await searchPlacesByName(q, {
+            maxResultCount: PLACE_SEARCH_PACK_SIZE,
+          });
+          setSearchResults(results);
+        } catch {
+          setSearchResults([]);
+        } finally {
+          setSearching(false);
+        }
+      } else {
+        setSearchPackRemaining((prev) => prev + granted);
+      }
+    } catch (err) {
+      if (isInsufficientAICreditsError(err)) {
+        setSearchError(formatInsufficientCreditsMessage(err));
+      } else {
+        setSearchError(
+          err instanceof Error ? err.message : "Could not unlock searches."
+        );
+      }
+    } finally {
+      setBuyingSearchPack(false);
+    }
+  }
+
+  async function addSearchedPlace(place: SearchedPlace) {
+    setSearchError(null);
+    setAddingSearchPlaceId(place.placeId);
+    try {
+      const cityName = place.cityName.trim();
+      const countryName = place.countryName.trim();
+      const englishIds = await resolveEnglishPlaceIds(place.lat, place.lon);
+      const countryCode =
+        englishIds?.countryCode ||
+        resolveCountryCode(countryName) ||
+        undefined;
+      const countryData = {
+        id: countryIdFromParts(
+          englishIds?.countryNameEn || countryName,
+          countryCode
+        ),
+        name: countryName,
+      };
+      const cityId =
+        (englishIds?.cityId && isAsciiId(englishIds.cityId)
+          ? englishIds.cityId
+          : null) ||
+        (isAsciiId(slugifyId(englishIds?.cityNameEn || ""))
+          ? slugifyId(englishIds!.cityNameEn)
+          : null) ||
+        (isAsciiId(slugifyId(cityName)) ? slugifyId(cityName) : null);
+      if (!isAsciiId(countryData.id) || !cityId) {
+        throw new Error(
+          "Could not resolve English city/country ids for this place."
+        );
+      }
+      const cityData = await withCityGooglePlaceId(
+        { id: cityId, name: cityName },
+        countryData,
+        { lat: place.lat, lon: place.lon }
+      );
+
+      const locationId = await createUserLocation(userId, {
+        title: place.title.trim(),
+        description: place.address || "Added from Google Maps search.",
+        lat: place.lat,
+        lon: place.lon,
+        country: countryData,
+        city: cityData,
+        status: "planned",
+        images: [],
+        confidence: 1,
+        ai: {
+          why: `Matched from Google Maps search: ${place.address}`,
+          model: "manual",
+          processedAt: Timestamp.now(),
+        },
+        source: { type: "manual" },
+      });
+
+      const saved = await addPlaceToTrip(locationId);
+      await onSavePlan(saved);
+      setSearchResults((prev) =>
+        prev.filter((p) => p.placeId !== place.placeId)
+      );
+    } catch (err) {
+      setSearchError(
+        err instanceof Error ? err.message : "Failed to add place."
+      );
+    } finally {
+      setAddingSearchPlaceId(null);
+    }
+  }
+
+  // Name search — packed credits; charge once per distinct query.
+  useEffect(() => {
+    if (!addOpen || addTab !== "search" || !canSearchPlaces) return;
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    if (searchPackRemainingRef.current <= 0) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) return;
+      if (searchPackRemainingRef.current <= 0) return;
+
+      const alreadyCharged = lastChargedSearchQueryRef.current === q;
+      if (!alreadyCharged) {
+        lastChargedSearchQueryRef.current = q;
+        setSearchPackRemaining((prev) => Math.max(0, prev - 1));
+      }
+
+      setSearching(true);
+      void searchPlacesByName(q, { maxResultCount: PLACE_SEARCH_PACK_SIZE })
+        .then((results) => {
+          if (!cancelled) setSearchResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [addOpen, addTab, searchQuery, canSearchPlaces]);
 
   function openAddSheet(dayIndex?: number) {
     setAddDayIndex(dayIndex ?? null);
+    setAddTab("list");
+    setSearchError(null);
     setAddOpen(true);
   }
 
@@ -523,6 +750,8 @@ export function PlacesStep({
         onClose={() => {
           setAddOpen(false);
           setAddDayIndex(null);
+          setAddTab("list");
+          setSearchError(null);
         }}
         title={
           addDayIndex !== null
@@ -530,45 +759,211 @@ export function PlacesStep({
             : "Add places to trip"
         }
         size="lg"
+        bodyClassName="!p-0"
       >
-        <div className="space-y-2">
-          {availableToAdd.length === 0 ? (
-            <p className="text-sm text-text-secondary">
-              No saved places in{" "}
-              {listTripDestinations(trip)
-                .map((dest) => dest.cityName)
-                .filter(Boolean)
-                .join(", ") ||
-                listTripDestinations(trip)[0]?.countryName ||
-                "your destinations"}{" "}
-              left to add. Save places from those destinations on your map
-              first.
-            </p>
-          ) : (
-            availableToAdd.map((place) => (
-              <button
-                key={place.id}
-                type="button"
-                onClick={() => {
-                  void addPlaceToTrip(place.id);
-                }}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-border px-3 py-3 text-left hover:border-primary/30"
-              >
-                <span className="flex min-w-0 items-center gap-3">
-                  <PlaceThumb place={place} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-text">
-                      {place.title}
-                    </span>
-                    <span className="text-xs text-text-secondary">
-                      {place.city.name}, {place.country.name}
-                    </span>
-                  </span>
-                </span>
-                <Plus className="h-4 w-4 shrink-0 text-primary" />
-              </button>
-            ))
-          )}        </div>
+        <div className="flex min-h-0 flex-col">
+          <div className="px-4 pt-3 sm:px-5">
+            <div className="grid grid-cols-3 rounded-xl bg-surface p-1">
+              <ViewTab
+                active={addTab === "list"}
+                onClick={() => setAddTab("list")}
+                icon={<ListOrdered className="h-4 w-4" />}
+                label="List"
+              />
+              <ViewTab
+                active={addTab === "map"}
+                onClick={() => setAddTab("map")}
+                icon={<MapIcon className="h-4 w-4" />}
+                label="Map"
+              />
+              <ViewTab
+                active={addTab === "search"}
+                onClick={() => setAddTab("search")}
+                icon={<Search className="h-4 w-4" />}
+                label="Search"
+              />
+            </div>
+          </div>
+
+          {addTab === "search" && !canSearchPlaces ? (
+            <div className="space-y-3 px-4 py-6 sm:px-5">
+              <p className="text-sm text-text-secondary">
+                Place name search (Google Places) is not included in your plan.
+              </p>
+            </div>
+          ) : null}
+
+          {addTab === "list" ? (
+            <div className="space-y-2 px-4 py-3 sm:px-5">
+              {availableToAdd.length === 0 ? (
+                <p className="text-sm text-text-secondary">
+                  No saved places in{" "}
+                  {listTripDestinations(trip)
+                    .map((dest) => dest.cityName)
+                    .filter(Boolean)
+                    .join(", ") ||
+                    listTripDestinations(trip)[0]?.countryName ||
+                    "your destinations"}{" "}
+                  left to add. Use Search to find new places, or save places
+                  from the map first.
+                </p>
+              ) : (
+                <>
+                  <p className="text-xs font-medium text-text-muted">
+                    {availableToAdd.length}{" "}
+                    {availableToAdd.length === 1 ? "place" : "places"}{" "}
+                    available
+                  </p>
+                  {availableToAdd.map((place) => (
+                    <button
+                      key={place.id}
+                      type="button"
+                      onClick={() => {
+                        void addPlaceToTrip(place.id);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-border px-3 py-3 text-left hover:border-primary/30"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <PlaceThumb
+                          place={place}
+                          className="!h-14 !w-14 rounded-xl"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-text">
+                            {place.title}
+                          </span>
+                          <span className="text-xs text-text-secondary">
+                            {place.city.name}, {place.country.name}
+                          </span>
+                        </span>
+                      </span>
+                      <Plus className="h-4 w-4 shrink-0 text-primary" />
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {addTab === "map" ? (
+            <div className="flex min-h-0 flex-col px-4 pb-4 pt-3 sm:px-5">
+              {availableToAdd.length === 0 ? (
+                <p className="text-sm text-text-secondary">
+                  No available saved places to pin. Switch to Search to find
+                  new ones.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-2 text-xs text-text-secondary">
+                    Tap a pin to add that place
+                    {addDayIndex !== null
+                      ? ` to day ${addDayIndex + 1}`
+                      : " to this trip"}
+                    .
+                  </p>
+                  <div className="relative h-[min(52vh,360px)] overflow-hidden rounded-xl border border-border bg-surface">
+                    <TravelMap
+                      className="absolute inset-0 h-full w-full"
+                      markers={availableToAddMarkers}
+                      fitToMarkers
+                      showCurrentLocation={false}
+                      centerOnCurrentLocation={false}
+                      interactionMode="pick-place"
+                      onMarkerSelect={(id) => {
+                        void addPlaceToTrip(id);
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {addTab === "search" && canSearchPlaces ? (
+            <div className="space-y-3 px-4 py-3 sm:px-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-text-secondary">
+                  {searchPackRemaining > 0
+                    ? `${searchPackRemaining} search${searchPackRemaining === 1 ? "" : "es"} left in your pack`
+                    : `Unlock ${PLACE_SEARCH_PACK_SIZE} searches for ${AI_CREDIT_COSTS.searchPlaces} AI credits`}
+                </p>
+                <p className="text-xs text-text-muted">
+                  Balance {aiCreditsBalance}
+                </p>
+              </div>
+
+              {searchPackRemaining <= 0 ? (
+                <Button
+                  icon={buyingSearchPack ? Loader2 : Sparkles}
+                  onClick={() => void buySearchPack()}
+                  disabled={buyingSearchPack}
+                  className="h-11 w-full !bg-primary hover:!bg-primary-hover !border-primary !text-white"
+                >
+                  {buyingSearchPack
+                    ? "Unlocking…"
+                    : `Unlock ${PLACE_SEARCH_PACK_SIZE} searches · ${AI_CREDIT_COSTS.searchPlaces} credits`}
+                </Button>
+              ) : (
+                <TextInput
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search place name…"
+                  icon={Search}
+                  autoFocus
+                />
+              )}
+
+              {searchError ? (
+                <p className="text-sm text-error">{searchError}</p>
+              ) : null}
+
+              {searching ? (
+                <p className="inline-flex items-center gap-2 text-sm text-text-secondary">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  Searching…
+                </p>
+              ) : null}
+
+              {searchPackRemaining > 0 &&
+              !searching &&
+              searchQuery.trim().length >= 2 &&
+              searchResults.length === 0 ? (
+                <p className="text-sm text-text-secondary">No places found.</p>
+              ) : null}
+
+              <div className="space-y-2">
+                {searchResults.map((place) => {
+                  const busy = addingSearchPlaceId === place.placeId;
+                  return (
+                    <button
+                      key={place.placeId}
+                      type="button"
+                      disabled={Boolean(addingSearchPlaceId)}
+                      onClick={() => {
+                        void addSearchedPlace(place);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-border px-3 py-3 text-left hover:border-primary/30 disabled:opacity-60"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-text">
+                          {place.title}
+                        </span>
+                        <span className="block truncate text-xs text-text-secondary">
+                          {place.address}
+                        </span>
+                      </span>
+                      {busy ? (
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                      ) : (
+                        <Plus className="h-4 w-4 shrink-0 text-primary" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </Sheet>
 
       <PlanTripSheet
@@ -774,6 +1169,156 @@ function ItineraryList({
     trip.endDate?.toMillis?.(),
     trip.itinerary.days.length,
   ]);
+
+  /** Place slots that still need a photo attempt (empty, not flagged, or share a duplicate URL). */
+  const missingPhotoKey = useMemo(() => {
+    const keys: string[] = [];
+    const urlOwner = new Map<string, string>();
+    for (const day of trip.itinerary.days) {
+      for (const slot of day.places) {
+        if (slot.type === "gap" || slot.type === "route") continue;
+        const place = byId.get(slot.locationId);
+        const url = slot.imageUrl?.trim();
+        if (url) {
+          const owner = urlOwner.get(url);
+          if (!owner) {
+            urlOwner.set(url, slot.locationId);
+          } else if (owner !== slot.locationId) {
+            keys.push(`dup:${day.day}:${slot.locationId}`);
+            continue;
+          }
+        }
+        if (slot.noImage) continue;
+        if (itinerarySlotHasImage(slot, place)) continue;
+        keys.push(`${day.day}:${slot.locationId}`);
+      }
+    }
+    return keys.join("|");
+  }, [trip.itinerary.days, byId]);
+
+  // Fill empty itinerary place thumbs from Pexels; flag noImage when none found.
+  useEffect(() => {
+    if (!missingPhotoKey) return;
+
+    let cancelled = false;
+    const usedPhotoIds = new Set<string>();
+    for (const day of trip.itinerary.days) {
+      for (const slot of day.places) {
+        const existing = slot.imageUrl?.trim();
+        if (existing) usedPhotoIds.add(pexelsPhotoUrlExcludeId(existing));
+        const place = byId.get(slot.locationId);
+        for (const img of place?.images ?? []) {
+          const url = img.url?.trim();
+          if (url) usedPhotoIds.add(pexelsPhotoUrlExcludeId(url));
+        }
+      }
+    }
+
+    void (async () => {
+      let changed = false;
+      const days = trip.itinerary.days.map((day) => ({
+        ...day,
+        places: day.places.map((slot) => ({ ...slot })),
+      }));
+
+      // Same generic city photo was often assigned to every place. Keep the first
+      // owner of each URL and clear the rest so they re-resolve by place name.
+      const urlOwner = new Map<string, string>();
+      for (const day of days) {
+        for (const slot of day.places) {
+          if (slot.type === "gap" || slot.type === "route") continue;
+          const url = slot.imageUrl?.trim();
+          if (!url) continue;
+          const owner = urlOwner.get(url);
+          if (!owner) {
+            urlOwner.set(url, slot.locationId);
+            continue;
+          }
+          if (owner === slot.locationId) continue;
+          delete slot.imageUrl;
+          delete slot.noImage;
+          changed = true;
+        }
+      }
+
+      for (const day of days) {
+        for (const slot of day.places) {
+          if (cancelled) return;
+          if (slot.type === "gap" || slot.type === "route") continue;
+          if (slot.noImage) continue;
+          const place = byId.get(slot.locationId);
+          if (itinerarySlotHasImage(slot, place)) continue;
+
+          const title =
+            slot.title?.trim() || place?.title?.trim() || "";
+          const cityName = place?.city?.name?.trim() || "";
+          const countryName = place?.country?.name?.trim() || undefined;
+          const lat = place?.lat;
+          const lon = place?.lon;
+
+          if (
+            !title ||
+            !cityName ||
+            typeof lat !== "number" ||
+            !Number.isFinite(lat) ||
+            typeof lon !== "number" ||
+            !Number.isFinite(lon)
+          ) {
+            slot.noImage = true;
+            delete slot.imageUrl;
+            changed = true;
+            continue;
+          }
+
+          try {
+            const photo = await fetchSuggestedPlacePhoto({
+              title,
+              cityName,
+              countryName,
+              lat,
+              lon,
+              excludePlaceIds: usedPhotoIds,
+            });
+            if (cancelled) return;
+            if (photo?.photoUrl) {
+              usedPhotoIds.add(photo.placeId);
+              usedPhotoIds.add(pexelsPhotoUrlExcludeId(photo.photoUrl));
+              slot.imageUrl = photo.photoUrl;
+              delete slot.noImage;
+              changed = true;
+            } else {
+              slot.noImage = true;
+              delete slot.imageUrl;
+              changed = true;
+            }
+          } catch {
+            if (cancelled) return;
+            slot.noImage = true;
+            delete slot.imageUrl;
+            changed = true;
+          }
+        }
+      }
+
+      if (!changed || cancelled) return;
+      try {
+        await onUpdateItinerary({
+          status:
+            trip.itinerary.status === "empty"
+              ? "edited"
+              : trip.itinerary.status,
+          days,
+        });
+      } catch {
+        // Next visit can retry slots that never persisted noImage/imageUrl.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by missingPhotoKey
+  }, [missingPhotoKey]);
 
   if (trip.itinerary.status === "empty" || trip.itinerary.days.length === 0) {
     return (
@@ -1059,6 +1604,7 @@ function ItineraryList({
                             <PlaceThumb
                               place={place}
                               imageUrl={slot.imageUrl}
+                              noImage={slot.noImage}
                             />
                           </button>
                           <div className="min-w-0 flex-1">
@@ -1125,6 +1671,22 @@ function ItineraryList({
                             ) : null}
                           </div>
                         </div>
+
+                        {place &&
+                        Number.isFinite(place.lat) &&
+                        Number.isFinite(place.lon) ? (
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="Open in Google Maps"
+                            title="Open in Google Maps"
+                            className="mt-3 inline-flex rounded-lg p-1.5 text-text-muted hover:bg-surface hover:text-primary"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MapIcon className="h-4 w-4" />
+                          </a>
+                        ) : null}
 
                         <span
                           className="mt-3 hidden text-text-muted sm:inline-flex"
@@ -1235,23 +1797,85 @@ function DayWeatherBadge({
   );
 }
 
+/** First usable photo for a saved place — prefer user uploads over external. */
+function placeCoverImageUrl(place?: SavedLocation | null): string | null {
+  const images = place?.images;
+  if (Array.isArray(images)) {
+    const user = images.find(
+      (img) => img.source === "user" && img.url?.trim()
+    )?.url?.trim();
+    if (user) return user;
+    const any = images.find((img) => img.url?.trim())?.url?.trim();
+    if (any) return any;
+  }
+  if (place?.source?.type === "image") {
+    const fromSource = place.source.url?.trim();
+    if (fromSource) return fromSource;
+  }
+  return null;
+}
+
+function placeThumbCandidates(
+  place?: SavedLocation | null,
+  imageUrl?: string | null
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (url?: string | null) => {
+    const next = url?.trim();
+    if (!next || seen.has(next)) return;
+    seen.add(next);
+    out.push(next);
+  };
+
+  push(imageUrl);
+  push(placeCoverImageUrl(place));
+  if (Array.isArray(place?.images)) {
+    for (const img of place.images) push(img.url);
+  }
+  if (place?.source?.type === "image") push(place.source.url);
+  return out;
+}
+
 function PlaceThumb({
   place,
   imageUrl,
+  noImage,
+  className,
 }: {
   place?: SavedLocation | null;
   /** Prefer itinerary/plan image so thumbs match PlanTripSheet. */
   imageUrl?: string | null;
+  /** Lookup already failed — keep placeholder, do not imply loading. */
+  noImage?: boolean;
+  className?: string;
 }) {
+  const candidates = placeThumbCandidates(place, imageUrl);
+  const [failedSrcs, setFailedSrcs] = useState<string[]>([]);
   const image =
-    imageUrl?.trim() ||
-    place?.images[0]?.url?.trim() ||
-    null;
+    candidates.find((url) => !failedSrcs.includes(url)) ?? null;
+
   return (
-    <div className="h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-divider">
+    <div
+      className={cx(
+        "h-11 w-11 shrink-0 overflow-hidden rounded-lg bg-divider",
+        className
+      )}
+      data-no-image={!image && noImage ? "true" : undefined}
+    >
       {image ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={image} alt="" className="h-full w-full object-cover" />
+        <img
+          key={image}
+          src={image}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => {
+            setFailedSrcs((prev) =>
+              prev.includes(image) ? prev : [...prev, image]
+            );
+          }}
+        />
       ) : (
         <div className="flex h-full items-center justify-center text-text-muted">
           <MapPin className="h-4 w-4" />

@@ -11,6 +11,7 @@ import {
   IMAGE_FILE_ACCEPT,
   imageUploadErrorMessage,
   prepareClientImage,
+  storageImageCompressOptions,
 } from "@/lib/images";
 import type { UserProfile } from "@/types/user";
 
@@ -47,11 +48,13 @@ export function AccountView({ user, profile, onSaved }: AccountViewProps) {
     setUploading(true);
     setError(null);
     try {
-      const prepared = await prepareClientImage(file, {
-        maxSides: [512, 384],
-        qualities: [0.82, 0.68, 0.52, 0.4],
-        maxDataUrlChars: 600_000,
-      });
+      const prepared = await prepareClientImage(
+        file,
+        storageImageCompressOptions({
+          maxSides: [512, 384],
+          qualities: [0.82, 0.68, 0.52, 0.4],
+        })
+      );
       const url = await uploadProfileAvatar(user.uid, prepared.blob, {
         contentType: "image/jpeg",
       });

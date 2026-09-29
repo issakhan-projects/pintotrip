@@ -100,6 +100,21 @@ function isoDateFromDatetime(datetime: string | undefined): string | null {
   return match?.[1] ?? null;
 }
 
+/**
+ * Free-time that starts on a later calendar day (overnight arrival) must not
+ * be emitted on the departure day — e.g. depart 29 Sep 22:00, arrive 30 Sep
+ * 07:00 → destination places belong on 30 Sep, not 29 Sep.
+ */
+function freeTimeStartBelongsOnDay(
+  since: string | undefined,
+  dayDate: string
+): boolean {
+  if (!since?.trim()) return true;
+  const sinceDate = isoDateFromDatetime(since);
+  if (!sinceDate) return true;
+  return sinceDate <= dayDate;
+}
+
 function listDestinations(
   destinations: Record<string, TripPlannerAiRequestDestination>
 ): TripPlannerAiRequestDestination[] {
@@ -1282,6 +1297,11 @@ function fillPlacesFromRoutes(
     }
 
     if (presence) {
+      if (!freeTimeStartBelongsOnDay(presence.since, day.date)) {
+        // Arrival (after hub buffer) is still tomorrow — keep `since` for that day.
+        day.places = places;
+        continue;
+      }
       pushCityFreeTime(
         places,
         presence.cityId,

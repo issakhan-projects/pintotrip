@@ -32,7 +32,12 @@ export interface LocationAiMetadata {
   processedAt: Timestamp;
 }
 
-export type LocationSourceType = "image" | "link" | "manual" | "city";
+export type LocationSourceType =
+  | "image"
+  | "link"
+  | "manual"
+  | "city"
+  | "around_me";
 
 export interface LocationSource {
   type: LocationSourceType;

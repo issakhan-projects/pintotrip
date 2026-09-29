@@ -320,23 +320,16 @@ async function resolveViaContainingAdmin(
 
 /**
  * Resolve a Google Place ID for a city or country boundary.
- * Prefers `city.googlePlaceId` from the locations collection (LOCALITY only).
+ * When lat/lon exist, reverse-geocode first so the DDS polygon matches the pin
+ * cluster (stored locality ids can be wrong after merges / bad backfills).
  * Never treats `location.city.id` (slug) as a Google Place ID.
  *
- * Order: stored id → reverse geocode → forward geocode → Places Text Search
+ * Order: reverse geocode → stored locality id → forward geocode → Places Text Search
  * (Places only when geocoding returned no place_id at all).
  */
 export async function resolveCityGooglePlaceId(
   city: CityPlaceIdQuery
 ): Promise<string | null> {
-  // Stored Place IDs are locality IDs from create flows — only reuse for LOCALITY.
-  if (
-    (!city.featureType || city.featureType === "LOCALITY") &&
-    looksLikeGooglePlaceId(city.googlePlaceId)
-  ) {
-    return city.googlePlaceId!.trim();
-  }
-
   const key = cacheKey(city);
   const cached = placeIdCache.get(key);
   if (cached) return cached;
@@ -346,12 +339,23 @@ export async function resolveCityGooglePlaceId(
 
   const label =
     city.featureType === "COUNTRY" ? city.countryName : city.cityName;
+  const storedLocalityId =
+    (!city.featureType || city.featureType === "LOCALITY") &&
+    looksLikeGooglePlaceId(city.googlePlaceId)
+      ? city.googlePlaceId!.trim()
+      : null;
+
+  // No coords to verify against — reuse stored locality id (create / backfill).
+  if (storedLocalityId && !hasUsableMapCoords(city.lat, city.lon)) {
+    return storedLocalityId;
+  }
 
   const request = (async (): Promise<string | null> => {
     let geocodeHadPlaceIds = false;
     let lastResults: GeocodeResultLike[] = [];
 
-    // Reverse geocode first when coords exist — matches DDS Feature Layer IDs.
+    // Reverse geocode first when coords exist — matches DDS Feature Layer IDs
+    // to the same area as the pin(s).
     if (hasUsableMapCoords(city.lat, city.lon)) {
       try {
         const fromReverse = await resolveViaReverseGeocode(city);
@@ -363,10 +367,15 @@ export async function resolveCityGooglePlaceId(
         }
       } catch (err) {
         devLog.warn(
-          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying forward geocode.`,
+          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying stored id / forward geocode.`,
           err
         );
       }
+    }
+
+    if (storedLocalityId) {
+      placeIdCache.set(key, storedLocalityId);
+      return storedLocalityId;
     }
 
     try {

@@ -210,6 +210,24 @@ service cloud.firestore {
       }
     }
 
+    // Country → city → suggested places coords — Admin SDK only.
+    // Match keys: countryId + cityId + ascii place id / Google placeId
+    // (never localized title). Filled by planTrip; Places only on cache miss.
+    match /placesLocation/{countryId}/locations/{locationId} {
+      allow read, write: if false;
+
+      match /places/{placeDocId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Shared reusable city intelligence — one flat English doc per city.
+    // Path: readyCityIntelligence/{countryId}/cities/{cityId} — Admin SDK only.
+    // No language split, no exchange rates / visa; reused by all users.
+    match /readyCityIntelligence/{countryId}/cities/{cityId} {
+      allow read, write: if false;
+    }
+
     // Paddle webhook idempotency ledger — Admin SDK only.
     match /paddleWebhookEvents/{eventId} {
       allow read, write: if false;
@@ -231,6 +249,13 @@ service cloud.firestore {
     // Internal unique-user link docs — Admin only (never client-readable).
     match /travelIntelligence/_meta/{document=**} {
       allow read, write: if false;
+    }
+
+    // Public travel journals — published only (status == true). Admin write.
+    // List queries must include where('status', '==', true).
+    match /journals/{journalId} {
+      allow read: if resource.data.status == true;
+      allow create, update, delete: if false;
     }
 
     // Deny everything else by default (no allow read, write: if true).

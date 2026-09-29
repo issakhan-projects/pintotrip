@@ -5,6 +5,8 @@
 export const AI_CREDIT_COSTS = {
   findPlace: 10,
   getCityIntelligence: 5,
+  /** Nearby search + GPT enrichment for Around Me (max 10 places). */
+  findAroundMe: 50,
   /** First AI itinerary fill — Ordinary trip. */
   planTrip: 50,
   /** First AI itinerary fill — Advanced trip. */
@@ -16,7 +18,12 @@ export const AI_CREDIT_COSTS = {
   regenerate: 5,
   /** Resolve primary airports for trip cities (cached heavily). */
   resolveCityAirports: 1,
+  /** Pack of Google place name searches (5 searches per purchase). */
+  searchPlaces: 10,
 } as const;
+
+/** How many name searches one `searchPlaces` credit purchase unlocks. */
+export const PLACE_SEARCH_PACK_SIZE = 5;
 
 /** Starting balance written when a user profile is first created. */
 export const SIGNUP_AI_CREDITS = 100;

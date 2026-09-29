@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { Coins, Plus, Search, Sparkles } from "lucide-react";
+import { Coins, LocateFixed, Plus, Search, Sparkles } from "lucide-react";
 import type { User } from "firebase/auth";
 import { useI18n } from "@/i18n";
 import { BottomNav, type AppTab } from "@/features/app/BottomNav";
@@ -11,17 +11,19 @@ import { MapListToggle, type MapListMode } from "@/features/app/MapListToggle";
 import { TravelMap, type MapInteractionMode } from "@/features/map/TravelMap";
 import { PlacePreviewSheet } from "@/features/map/PlacePreviewSheet";
 import { MapCityLegend } from "@/features/map/MapCityLegend";
+import { buildLivingRoutesFromTrips } from "@/features/map/livingRoutes";
 import { PlacesList } from "@/features/places/PlacesList";
 import { PlaceDetailSheet } from "@/features/places/PlaceDetailSheet";
 import { AddPlaceSheet } from "@/features/add-place/AddPlaceSheet";
 import { ManualPlaceSheet } from "@/features/add-place/ManualPlaceSheet";
 import { SearchSheet } from "@/features/search/SearchSheet";
 import { CityIntelligenceSheet } from "@/features/city/CityIntelligenceSheet";
+import { AroundMeSheet, type AroundMeOrigin } from "@/features/around-me";
 import { ProfilePanel } from "@/features/profile/ProfilePanel";
 import { TripPlannerPanel } from "@/features/planner/TripPlannerPanel";
 import { ReviewSheet } from "@/features/review/ReviewSheet";
 import { TravelProfileSheet } from "@/features/onboarding";
-import { isProEntitled } from "@/features/profile/plans";
+import { isProEntitled, canUsePlaceNameSearch } from "@/features/profile/plans";
 import { NotificationBanner } from "@/features/referral";
 import { PlacesApiDevBadge } from "@/features/app/PlacesApiDevBadge";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
@@ -29,9 +31,11 @@ import { useFavoriteCities } from "@/hooks/useFavoriteCities";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { useReviewPrompt } from "@/hooks/useReviewPrompt";
 import { useReferralCompletion } from "@/hooks/useReferralCompletion";
+import { useTrips } from "@/hooks/useTrips";
 import type { LocationStatus } from "@/types/location";
 import {
   centerMapOnCoords,
+  resolveEnglishPlaceIds,
   reverseGeocode,
   type MapInstance,
   type MapMarkerInput,
@@ -62,9 +66,11 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     removeFavorite,
   } = useFavoriteCities(user.uid);
   const { profile } = useUserProfile(user);
+  const { trips } = useTrips(user.uid);
   const { t, setLocale } = useI18n();
   const aiCreditsBalance = profile?.aiCreditsBalance ?? null;
   const isPro = isProEntitled(profile?.subscription);
+  const canSearchPlaces = canUsePlaceNameSearch(profile?.subscription);
   const needsTravelProfile = Boolean(profile) && !profile?.travelProfile;
 
   useEffect(() => {
@@ -77,6 +83,12 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const [travelProfileOpen, setTravelProfileOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [aroundMeOpen, setAroundMeOpen] = useState(false);
+  const [aroundMePickMode, setAroundMePickMode] = useState(false);
+  const [aroundMeOrigin, setAroundMeOrigin] = useState<AroundMeOrigin | null>(
+    null
+  );
+  const [aroundMeResolving, setAroundMeResolving] = useState(false);
   const [preview, setPreview] = useState<SavedLocation | null>(null);
   const [detail, setDetail] = useState<SavedLocation | null>(null);
   const [cityInfo, setCityInfo] = useState<{
@@ -105,6 +117,10 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     setCityInfo(null);
     setAddOpen(false);
     setSearchOpen(false);
+    setAroundMeOpen(false);
+    setAroundMePickMode(false);
+    setAroundMeOrigin(null);
+    setAroundMeResolving(false);
     setManualOpen(false);
     setPickMode(false);
     setCityPickMode(false);
@@ -139,6 +155,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     travelProfileOpen ||
     addOpen ||
     searchOpen ||
+    aroundMeOpen ||
+    aroundMePickMode ||
     manualOpen ||
     Boolean(preview) ||
     Boolean(detail) ||
@@ -184,9 +202,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     return [...cityMarkers, ...placeMarkers];
   }, [locations, favoriteCities]);
 
+  const livingRoutes = useMemo(
+    () => buildLivingRoutesFromTrips(trips),
+    [trips]
+  );
+
   const onMarkerSelect = useCallback(
     (id: string) => {
-      if (pickMode || cityPickMode) return;
+      if (pickMode || cityPickMode || aroundMePickMode) return;
 
       if (id.startsWith(FAVORITE_CITY_MARKER_PREFIX)) {
         const cityId = id.slice(FAVORITE_CITY_MARKER_PREFIX.length);
@@ -209,7 +232,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       const place = locations.find((l) => l.id === id) ?? null;
       setPreview(place);
     },
-    [locations, favoriteCities, pickMode, cityPickMode]
+    [locations, favoriteCities, pickMode, cityPickMode, aroundMePickMode]
   );
 
   const showMapSurface = tab === "map" && viewMode === "map";
@@ -218,7 +241,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
 
   const interactionMode: MapInteractionMode = pickMode
     ? "pick-place"
-    : cityPickMode
+    : cityPickMode || aroundMePickMode
       ? "pick-city"
       : "browse";
 
@@ -246,6 +269,40 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         return;
       }
 
+      if (aroundMePickMode) {
+        setAroundMeResolving(true);
+        try {
+          const [place, englishIds] = await Promise.all([
+            reverseGeocode(coords.lat, coords.lng, { language: "en" }),
+            resolveEnglishPlaceIds(coords.lat, coords.lng),
+          ]);
+          const cityName =
+            englishIds?.cityNameEn || place?.city || undefined;
+          const countryName =
+            englishIds?.countryNameEn || place?.country || undefined;
+          const label =
+            [cityName, countryName].filter(Boolean).join(", ") ||
+            t("app.unknownCity");
+          setAroundMeOrigin({
+            lat: place?.lat ?? coords.lat,
+            lon: place?.lon ?? coords.lng,
+            label,
+            source: "map",
+            ...(englishIds?.cityId ? { cityId: englishIds.cityId } : {}),
+            ...(englishIds?.countryId
+              ? { countryId: englishIds.countryId }
+              : {}),
+            ...(cityName ? { cityName } : {}),
+            ...(countryName ? { countryName } : {}),
+          });
+          setAroundMePickMode(false);
+          setAroundMeOpen(true);
+        } finally {
+          setAroundMeResolving(false);
+        }
+        return;
+      }
+
       if (!cityPickMode) return;
 
       setCityResolving(true);
@@ -264,7 +321,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         setCityResolving(false);
       }
     },
-    [pickMode, cityPickMode, openCityInfo, t]
+    [pickMode, cityPickMode, aroundMePickMode, openCityInfo, t]
   );
 
   return (
@@ -281,6 +338,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         <TravelMap
           className="h-full w-full"
           markers={markers}
+          livingRoutes={livingRoutes}
+          livingRoutesActive={showMapSurface}
           cityLocations={isPro ? locations : []}
           onCityPlaceIdResolved={
             isPro
@@ -417,42 +476,60 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         {tab === "map" ? (
           <div className="pointer-events-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             {viewMode === "map" ? (
-              <button
-                type="button"
-                aria-label={t("app.cityInfo")}
-                aria-pressed={cityPickMode}
-                onClick={() => {
-                  setPickMode(false);
-                  setCityPickMode((v) => !v);
-                }}
-                className={
-                  cityPickMode
-                    ? "flex h-10 shrink-0 items-center rounded-full border border-primary bg-primary text-white shadow-sm transition-colors sm:h-11"
-                    : "flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 text-text shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11"
-                }
-              >
-                <span className="flex items-center px-2.5 sm:px-3">
-                  <Sparkles
+              <>
+                <button
+                  type="button"
+                  aria-label={t("app.aroundMe")}
+                  onClick={() => {
+                    setPickMode(false);
+                    setCityPickMode(false);
+                    setAroundMePickMode(false);
+                    setAroundMeOrigin(null);
+                    setAroundMeOpen(true);
+                  }}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated/95 text-text shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11 sm:w-11"
+                >
+                  <LocateFixed className="h-4 w-4" aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("app.cityInfo")}
+                  aria-pressed={cityPickMode}
+                  onClick={() => {
+                    setPickMode(false);
+                    setAroundMePickMode(false);
+                    setAroundMeOpen(false);
+                    setCityPickMode((v) => !v);
+                  }}
+                  className={
+                    cityPickMode
+                      ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary bg-primary text-white shadow-sm transition-colors sm:h-11 sm:w-auto"
+                      : "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated/95 text-text shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11 sm:w-auto"
+                  }
+                >
+                  <span className="flex items-center justify-center sm:px-3">
+                    <Sparkles
+                      className={
+                        cityPickMode
+                          ? "h-4 w-4 text-white sm:h-3.5 sm:w-3.5"
+                          : "h-4 w-4 text-text sm:h-3.5 sm:w-3.5"
+                      }
+                      aria-hidden
+                    />
+                  </span>
+                  <span
                     className={
                       cityPickMode
-                        ? "h-3.5 w-3.5 text-white"
-                        : "h-3.5 w-3.5 text-text"
+                        ? "hidden h-4 w-px shrink-0 bg-white/30 sm:block"
+                        : "hidden h-4 w-px shrink-0 bg-border sm:block"
                     }
                     aria-hidden
                   />
-                </span>
-                <span
-                  className={
-                    cityPickMode
-                      ? "h-4 w-px shrink-0 bg-white/30"
-                      : "h-4 w-px shrink-0 bg-border"
-                  }
-                  aria-hidden
-                />
-                <span className="px-2.5 text-sm font-medium sm:px-3">
-                  {t("app.cityInfo")}
-                </span>
-              </button>
+                  <span className="hidden px-3 text-sm font-medium sm:inline">
+                    {t("app.cityInfo")}
+                  </span>
+                </button>
+              </>
             ) : null}
             <MapListToggle mode={viewMode} onChange={setViewMode} />
           </div>
@@ -515,6 +592,26 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         </div>
       ) : null}
 
+      {aroundMePickMode ? (
+        <div className="absolute inset-x-0 top-20 z-20 flex justify-center px-4">
+          <div className="rounded-full border border-primary/30 bg-primary-tint px-4 py-2 text-sm font-medium text-primary shadow-sm">
+            {aroundMeResolving
+              ? t("app.findingLocation")
+              : t("app.pickAroundMeHint")}
+            <button
+              type="button"
+              className="ml-3 underline"
+              onClick={() => {
+                setAroundMePickMode(false);
+                setAroundMeOpen(true);
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <BottomNav
         active={tab}
         onMap={() => goToTab("map")}
@@ -531,7 +628,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       locations.length === 0 &&
       favoriteCities.length === 0 &&
       !pickMode &&
-      !cityPickMode ? (
+      !cityPickMode &&
+      !aroundMePickMode ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-28 z-20 flex justify-center px-4">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-border bg-surface-elevated/95 p-4 text-center shadow-lg backdrop-blur">
             <p className="text-sm font-semibold text-text">
@@ -555,7 +653,22 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         userId={user.uid}
-        isPro={isPro}
+        isPro={canSearchPlaces}
+        onPickFromMap={() => {
+          // Don't use goToTab — it clears pickMode via clearTransientUi.
+          setAddOpen(false);
+          setCityPickMode(false);
+          setAroundMePickMode(false);
+          setAroundMeOpen(false);
+          setPreview(null);
+          setDetail(null);
+          setCityInfo(null);
+          setSearchOpen(false);
+          setManualOpen(false);
+          setViewMode("map");
+          setTab("map");
+          setPickMode(true);
+        }}
         onSaved={() => {
           void refresh();
           goToTab("map");
@@ -586,6 +699,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       <PlacePreviewSheet
         place={preview}
         open={Boolean(preview)}
+        userId={user.uid}
         allowGooglePlacePhotos={isPro}
         onClose={() => setPreview(null)}
         onUpdateStatus={async (status: LocationStatus) => {
@@ -597,6 +711,16 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           if (!preview) return;
           await patchLocation(preview.id, { note });
           setPreview({ ...preview, note });
+        }}
+        onSaveTravelInfo={async (patch) => {
+          if (!preview) return;
+          await patchLocation(preview.id, patch);
+          setPreview({ ...preview, ...patch });
+        }}
+        onSaveImages={async (images) => {
+          if (!preview) return;
+          await patchLocation(preview.id, { images });
+          setPreview({ ...preview, images });
         }}
         onDelete={async () => {
           if (!preview) return;
@@ -648,6 +772,33 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           }
         }}
         onOpenCity={openCityInfo}
+      />
+
+      <AroundMeSheet
+        open={aroundMeOpen}
+        onClose={() => {
+          setAroundMeOpen(false);
+          setAroundMeOrigin(null);
+        }}
+        userId={user.uid}
+        language={profile?.preferences?.language}
+        aiCreditsBalance={aiCreditsBalance}
+        locations={locations}
+        initialOrigin={aroundMeOrigin}
+        onPickFromMap={() => {
+          setAroundMeOpen(false);
+          setPickMode(false);
+          setCityPickMode(false);
+          setPreview(null);
+          setDetail(null);
+          setCityInfo(null);
+          setViewMode("map");
+          setTab("map");
+          setAroundMePickMode(true);
+        }}
+        onPlaceSaved={() => {
+          void refresh();
+        }}
       />
 
       <CityIntelligenceSheet

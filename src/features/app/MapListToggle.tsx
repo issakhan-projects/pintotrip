@@ -39,7 +39,7 @@ export function MapListToggle({ mode, onChange }: MapListToggleProps) {
           )}
         >
           <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden />
-          <span>{label}</span>
+          <span className="hidden sm:inline">{label}</span>
         </button>
       ))}
     </div>

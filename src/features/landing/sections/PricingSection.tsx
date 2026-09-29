@@ -8,6 +8,7 @@ import {
   PLAN_DEFINITIONS,
   PLAN_ORDER,
   getPlanPrice,
+  getYearlyListPrice,
   type BillingInterval,
 } from "@/features/profile/plans";
 import type { SubscriptionPlan } from "@/types/user";
@@ -245,7 +246,7 @@ function BillingToggle({
         >
           Yearly
           <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-            Save 20%
+            2 months free
           </span>
         </button>
       </div>
@@ -266,6 +267,9 @@ function PlanCard({
   const price = getPlanPrice(plan, interval);
   const period = interval === "year" ? "/ year" : "/ month";
   const isFree = plan.priceMonthly === 0;
+  const yearlyListPrice = getYearlyListPrice(plan);
+  const showYearlyCompare =
+    interval === "year" && !isFree && yearlyListPrice > price;
 
   return (
     <article
@@ -289,13 +293,20 @@ function PlanCard({
         <p className="text-xs text-text-secondary">{meta.tagline}</p>
       </div>
 
-      <p className="mt-4 text-3xl font-semibold tracking-tight text-text">
-        {isFree ? "$0" : `$${price.toFixed(2)}`}
-        <span className="text-sm font-normal text-text-secondary">
-          {" "}
-          {period}
-        </span>
-      </p>
+      <div className="mt-4">
+        <p className="text-3xl font-semibold tracking-tight text-text">
+          {isFree ? "$0" : `$${price.toFixed(2)}`}
+          <span className="text-sm font-normal text-text-secondary">
+            {" "}
+            {period}
+          </span>
+        </p>
+        {showYearlyCompare ? (
+          <p className="mt-1 text-sm text-text-muted line-through">
+            ${yearlyListPrice.toFixed(2)}
+          </p>
+        ) : null}
+      </div>
 
       <p className="mt-2 text-sm leading-relaxed text-text-secondary">
         {meta.blurb}

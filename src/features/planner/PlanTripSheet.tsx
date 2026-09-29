@@ -44,7 +44,7 @@ import {
   startOfUtcDay,
   tripDayCount,
 } from "@/services/trip-planner";
-import { fetchSuggestedPlacePhoto } from "@/features/add-place/placeSearch";
+import { fetchSuggestedPlacePhoto, pexelsPhotoUrlExcludeId } from "@/features/add-place/placeSearch";
 import { resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
 import {
@@ -203,7 +203,8 @@ async function enrichPlanWithPlacePhotos(
     imageUrl: string | null
   ) => void
 ): Promise<PlanTripResult> {
-  // Assign sequentially so each Pexels query id is used at most once per plan.
+  // Assign sequentially; skip photo ids/urls already used so each place gets
+  // a distinct landmark image instead of the same city skyline.
   const usedPlaceIds = new Set<string>();
   const enrichedDays: PlannedDaySuggestion[] = [];
 
@@ -211,6 +212,7 @@ async function enrichPlanWithPlacePhotos(
     const places: PlannedPlaceSuggestion[] = [];
     for (const place of day.places) {
       if (place.imageUrl?.trim()) {
+        usedPlaceIds.add(pexelsPhotoUrlExcludeId(place.imageUrl));
         onPlacePhoto?.(day.day, place, place.imageUrl);
         places.push(place);
         continue;
@@ -229,6 +231,7 @@ async function enrichPlanWithPlacePhotos(
         if (photo) {
           imageUrl = photo.photoUrl;
           usedPlaceIds.add(photo.placeId);
+          usedPlaceIds.add(pexelsPhotoUrlExcludeId(photo.photoUrl));
         }
       } catch {
         imageUrl = null;

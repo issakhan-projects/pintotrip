@@ -103,6 +103,21 @@ function isoDateFromDatetime(datetime: string | undefined): string | null {
   return match?.[1] ?? null;
 }
 
+/**
+ * Free-time that starts on a later calendar day (overnight arrival) must not
+ * be emitted on the departure day — e.g. depart 29 Sep 22:00, arrive 30 Sep
+ * 07:00 → destination places belong on 30 Sep, not 29 Sep.
+ */
+function freeTimeStartBelongsOnDay(
+  since: string | undefined,
+  dayDate: string
+): boolean {
+  if (!since?.trim()) return true;
+  const sinceDate = isoDateFromDatetime(since);
+  if (!sinceDate) return true;
+  return sinceDate <= dayDate;
+}
+
 function listDestinations(
   destinations: Record<string, TripPlannerAiRequestDestination>
 ): TripPlannerAiRequestDestination[] {
@@ -1135,13 +1150,63 @@ function freeTimeEndBeforeDeparture(
 /** Soft usable-day estimate when the traveler stays in a city with no timed anchors. */
 const APPROX_FULL_DAY_FREE_MINUTES = 12 * 60;
 
+/**
+ * When only arrival (start) or only departure (end) is known, clamp the open
+ * side to a typical sightseeing window so half-days get a real durationMinutes
+ * (otherwise the places AI often leaves arrival/departure days empty).
+ */
+const ACTIVE_DAY_START_HOUR = 8;
+const ACTIVE_DAY_END_HOUR = 22;
+/** Skip emitting a free-time slot when usable window is too short for a place. */
+const MIN_FREE_TIME_SLOT_MINUTES = 45;
+
+/**
+ * Rebuild an ISO instant on the same local calendar day / offset at hour:minute.
+ */
+function atLocalTimeOnSameDay(
+  iso: string,
+  hour: number,
+  minute = 0
+): string | undefined {
+  const ms = parseInstantMs(iso);
+  if (ms == null) return undefined;
+  const offset = parseOffsetMinutes(iso);
+  const local = new Date(ms + offset * 60_000);
+  const y = local.getUTCFullYear();
+  const mo = local.getUTCMonth();
+  const d = local.getUTCDate();
+  // Noon UTC anchor then set clock in "local-as-UTC" space used by formatWithOffset.
+  const atHourUtc = Date.UTC(y, mo, d, hour, minute, 0) - offset * 60_000;
+  return formatWithOffset(atHourUtc, offset);
+}
+
 function buildFreeTime(
   start?: string,
   end?: string,
   opts?: { softFullDay?: boolean }
 ): TripPlannerAiResponseFreeTime {
-  const trimmedStart = start?.trim() || undefined;
-  const trimmedEnd = end?.trim() || undefined;
+  let trimmedStart = start?.trim() || undefined;
+  let trimmedEnd = end?.trim() || undefined;
+
+  // Arrival day: free after disembark → fill until evening.
+  if (trimmedStart && !trimmedEnd) {
+    trimmedEnd = atLocalTimeOnSameDay(trimmedStart, ACTIVE_DAY_END_HOUR);
+  }
+  // Departure day: free from morning → until boarding buffer.
+  if (trimmedEnd && !trimmedStart) {
+    trimmedStart = atLocalTimeOnSameDay(trimmedEnd, ACTIVE_DAY_START_HOUR);
+  }
+
+  // If the open side landed on the wrong side of the known anchor, drop it.
+  if (trimmedStart && trimmedEnd) {
+    const a = parseInstantMs(trimmedStart);
+    const b = parseInstantMs(trimmedEnd);
+    if (a != null && b != null && b <= a) {
+      // e.g. late-night arrival after 22:00, or dawn departure before 08:00.
+      return {};
+    }
+  }
+
   const durationMinutes = durationMinutesBetween(trimmedStart, trimmedEnd);
 
   const freeTime: TripPlannerAiResponseFreeTime = {
@@ -1175,11 +1240,11 @@ function pushCityFreeTime(
   if (dest?.stopType === "home") return;
 
   const freeTime = buildFreeTime(start, end, opts);
-  // After boarding/disembark buffers, window may be zero or inverted — skip.
-  if (freeTime.start && freeTime.end) {
-    const dur = durationMinutesBetween(freeTime.start, freeTime.end);
-    if (dur == null || dur <= 0) return;
-  }
+  const dur =
+    freeTime.durationMinutes ??
+    durationMinutesBetween(freeTime.start, freeTime.end);
+  // After boarding/disembark buffers + day clamps, skip empty/too-short windows.
+  if (dur == null || dur < MIN_FREE_TIME_SLOT_MINUTES) return;
 
   const leisureType = dest?.leisureType ?? opts?.leisureType;
 
@@ -1286,6 +1351,11 @@ function fillPlacesFromRoutes(
     }
 
     if (presence) {
+      if (!freeTimeStartBelongsOnDay(presence.since, day.date)) {
+        // Arrival (after hub buffer) is still tomorrow — keep `since` for that day.
+        day.places = places;
+        continue;
+      }
       pushCityFreeTime(
         places,
         presence.cityId,

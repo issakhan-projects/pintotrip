@@ -61,6 +61,27 @@ Return ONLY valid JSON:
 {"visa":{"required":false,"type":null,"cost":{"amount":null,"currency":null},"description":"","verificationRequired":true},"dailyBudget":{"currency":"","budget":{"local":0,"userCurrency":null},"midRange":{"local":0,"userCurrency":null},"luxury":{"local":0,"userCurrency":null},"description":""},"lastCheckedAt":"ISO","warning":"Travel information can change. Verify important details with official sources before traveling."}
 
 Valid JSON only. Prefer null/unknown over invention. Never invent exchange rates.`;
+
+/**
+ * Smallest AI call when shared city facts are already in readyCityIntelligence.
+ * Only nationality-specific visa — budget/FX come from ready + Frankfurter.
+ */
+export const CITY_VISA_ONLY_SYSTEM_PROMPT = `Expert travel intelligence assistant. Return ONLY visa requirements for a traveler. Shared city facts (currency, climate, apps, budget, safety) are already known — do NOT regenerate them.
+
+INPUT: city, country, user's country, language, current date.
+
+Return ONLY:
+- visa (for user's country; required true/false/unknown; never guess; always recommend official verification)
+- lastCheckedAt ISO
+- warning (verbatim): "Travel information can change. Verify important details with official sources before traveling."
+
+LANGUAGE: user-facing visa text in user's language. JSON keys English.
+
+Return ONLY valid JSON:
+{"visa":{"required":false,"type":null,"cost":{"amount":null,"currency":null},"description":"","verificationRequired":true},"lastCheckedAt":"ISO","warning":"Travel information can change. Verify important details with official sources before traveling."}
+
+Valid JSON only. Prefer unknown over invention.`;
+
 export function buildCityIntelligenceUserPrompt(input: {
   city: string;
   country: string;
@@ -104,5 +125,21 @@ Language: ${input.language}
 Cached slow facts (do not regenerate; use for currency/budget context):
 ${input.slowContextJson}
 
+JSON only.`;
+}
+
+export function buildCityVisaOnlyUserPrompt(input: {
+  city: string;
+  country: string;
+  userCountry: string;
+  language: string;
+  currentDateIso: string;
+}): string {
+  return `Visa requirements only.
+Date UTC: ${input.currentDateIso}
+City: ${input.city}
+Country: ${input.country}
+User country (visa): ${input.userCountry}
+Language: ${input.language}
 JSON only.`;
 }

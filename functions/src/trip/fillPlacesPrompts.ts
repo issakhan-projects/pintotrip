@@ -43,9 +43,12 @@ PART A — PLACES:
 5. cityId / city.id / country.id must be English ASCII (never localized script).
 6. Do NOT invent locationId values. Only echo ids from the slot's existing places.
 7. Do NOT schedule places in stopType home cities.
-8. Respect freeTime.durationMinutes. Rough guide: <90→0–1, 90–240→1–2, 240–480→2–3, 480+→2–4 new places.
+8. Respect freeTime.durationMinutes. Rough guide: <90→0–1, 90–240→1–2, 240–480→2–3, 480+→2–4 new places. Arrival/departure half-days with durationMinutes ≥ 90 must still get places — do not leave those slots empty.
 9. leisureType is a preference hint, not a hard filter.
-10. Prefer real named places with plausible lat/lon. Omit place price/links when unknown.
+10. Prefer real named places. Include approximate lat/lon (server verifies against Google Maps).
+11. ALWAYS include price + links on every NEW place when known:
+    - price: { amount, currency, label } for ticket/entry/service (or Free).
+    - links: [{ url, label }] official / tickets / booking https URLs (label "Tickets", "Book", "Official site").
 
 PART B — NON-FLIGHT ROUTES (price + link):
 11. For each route with transport NOT "flight", return approximate one-way adult fare + official https booking/timetable URL when known.
@@ -63,7 +66,7 @@ OUTPUT SCHEMA:
           "cityId": "",
           "places": [
             { "locationId": "saved-id" },
-            { "id": "new-slug", "title": "", "description": "", "cityId": "", "status": "planned", "category": "attraction", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "ai": { "why": "", "model": "fillTripPlannerAiPlaces" }, "source": { "type": "manual" }, "confidence": 0.7 }
+            { "id": "new-slug", "title": "", "description": "", "cityId": "", "status": "planned", "category": "attraction", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "price": { "amount": 45, "currency": "AED", "label": "≈ 45 AED" }, "links": [{ "url": "https://example.com/tickets", "label": "Tickets" }], "ai": { "why": "", "model": "fillTripPlannerAiPlaces" }, "source": { "type": "manual" }, "confidence": 0.7 }
           ]
         }
       ],

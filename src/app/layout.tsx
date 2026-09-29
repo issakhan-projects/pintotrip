@@ -19,7 +19,6 @@ const lobster = Lobster({
 const manrope = Manrope({
   variable: "--font-manrope",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
 });
 
 const siteDescription =
@@ -96,7 +95,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${montserrat.variable} ${lobster.variable} h-full antialiased`}
+      className={`${montserrat.variable} ${lobster.variable} ${manrope.variable} h-full antialiased`}
     >
       <body className={`${montserrat.className} flex h-full min-h-full flex-col`}>
         <script

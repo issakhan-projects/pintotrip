@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ImageIcon,
+  Link2,
   Loader2,
   MapPin,
   MoreHorizontal,
@@ -18,6 +19,7 @@ import { Timestamp } from "firebase/firestore";
 import { useTrip } from "@/hooks/useTrip";
 import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
+import { canUsePlaceNameSearch } from "@/features/profile/plans";
 import { getCityIntelligence } from "@/services/functions";
 import { deleteTrip } from "@/services/trip-planner";
 import { uploadTripCover } from "@/services/storage";
@@ -25,6 +27,7 @@ import {
   IMAGE_FILE_ACCEPT,
   imageUploadErrorMessage,
   prepareClientImage,
+  storageImageCompressOptions,
 } from "@/lib/images";
 import {
   formatInsufficientCreditsMessage,
@@ -38,7 +41,7 @@ import type {
 } from "@/types/trip-planner";
 import type { LocationStatus } from "@/types/location";
 import { tripDayCount } from "@/services/trip-planner";
-import { Button, DeleteConfirmModal } from "@/components/ui";
+import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import { getPublicEnv } from "@/lib/env";
 import { cx } from "@/lib/utils";
 import { isBrowserOffline } from "@/lib/planner/offline-store";
@@ -51,6 +54,7 @@ import {
 } from "./tripUtils";
 import { newCustomPreparationId } from "./buildPreparation";
 import { listTripDestinations, primaryTripDestination } from "./tripDestinations";
+import { parseHttpUrl } from "./preparationLinks";
 import { TripStepNav } from "./TripStepNav";
 import { TripDetailsStep } from "./TripDetailsStep";
 import { BeforeYouGoStep } from "./BeforeYouGoStep";
@@ -133,6 +137,8 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   const [intelBusy, setIntelBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [coverMenuOpen, setCoverMenuOpen] = useState(false);
+  const [coverLinkOpen, setCoverLinkOpen] = useState(false);
+  const [coverLinkDraft, setCoverLinkDraft] = useState("");
   const [coverIndex, setCoverIndex] = useState(0);
   const [coverUploading, setCoverUploading] = useState(false);
   const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
@@ -142,6 +148,12 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const coverMenuRef = useRef<HTMLDivElement>(null);
   const coverFileRef = useRef<HTMLInputElement>(null);
+
+  function closeCoverMenu() {
+    setCoverMenuOpen(false);
+    setCoverLinkOpen(false);
+    setCoverLinkDraft("");
+  }
 
   const fetchCityIntelligence = useCallback(async () => {
     if (!trip || intelBusy) return;
@@ -301,7 +313,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     if (!coverMenuOpen) return;
     const onDoc = (event: MouseEvent) => {
       if (!coverMenuRef.current?.contains(event.target as Node)) {
-        setCoverMenuOpen(false);
+        closeCoverMenu();
       }
     };
     document.addEventListener("mousedown", onDoc);
@@ -312,13 +324,15 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     if (!file || !trip) return;
     setCoverUploading(true);
     setCoverUploadError(null);
-    setCoverMenuOpen(false);
+    closeCoverMenu();
     try {
-      const prepared = await prepareClientImage(file, {
-        maxSides: [1920, 1600, 1280, 1024],
-        qualities: [0.82, 0.7, 0.55, 0.42],
-        maxDataUrlChars: 1_400_000,
-      });
+      const prepared = await prepareClientImage(
+        file,
+        storageImageCompressOptions({
+          maxSides: [1920, 1600, 1280, 1024, 800, 640],
+          qualities: [0.82, 0.7, 0.55, 0.42, 0.32],
+        })
+      );
       const url = await uploadTripCover(user.uid, trip.id, prepared.blob, {
         contentType: "image/jpeg",
       });
@@ -329,6 +343,28 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     } finally {
       setCoverUploading(false);
       if (coverFileRef.current) coverFileRef.current.value = "";
+    }
+  }
+
+  async function handleCoverLinkSubmit() {
+    if (!trip) return;
+    const url = parseHttpUrl(coverLinkDraft);
+    if (!url) {
+      setCoverUploadError(t("planner.detail.imageLinkInvalid"));
+      return;
+    }
+    setCoverUploading(true);
+    setCoverUploadError(null);
+    try {
+      await patchTrip({ photoUrl: url });
+      setCoverIndex(0);
+      closeCoverMenu();
+    } catch (err) {
+      setCoverUploadError(
+        err instanceof Error ? err.message : t("planner.detail.imageLinkInvalid")
+      );
+    } finally {
+      setCoverUploading(false);
     }
   }
 
@@ -553,7 +589,14 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 <button
                   type="button"
                   disabled={coverUploading}
-                  onClick={() => setCoverMenuOpen((v) => !v)}
+                  onClick={() => {
+                    if (coverMenuOpen) {
+                      closeCoverMenu();
+                    } else {
+                      setCoverMenuOpen(true);
+                      setCoverUploadError(null);
+                    }
+                  }}
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-black/45 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm hover:bg-black/55 disabled:opacity-60"
                 >
                   {coverUploading ? (
@@ -566,30 +609,100 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                     : t("planner.detail.changeCover")}
                 </button>
                 {coverMenuOpen ? (
-                  <div className="absolute bottom-full right-0 mb-2 min-w-[11.5rem] overflow-hidden rounded-xl border border-white/15 bg-black/80 py-1 shadow-lg backdrop-blur-md">
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
-                      onClick={() => coverFileRef.current?.click()}
-                    >
-                      <Upload className="h-3.5 w-3.5" />
-                      {t("planner.detail.uploadPhoto")}
-                    </button>
-                    {coverCandidates.length > 1 ? (
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
-                        onClick={() => {
-                          setCoverIndex(
-                            (i) => (i + 1) % coverCandidates.length
-                          );
-                          setCoverMenuOpen(false);
+                  <div
+                    className={cx(
+                      "absolute bottom-full right-0 mb-2 overflow-hidden rounded-xl border border-white/15 bg-black/80 py-1 shadow-lg backdrop-blur-md",
+                      coverLinkOpen ? "w-[min(18rem,calc(100vw-2rem))]" : "min-w-[11.5rem]"
+                    )}
+                  >
+                    {coverLinkOpen ? (
+                      <form
+                        className="flex flex-col gap-2 px-3 py-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void handleCoverLinkSubmit();
                         }}
                       >
-                        <ImageIcon className="h-3.5 w-3.5" />
-                        {t("planner.detail.nextPhoto")}
-                      </button>
-                    ) : null}
+                        <label
+                          htmlFor="trip-cover-image-link"
+                          className="text-xs font-medium text-white/80"
+                        >
+                          {t("planner.detail.addImageLink")}
+                        </label>
+                        <TextInput
+                          id="trip-cover-image-link"
+                          type="url"
+                          value={coverLinkDraft}
+                          onChange={(e) => {
+                            setCoverLinkDraft(e.target.value);
+                            if (coverUploadError) setCoverUploadError(null);
+                          }}
+                          placeholder={t("planner.detail.imageLinkPlaceholder")}
+                          autoFocus
+                          className="!rounded-lg !border-white/20 !bg-white/10 !py-2 !text-white !placeholder:text-white/45 focus:!border-white/40 focus:!ring-white/20"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            type="submit"
+                            color="primary"
+                            disabled={coverUploading || !coverLinkDraft.trim()}
+                            className="!h-8 !flex-1 !rounded-lg !px-2 !text-xs"
+                          >
+                            {t("common.save")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={coverUploading}
+                            className="!h-8 !rounded-lg !border-white/20 !bg-white/10 !px-2 !text-xs !text-white hover:!bg-white/15"
+                            onClick={() => {
+                              setCoverLinkOpen(false);
+                              setCoverLinkDraft("");
+                              setCoverUploadError(null);
+                            }}
+                          >
+                            {t("common.cancel")}
+                          </Button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                          onClick={() => coverFileRef.current?.click()}
+                        >
+                          <Upload className="h-3.5 w-3.5" />
+                          {t("planner.detail.uploadPhoto")}
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                          onClick={() => {
+                            setCoverLinkOpen(true);
+                            setCoverUploadError(null);
+                          }}
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                          {t("planner.detail.addImageLink")}
+                        </button>
+                        {coverCandidates.length > 1 ? (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
+                            onClick={() => {
+                              setCoverIndex(
+                                (i) => (i + 1) % coverCandidates.length
+                              );
+                              closeCoverMenu();
+                            }}
+                          >
+                            <ImageIcon className="h-3.5 w-3.5" />
+                            {t("planner.detail.nextPhoto")}
+                          </button>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 ) : null}
                 {coverUploadError ? (
@@ -747,6 +860,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               locations={locations}
               userId={user.uid}
               aiCreditsBalance={profile?.aiCreditsBalance ?? 0}
+              canSearchPlaces={canUsePlaceNameSearch(profile?.subscription)}
               language={profile?.preferences?.language}
               onUpdateSavedPlaces={async (ids) => {
                 await patchTrip({ savedPlaceIds: ids });

@@ -10,43 +10,51 @@ service firebase.storage {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isImage() {
+    /**
+     * All user image uploads must be JPEG ≤ 300 KB.
+     * Client compresses via storageImageCompressOptions / prepareClientImage
+     * before uploadBytes — this rule is the server-side hard cap.
+     */
+    function isCompressedImage() {
       return request.resource != null
-        && request.resource.contentType.matches('image/.*')
-        && request.resource.size < 15 * 1024 * 1024;
+        && request.resource.contentType == 'image/jpeg'
+        && request.resource.size > 0
+        && request.resource.size <= 300 * 1024;
     }
 
     function isPdf() {
       return request.resource != null
         && request.resource.contentType == 'application/pdf'
-        && request.resource.size < 10 * 1024 * 1024;
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024;
     }
 
     // users/{userId}/profile/avatar
     match /users/{userId}/profile/{fileName} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && isImage();
+      allow write: if isOwner(userId) && isCompressedImage();
       allow delete: if isOwner(userId);
     }
 
     // users/{userId}/locations/{locationId}/**
     match /users/{userId}/locations/{locationId}/{fileName} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && isImage();
+      allow write: if isOwner(userId) && isCompressedImage();
       allow delete: if isOwner(userId);
     }
 
     // users/{userId}/tripPlanner/{tripId}/cover
     match /users/{userId}/tripPlanner/{tripId}/cover {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && isImage();
+      allow write: if isOwner(userId) && isCompressedImage();
       allow delete: if isOwner(userId);
     }
 
     // users/{userId}/tripPlanner/{tripId}/routes/{routeId}/{fileName}
+    // Images ≤ 300 KB JPEG; PDFs ≤ 10 MB.
     match /users/{userId}/tripPlanner/{tripId}/routes/{routeId}/{fileName} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && (isImage() || isPdf());
+      allow write: if isOwner(userId) && (isCompressedImage() || isPdf());
       allow delete: if isOwner(userId);
     }
 

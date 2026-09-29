@@ -1,6 +1,10 @@
 import { getFunctions, httpsCallable, type Functions } from "firebase/functions";
 import { getFirebaseApp } from "@/lib/firebase/client";
 import type {
+  FindAroundMeRequest,
+  FindAroundMeSuccess,
+} from "@/types/around-me";
+import type {
   AnalyzeLocationRequest,
   AnalyzeLocationResult,
   ConfidenceLevel,
@@ -52,6 +56,10 @@ function getCloudFunctions(): Functions {
 
 export type FindPlaceResponse =
   | AnalyzeLocationResult
+  | InsufficientAICreditsError;
+
+export type FindAroundMeResponse =
+  | FindAroundMeSuccess
   | InsufficientAICreditsError;
 
 export type GetCityIntelligenceResponse =
@@ -106,6 +114,24 @@ export async function findPlace(
 
 /** @deprecated Use findPlace */
 export const analyzeLocation = findPlace;
+
+/**
+ * Around Me — Google Nearby Search (max 10) + GPT enrichment.
+ * Costs findAroundMe credits (50). Returns locations-shaped places to save.
+ */
+export async function findAroundMe(
+  request: FindAroundMeRequest
+): Promise<FindAroundMeSuccess> {
+  const callable = httpsCallable<FindAroundMeRequest, FindAroundMeResponse>(
+    getCloudFunctions(),
+    "findAroundMe"
+  );
+  const result = await callable(request);
+  if (isInsufficientAICreditsError(result.data)) {
+    throw Object.assign(new Error(result.data.message), result.data);
+  }
+  return result.data;
+}
 
 export async function getCityIntelligence(
   request: GetCityIntelligenceRequest
@@ -171,6 +197,64 @@ export async function planTrip(
     throw Object.assign(new Error(result.data.message), result.data);
   }
   return result.data;
+}
+
+/**
+ * Buy a pack of Google place name searches (10 AI credits → 5 searches).
+ * Places Text Search itself stays on the client; this only charges credits.
+ * Free plan is rejected server-side (permission-denied).
+ */
+export async function purchasePlaceSearchPack(): Promise<{
+  searchesGranted: number;
+  creditsCharged: number;
+  remainingCredits: number;
+}> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    | {
+        success: true;
+        searchesGranted: number;
+        creditsCharged: number;
+        remainingCredits: number;
+      }
+    | InsufficientAICreditsError
+  >(getCloudFunctions(), "purchasePlaceSearchPack");
+  try {
+    const result = await callable({});
+    if (isInsufficientAICreditsError(result.data)) {
+      throw Object.assign(new Error(result.data.message), result.data);
+    }
+    if (!result.data || result.data.success !== true) {
+      throw new Error("Failed to purchase place search pack.");
+    }
+    return {
+      searchesGranted: result.data.searchesGranted,
+      creditsCharged: result.data.creditsCharged,
+      remainingCredits: result.data.remainingCredits,
+    };
+  } catch (err) {
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? String((err as { code: unknown }).code)
+        : "";
+    if (
+      code === "functions/permission-denied" ||
+      code === "permission-denied"
+    ) {
+      const message =
+        typeof err === "object" &&
+        err !== null &&
+        "message" in err &&
+        typeof (err as { message: unknown }).message === "string"
+          ? (err as { message: string }).message.replace(
+              /^Firebase:\s*/i,
+              ""
+            )
+          : "Place name search is not included in your plan.";
+      throw new Error(message);
+    }
+    throw err;
+  }
 }
 
 /**

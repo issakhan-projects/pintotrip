@@ -35,8 +35,8 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
   plus: {
     id: "plus",
     name: "Plus",
-    priceMonthly: 6.99,
-    priceYearly: 69.9,
+    priceMonthly: 9.99,
+    priceYearly: 99.9,
     aiCreditsMonthly: 200,
     description: "More AI credits for frequent travelers.",
     features: [
@@ -53,8 +53,8 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
   pro: {
     id: "pro",
     name: "Pro",
-    priceMonthly: 9.99,
-    priceYearly: 99.9,
+    priceMonthly: 14.99,
+    priceYearly: 149.9,
     aiCreditsMonthly: 500,
     description: "Highest AI allowance for heavy trip planning.",
     features: [
@@ -80,6 +80,21 @@ export const LOCATION_LIMITS: Record<SubscriptionPlan, number> = {
   free: 10,
   plus: 100,
   pro: 300,
+};
+
+/**
+ * Included Google Places Text Search (name search) requests per month.
+ * `0` = feature off. `null` = not configured yet (awaiting product counts).
+ * While plus/pro are null, Pro may still unlock packs via AI credits;
+ * Free is always off; Plus stays off until a positive limit is set.
+ */
+export const PLACE_SEARCH_MONTHLY_LIMITS: Record<
+  SubscriptionPlan,
+  number | null
+> = {
+  free: 0,
+  plus: null,
+  pro: null,
 };
 
 /**
@@ -187,6 +202,39 @@ export function isProPlan(
   return plan === "pro";
 }
 
+/** Monthly Places Text Search allowance for an entitled subscription (0 if none). */
+export function placeSearchMonthlyLimit(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): number {
+  if (!isSubscriptionEntitled(subscription)) return 0;
+  const plan = subscription?.plan ?? "free";
+  const limit = PLACE_SEARCH_MONTHLY_LIMITS[plan];
+  return typeof limit === "number" ? limit : 0;
+}
+
+/**
+ * Google place name search (Places Text Search).
+ * Free is always off. Plus/Pro follow PLACE_SEARCH_MONTHLY_LIMITS;
+ * while those are null, Pro keeps temporary AI-credit pack unlock.
+ */
+export function canUsePlaceNameSearch(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): boolean {
+  if (!isSubscriptionEntitled(subscription)) return false;
+  const plan = subscription?.plan;
+  if (plan !== "plus" && plan !== "pro") return false;
+
+  const limit = PLACE_SEARCH_MONTHLY_LIMITS[plan];
+  if (limit === null) return plan === "pro";
+  return limit > 0;
+}
+
 /**
  * Paid access from mirrored Paddle state (webhook source of truth).
  * Grants during active + past_due; denies canceled / paused / inactive / free.
@@ -220,6 +268,11 @@ export function getPlanPrice(
   interval: BillingInterval
 ): number {
   return interval === "year" ? plan.priceYearly : plan.priceMonthly;
+}
+
+/** Full-year list price at the monthly rate (compare-at when yearly is selected). */
+export function getYearlyListPrice(plan: PlanDefinition): number {
+  return plan.priceMonthly * 12;
 }
 
 /** Effective monthly rate when billed yearly (for display). */

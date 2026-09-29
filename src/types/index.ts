@@ -67,8 +67,21 @@ export type {
   AICreditOperation,
   InsufficientAICreditsError,
 } from "./credits";
+export type {
+  AroundMeTypeId,
+  AroundMeRadiusKm,
+  AroundMePlaceResult,
+  FindAroundMeRequest,
+  FindAroundMeSuccess,
+} from "./around-me";
+export {
+  AROUND_ME_TYPES,
+  AROUND_ME_RADIUS_KM_OPTIONS,
+  DEFAULT_AROUND_ME_RADIUS_KM,
+} from "./around-me";
 export {
   AI_CREDIT_COSTS,
+  PLACE_SEARCH_PACK_SIZE,
   SIGNUP_AI_CREDITS,
   REVIEW_REWARD_AI_CREDITS,
   REFERRAL_REWARD_AI_CREDITS,

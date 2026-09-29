@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
@@ -10,7 +10,7 @@ import { useTrips } from "@/hooks/useTrips";
 import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { isProEntitled } from "@/features/profile/plans";
-import { deleteTrip } from "@/services/trip-planner";
+import { deleteTrip, updateTrip } from "@/services/trip-planner";
 import type { TripPlannerDoc } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
 import { TripCard } from "./TripCard";
@@ -40,6 +40,15 @@ function startOfToday(): Date {
 /** Past = completed/cancelled, or end date before today. */
 function isPastTrip(trip: TripPlannerDoc, today = startOfToday()): boolean {
   if (trip.status === "completed" || trip.status === "cancelled") return true;
+  return trip.endDate.toDate() < today;
+}
+
+/** Trips whose calendar window ended but Firestore status was never flipped. */
+function needsCompletedStatus(
+  trip: TripPlannerDoc,
+  today = startOfToday()
+): boolean {
+  if (trip.status === "completed" || trip.status === "cancelled") return false;
   return trip.endDate.toDate() < today;
 }
 
@@ -89,11 +98,39 @@ export function TripPlannerPanel({
   const [createOpen, setCreateOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tab, setTab] = useState<TripFilterTab>("all");
+  const completingIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!resyncOnMount) return;
     void refresh({ hard: true, silent: true });
   }, [resyncOnMount, refresh]);
+
+  // Persist status=completed when a trip's end date has passed.
+  useEffect(() => {
+    if (loading || !isPro || trips.length === 0) return;
+
+    const today = startOfToday();
+    const stale = trips.filter(
+      (trip) =>
+        needsCompletedStatus(trip, today) &&
+        !completingIdsRef.current.has(trip.id)
+    );
+    if (stale.length === 0) return;
+
+    for (const trip of stale) {
+      completingIdsRef.current.add(trip.id);
+    }
+
+    void Promise.all(
+      stale.map(async (trip) => {
+        try {
+          await updateTrip(user.uid, trip.id, { status: "completed" });
+        } catch {
+          completingIdsRef.current.delete(trip.id);
+        }
+      })
+    );
+  }, [loading, isPro, trips, user.uid]);
 
   const filteredTrips = filterTrips(trips, tab);
 

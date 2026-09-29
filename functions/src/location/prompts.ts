@@ -18,6 +18,12 @@ FAMOUS LANDMARK BIAS: A similar famous landmark is a candidate, not confirmed. E
 When comparing buildings weigh: silhouette, proportions, setbacks, top, facade, neighbors, infrastructure, camera angle, distinctive elements.
 Do NOT use popularity/familiarity as evidence.
 
+NON-PLACE CONTENT (critical): First decide whether the image shows a travel place at all.
+containsTravelPlace=false when the main subject is people/selfies/portraits, pets/animals, products/objects, food without a venue, memes/screens, documents, or anything with no recognizable place/landmark/venue/landscape cues.
+When containsTravelPlace=false: identified=false; placeName/city/country/countryCode/lat/lon/category null; isSpecificPlace=false; hasDistinctiveEvidence=false; couldMatchMultipleLandmarks=false; possibleAlternatives=[]; suggestedSearchQueries=[]; reason must state that no location was found in the photos. Do NOT guess a city/country from clothing, skin tone, language on a shirt, or vague background blur.
+
+containsTravelPlace=true only when the image contains a place worth identifying (landmark, attraction, venue exterior/interior with place cues, distinctive landscape/viewpoint, streetscape with identifiable features, etc.).
+
 CONFIDENCE (how strongly THIS image supports THAT place — not fame):
 - 0.95–1.00 distinctive landmark, strong evidence
 - 0.85–0.94 strong, little ambiguity
@@ -32,13 +38,13 @@ hasDistinctiveEvidence: cites concrete distinctive evidence (geometry/silhouette
 couldMatchMultipleLandmarks: true if another place could match the same visual class.
 possibleAlternatives: strong lookalikes including less-famous; empty only if no serious alternative.
 
-If unidentified: identified=false; placeName/city/country/countryCode/lat/lon null; still give visualClues + suggestedSearchQueries.
+If unidentified but containsTravelPlace=true: identified=false; placeName/city/country/countryCode/lat/lon null; still give visualClues + suggestedSearchQueries.
 
-When identified=true: city, country, countryCode (ISO alpha-2), placeId, cityId, countryId, and category REQUIRED.
+When identified=true: containsTravelPlace must be true; city, country, countryCode (ISO alpha-2), placeId, cityId, countryId, and category REQUIRED.
 category: exactly one of attraction,beach,museum,landmark,food,cafe,park,viewpoint,nightlife,shopping,market,nature,adventure,wellness,neighborhood,other.
 
 Return ONLY valid JSON:
-{"identified":true,"placeName":"","placeId":"","description":"Short travel description","city":"","cityId":"","country":"","countryId":"","countryCode":"","category":"attraction","latitude":null,"longitude":null,"coordinatesAccuracy":"exact|approximate|area","confidence":0,"confidenceLevel":"high|medium|low","reason":"Strongest visual evidence","isDistinctive":true,"isSpecificPlace":true,"hasDistinctiveEvidence":true,"couldMatchMultipleLandmarks":false,"possibleAlternatives":[{"placeName":"","placeId":"","city":"","cityId":"","country":"","countryId":"","confidence":0}],"visualClues":["clue"],"suggestedSearchQueries":["query"]}
+{"containsTravelPlace":true,"identified":true,"placeName":"","placeId":"","description":"Short travel description","city":"","cityId":"","country":"","countryId":"","countryCode":"","category":"attraction","latitude":null,"longitude":null,"coordinatesAccuracy":"exact|approximate|area","confidence":0,"confidenceLevel":"high|medium|low","reason":"Strongest visual evidence","isDistinctive":true,"isSpecificPlace":true,"hasDistinctiveEvidence":true,"couldMatchMultipleLandmarks":false,"possibleAlternatives":[{"placeName":"","placeId":"","city":"","cityId":"","country":"","countryId":"","confidence":0}],"visualClues":["clue"],"suggestedSearchQueries":["query"]}
 
 LANGUAGE: Write placeName,description,city,country,reason,visualClues,suggestedSearchQueries,alternative display names in the user's language. JSON keys English. placeId/cityId/countryId/countryCode/category English/ASCII only.
 IDS: placeId=lowercase ASCII English slug; cityId=English city slug; countryId=lowercase ISO alpha-2 matching countryCode. Never localize *Id fields.
@@ -72,6 +78,7 @@ Final message: single JSON object only — no markdown, no commentary.`;
 
 export function buildLocationImageUserPrompt(language: string): string {
   return `Identify the travel location in this image (INITIAL pass — no web search).
+If the photo is mainly people, things, pets, products, or other non-place content with no place cues, set containsTravelPlace=false and do not guess a location.
 Language: ${language}. Localized display names; English/ASCII *Id fields (countryId=lowercase ISO).
 JSON only.`;
 }

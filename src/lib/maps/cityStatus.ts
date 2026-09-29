@@ -33,7 +33,8 @@ export interface CityStatusEntry {
 }
 
 /**
- * Group locations by city.id; fall back to country.id + city.name.
+ * Group locations by countryId + cityId (city slug alone collides across countries).
+ * Fall back to country + city name when ids are missing.
  * Priority: visited > planned > cancelled (cancelled-only → no entry).
  */
 export function getCityStatuses(
@@ -64,9 +65,13 @@ export function getCityStatuses(
 
     if (!cityId && !cityName) continue;
 
-    const key = cityId
-      ? cityId
-      : `${countryId || countryName}:${cityName}`;
+    // Prefer country+city so "paris" (FR) and "paris" (US) stay separate highlights.
+    const key =
+      cityId && countryId
+        ? `${countryId}:${cityId}`
+        : cityId
+          ? cityId
+          : `${countryId || countryName}:${cityName}`;
 
     let entry = byKey.get(key);
     if (!entry) {
@@ -89,7 +94,11 @@ export function getCityStatuses(
 
     const stored = loc.city.googlePlaceId?.trim();
     if (looksLikeGooglePlaceId(stored)) {
-      entry.googlePlaceId = stored;
+      // Prefer the first stored locality id — later overwrites caused wrong
+      // boundary highlights when one place in the group had a bad Place ID.
+      if (!entry.googlePlaceId) {
+        entry.googlePlaceId = stored;
+      }
     } else if (loc.id) {
       entry.locationIdsMissingPlaceId.push(loc.id);
     }
@@ -98,15 +107,22 @@ export function getCityStatuses(
       const lat = loc.lat as number;
       const lon = loc.lon as number;
       entry.points.push({ lat, lon });
-      if (entry.lat == null) {
-        entry.lat = lat;
-        entry.lon = lon;
-      }
     }
   }
 
   const results: CityStatusEntry[] = [];
   for (const entry of byKey.values()) {
+    // Centroid of pins in this city — reverse-geocode bias matches the cluster,
+    // not whichever location happened to be first in the array.
+    let lat = entry.lat;
+    let lon = entry.lon;
+    if (entry.points.length > 0) {
+      lat =
+        entry.points.reduce((sum, p) => sum + p.lat, 0) / entry.points.length;
+      lon =
+        entry.points.reduce((sum, p) => sum + p.lon, 0) / entry.points.length;
+    }
+
     const base = {
       key: entry.key,
       cityId: entry.cityId,
@@ -115,8 +131,8 @@ export function getCityStatuses(
       countryName: entry.countryName,
       googlePlaceId: entry.googlePlaceId,
       locationIdsMissingPlaceId: entry.locationIdsMissingPlaceId,
-      lat: entry.lat,
-      lon: entry.lon,
+      lat,
+      lon,
       points: entry.points,
     };
 
