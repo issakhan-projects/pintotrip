@@ -57,19 +57,19 @@ export async function fetchPexelsPhotos(input: {
       };
 
       if (Array.isArray(data.photos) && data.photos.length > 0) {
-        return data.photos
-          .map((photo) => {
-            const url = photo.url?.trim();
-            if (!url) return null;
-            return {
+        return data.photos.flatMap((photo): PexelsPhoto[] => {
+          const url = photo.url?.trim();
+          if (!url) return [];
+          return [
+            {
               url,
               id: photo.id ?? null,
               photographer: photo.photographer ?? null,
               photographerUrl: photo.photographerUrl ?? null,
               pexelsUrl: photo.pexelsUrl ?? null,
-            } satisfies PexelsPhoto;
-          })
-          .filter((p): p is PexelsPhoto => p != null);
+            },
+          ];
+        });
       }
 
       const url = data.url?.trim();

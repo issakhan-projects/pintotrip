@@ -147,7 +147,8 @@ export function TravelMap({
 }: TravelMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapInstance | null>(null);
-  const mapHostRef = useRef<HTMLDivElement | null>(null);
+  /** Maps API getDiv() is typed HTMLElement; hosts we create are HTMLDivElement. */
+  const mapHostRef = useRef<HTMLElement | null>(null);
   const markerMapRef = useRef<Map<string, MarkerRecord>>(new Map());
   const markersRef = useRef(markers);
   const markersSyncGenRef = useRef(0);

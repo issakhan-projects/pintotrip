@@ -246,21 +246,21 @@ export async function fetchWikimediaPhotos(input: {
       const pages = data.query?.pages;
       if (!pages) return [];
 
-      return Object.values(pages)
-        .map((page) => {
-          const info = page.imageinfo?.[0];
-          if (!info) return null;
-          const mime = info.mime?.toLowerCase().trim() ?? "";
-          if (mime && !ALLOWED_MIME.has(mime)) return null;
+      return Object.values(pages).flatMap((page): WikimediaPhoto[] => {
+        const info = page.imageinfo?.[0];
+        if (!info) return [];
+        const mime = info.mime?.toLowerCase().trim() ?? "";
+        if (mime && !ALLOWED_MIME.has(mime)) return [];
 
-          const url = (info.thumburl || info.url)?.trim();
-          if (!url) return null;
+        const url = (info.thumburl || info.url)?.trim();
+        if (!url) return [];
 
-          const title = page.title?.trim() || null;
-          const artistRaw = info.extmetadata?.Artist?.value;
-          const licenseRaw = info.extmetadata?.LicenseShortName?.value;
+        const title = page.title?.trim() || null;
+        const artistRaw = info.extmetadata?.Artist?.value;
+        const licenseRaw = info.extmetadata?.LicenseShortName?.value;
 
-          return {
+        return [
+          {
             url,
             title,
             pageId: page.pageid ?? null,
@@ -271,9 +271,9 @@ export async function fetchWikimediaPhotos(input: {
                   title.replace(/ /g, "_")
                 )}`
               : null,
-          } satisfies WikimediaPhoto;
-        })
-        .filter((p): p is WikimediaPhoto => p != null);
+          },
+        ];
+      });
     });
   } catch {
     return [];
