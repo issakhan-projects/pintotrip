@@ -6,11 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type SyntheticEvent,
 } from "react";
 import {
   Bus,
-  CalendarDays,
   Car,
   Clock,
   FileText,
@@ -26,7 +24,13 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { Button, SearchableSelect, TextInput } from "@/components/ui";
+import {
+  Button,
+  DatePicker,
+  SearchableSelect,
+  TextInput,
+  TimePicker,
+} from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { cx } from "@/lib/utils";
 import { IMAGE_FILE_ACCEPT } from "@/lib/images";
@@ -173,26 +177,6 @@ function timeBoundsForDate(
   return bounds;
 }
 
-const DATETIME_INPUT_CLASS = cx(
-  // Native date/time controls have a large intrinsic min-width; force them
-  // into the container (see also globals.css input[type=date|time] rules).
-  "block h-11 w-full min-w-0 max-w-full rounded-xl border border-border bg-white",
-  "py-2.5 text-sm text-text outline-none transition-colors",
-  "focus:border-primary focus:ring-2 focus:ring-primary/20",
-  "[color-scheme:light]"
-);
-
-/** Open the native picker when clicking/focusing anywhere on the field. */
-function openNativePicker(event: SyntheticEvent<HTMLInputElement>) {
-  const input = event.currentTarget;
-  if (input.disabled) return;
-  try {
-    input.showPicker?.();
-  } catch {
-    // showPicker throws if the input isn't activation-gated; ignore.
-  }
-}
-
 const TRANSPORT_UI: Array<{
   id: TripRouteTransport;
   label: string;
@@ -223,8 +207,8 @@ function RouteDateTimeInputs({
   max?: string;
 }) {
   const { date, time } = parseDatetimeParts(value);
-  const minDate = min ? parseDatetimeParts(min).date : undefined;
-  const maxDate = max ? parseDatetimeParts(max).date : undefined;
+  const minDate = min ? parseDatetimeParts(min).date || undefined : undefined;
+  const maxDate = max ? parseDatetimeParts(max).date || undefined : undefined;
   const timeBounds = timeBoundsForDate(date, min, max);
   const dateId = `${id}-date`;
   const timeId = `${id}-time`;
@@ -234,55 +218,32 @@ function RouteDateTimeInputs({
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-2">
-      <div className="min-w-0 overflow-hidden">
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-2">
+      <div className="min-w-0 max-w-full">
         <label htmlFor={dateId} className="sr-only">
           Date
         </label>
-        <div className="relative min-w-0">
-          <CalendarDays
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-            aria-hidden
-          />
-          <input
-            id={dateId}
-            type="date"
-            value={date}
-            min={minDate || undefined}
-            max={maxDate || undefined}
-            onChange={(event) => commit(event.target.value, time || "09:00")}
-            onClick={openNativePicker}
-            onFocus={openNativePicker}
-            className={cx(DATETIME_INPUT_CLASS, "cursor-pointer pl-9 pr-2")}
-          />
-        </div>
+        <DatePicker
+          id={dateId}
+          value={date}
+          min={minDate}
+          max={maxDate}
+          onChange={(nextDate) => commit(nextDate, time || "09:00")}
+        />
       </div>
-      <div className="min-w-0 overflow-hidden">
+      <div className="min-w-0 max-w-full">
         <label htmlFor={timeId} className="sr-only">
           Time
         </label>
-        <div className="relative min-w-0">
-          <Clock
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-            aria-hidden
-          />
-          <input
-            id={timeId}
-            type="time"
-            value={time}
-            min={timeBounds.min}
-            max={timeBounds.max}
-            disabled={!date}
-            onChange={(event) => commit(date, event.target.value)}
-            onClick={openNativePicker}
-            onFocus={openNativePicker}
-            className={cx(
-              DATETIME_INPUT_CLASS,
-              "pl-9 pr-2",
-              date ? "cursor-pointer" : "cursor-not-allowed opacity-60"
-            )}
-          />
-        </div>
+        <TimePicker
+          id={timeId}
+          value={time}
+          min={timeBounds.min}
+          max={timeBounds.max}
+          disabled={!date}
+          stepMinutes={1}
+          onChange={(nextTime) => commit(date, nextTime)}
+        />
       </div>
     </div>
   );
@@ -1424,7 +1385,7 @@ export function RouteSheet({
         {showOutboundLeg ? (
           <section
             data-route-section="leg"
-            className="rounded-xl border border-border bg-white"
+            className="min-w-0 overflow-hidden rounded-xl border border-border bg-white"
           >
             <div className="flex min-w-0 gap-3 p-3.5 sm:gap-4 sm:p-4">
               <div className="relative flex w-7 shrink-0 flex-col items-center pt-1">
@@ -1439,7 +1400,7 @@ export function RouteSheet({
                 <RouteTimelineMarker label="B" />
               </div>
 
-              <div className="min-w-0 flex-1 space-y-5">
+              <div className="min-w-0 flex-1 space-y-5 overflow-hidden">
                 <div className="space-y-3">
                   <header>
                     <h3 className="text-sm font-semibold text-text">
@@ -1688,7 +1649,7 @@ export function RouteSheet({
         {showReturnDeparture ? (
           <section
             data-route-section="leg"
-            className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
+            className="min-w-0 space-y-3.5 overflow-hidden rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
           >
             <header className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-[11px] font-semibold text-primary">
@@ -1760,7 +1721,7 @@ export function RouteSheet({
         ) : null}
 
         {showReturnArrival ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-white p-3.5 ring-1 ring-border/60 sm:p-4">
+          <section className="min-w-0 space-y-3.5 overflow-hidden rounded-xl border border-border bg-white p-3.5 ring-1 ring-border/60 sm:p-4">
             <header className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface text-[11px] font-semibold text-text-secondary ring-1 ring-border">
                 D

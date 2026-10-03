@@ -99,7 +99,9 @@ input[type="date"]::-webkit-datetime-edit,
 input[type="time"]::-webkit-datetime-edit,
 input[type="datetime-local"]::-webkit-datetime-edit {
   min-width: 0;
+  max-width: 100%;
   padding: 0;
+  overflow: hidden;
 }
 
 input[type="date"]::-webkit-date-and-time-value,
@@ -107,6 +109,7 @@ input[type="time"]::-webkit-date-and-time-value,
 input[type="datetime-local"]::-webkit-date-and-time-value {
   text-align: left;
   min-width: 0;
+  max-width: 100%;
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator,
