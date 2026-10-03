@@ -570,7 +570,7 @@ function parseLocationPlace(
         : {}),
       ...(links.length ? { links } : {}),
       confidence: Math.min(1, Math.max(0, confidence)),
-      source: { type: "manual" },
+      source: { type: "manual" as const },
       ai: { why, model },
     },
     row

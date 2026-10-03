@@ -28,10 +28,10 @@ export interface EnglishPlaceIds {
 /** Geocoder + Places address components (legacy long_name or new longText). */
 export type AddressComponentLike = {
   types: string[];
-  long_name?: string;
-  short_name?: string;
-  longText?: string;
-  shortText?: string;
+  long_name?: string | null;
+  short_name?: string | null;
+  longText?: string | null;
+  shortText?: string | null;
 };
 
 export type CityCountryParts = {
