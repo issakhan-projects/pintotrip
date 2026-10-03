@@ -7,15 +7,15 @@
    ============================================================================= */
 
 :root {
-  /* 1. Brand / Primary */
-  --color-primary: #6d28d9;
-  --color-primary-hover: #5b21b6;
-  --color-primary-light: #8b5cf6;
-  --color-primary-tint: #f5f3ff;
+  /* 1. Brand / Primary — deep plum #42005E */
+  --color-primary: #42005E;
+  --color-primary-hover: #2E0045;
+  --color-primary-light: #7A3D9E;
+  --color-primary-tint: #F6F0F9;
 
-  /* 2. Backgrounds */
+  /* 2. Backgrounds — cool plum undertone */
   --color-background: #ffffff;
-  --color-surface: #f8f8fa;
+  --color-surface: #F8F6F9;
   --color-surface-elevated: #ffffff;
 
   /* 3. Typography */
@@ -24,21 +24,21 @@
   --color-text-muted: #9ca3af;
 
   /* 4. Borders */
-  --color-border: #e5e7eb;
-  --color-divider: #f0f0f2;
+  --color-border: #E8E4EC;
+  --color-divider: #F0ECF2;
 
   /* 5. Status */
-  --color-success: #16a34a;
-  --color-success-background: #f0fdf4;
-  --color-warning: #d97706;
+  --color-success: #15803d;
+  --color-success-background: #ecfdf5;
+  --color-warning: #b45309;
   --color-warning-background: #fffbeb;
-  --color-error: #dc2626;
+  --color-error: #b91c1c;
   --color-error-background: #fef2f2;
 
   /* 6. Travel statuses */
-  --color-planned: #d97706;
-  --color-visited: #16a34a;
-  --color-cancelled: #dc2626;
+  --color-planned: #b45309;
+  --color-visited: #15803d;
+  --color-cancelled: #b91c1c;
 
   /* 7. Semantic aliases */
   --color-bg: var(--color-background);
@@ -82,6 +82,37 @@ body {
   background: var(--color-background);
   color: var(--color-text);
   font-family: var(--font-montserrat), Arial, Helvetica, sans-serif;
+}
+
+/* Native date/time controls ship with a large intrinsic min-width and will
+   overflow flex/grid cells on mobile unless explicitly constrained. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+input[type="date"]::-webkit-datetime-edit,
+input[type="time"]::-webkit-datetime-edit,
+input[type="datetime-local"]::-webkit-datetime-edit {
+  min-width: 0;
+  padding: 0;
+}
+
+input[type="date"]::-webkit-date-and-time-value,
+input[type="time"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value {
+  text-align: left;
+  min-width: 0;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  margin-inline-start: 0;
 }
 
 /* Primary action button — sheets, forms, CTAs */

@@ -148,6 +148,30 @@ service cloud.firestore {
         }
       }
 
+      // users/{userId}/tripReviews/{tripId} — post-trip planning feedback
+      match /tripReviews/{tripId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.userId == userId
+          && request.resource.data.tripId == tripId
+          && request.resource.data.keys().hasAll([
+            'userId',
+            'tripId',
+            'tripName',
+            'planningRating',
+            'improve',
+            'createdAt',
+            'updatedAt'
+          ])
+          && request.resource.data.planningRating is int
+          && request.resource.data.planningRating >= 1
+          && request.resource.data.planningRating <= 5
+          && request.resource.data.improve is string
+          && request.resource.data.improve.size() >= 10
+          && request.resource.data.improve.size() <= 1000;
+        allow update, delete: if isOwner(userId);
+      }
+
       // users/{userId}/notifications — inbox (owner read/mark-read; Admin create)
       match /notifications/{notificationId} {
         allow read: if isOwner(userId);

@@ -4,12 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  BedDouble,
+  CalendarDays,
+  ChevronDown,
   ImageIcon,
   Link2,
   Loader2,
-  MapPin,
   MoreHorizontal,
-  Pencil,
+  Search,
+  Sparkles,
   Trash2,
   Upload,
   WifiOff,
@@ -19,9 +22,14 @@ import { Timestamp } from "firebase/firestore";
 import { useTrip } from "@/hooks/useTrip";
 import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
-import { canUsePlaceNameSearch } from "@/features/profile/plans";
+import {
+  canUsePlaceNameSearch,
+  isProEntitled,
+} from "@/features/profile/plans";
 import { getCityIntelligence } from "@/services/functions";
 import { deleteTrip } from "@/services/trip-planner";
+import { subscribeTripRoutes } from "@/services/trip-routes";
+import { getTripReview } from "@/services/trip-reviews";
 import { uploadTripCover } from "@/services/storage";
 import {
   IMAGE_FILE_ACCEPT,
@@ -38,18 +46,26 @@ import type {
   TripItinerary,
   TripPlannerDoc,
   TripPlannerStep,
+  TripRoute,
 } from "@/types/trip-planner";
-import type { LocationStatus } from "@/types/location";
+import type { LocationImage, LocationStatus } from "@/types/location";
 import { tripDayCount } from "@/services/trip-planner";
 import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import { getPublicEnv } from "@/lib/env";
+import { resetBodyScrollLock } from "@/lib/bodyScrollLock";
+import {
+  tripDetailKey,
+  tripDetailStore,
+} from "@/lib/firebase/data-cache";
 import { cx } from "@/lib/utils";
 import { isBrowserOffline } from "@/lib/planner/offline-store";
 import {
-  formatTripHeroDates,
+  formatTripSummaryDates,
+  formatTripSummaryDatesWithWeekday,
   overallTripProgress,
   placesProgress,
   preparationProgress,
+  routesProgress,
   tripChecklistProgress,
 } from "./tripUtils";
 import { newCustomPreparationId } from "./buildPreparation";
@@ -61,6 +77,12 @@ import { BeforeYouGoStep } from "./BeforeYouGoStep";
 import { PlacesStep } from "./PlacesStep";
 import { RoutesStep } from "./RoutesStep";
 import { EditTripSheet } from "./EditTripSheet";
+import { TripReviewModal } from "./TripReviewModal";
+import {
+  needsCompletedStatus,
+  needsTripReviewPrompt,
+} from "./tripLifecycle";
+import { LEISURE_TYPE_OPTIONS } from "@/types/trip-plan";
 import { useI18n } from "@/i18n";
 
 interface TripPlannerDetailProps {
@@ -129,6 +151,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
     useLocations(user.uid);
   const { profile } = useUserProfile(user);
 
+  const [tripRoutes, setTripRoutes] = useState<TripRoute[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewHandledRef = useRef(false);
   const [step, setStep] = useState<TripPlannerStep>(() =>
     searchParams.get("new") === "1"
       ? "preparation"
@@ -146,13 +171,122 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const coverMenuRef = useRef<HTMLDivElement>(null);
   const coverFileRef = useRef<HTMLInputElement>(null);
+
+  // Clear a stuck body scroll lock left by nested Sheet/Modal restores.
+  useEffect(() => {
+    resetBodyScrollLock();
+  }, [tripId]);
+
+  useEffect(() => {
+    reviewHandledRef.current = false;
+    setReviewOpen(false);
+  }, [tripId]);
+
+  useEffect(() => {
+    if (!tripId) {
+      setTripRoutes([]);
+      return;
+    }
+    return subscribeTripRoutes(user.uid, tripId, setTripRoutes);
+  }, [user.uid, tripId]);
+
+  // Flip ended trips to completed, then offer the planning review.
+  useEffect(() => {
+    if (!trip || reviewHandledRef.current) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      let current = trip;
+
+      if (needsCompletedStatus(current)) {
+        try {
+          await patchTrip({ status: "completed" });
+          if (cancelled) return;
+          current = { ...current, status: "completed" };
+          setTrip(current);
+        } catch {
+          return;
+        }
+      }
+
+      if (!needsTripReviewPrompt(current)) {
+        reviewHandledRef.current = true;
+        return;
+      }
+
+      try {
+        const existing = await getTripReview(user.uid, current.id);
+        if (cancelled) return;
+        reviewHandledRef.current = true;
+        if (existing) return;
+        setReviewOpen(true);
+      } catch {
+        // Ignore review lookup failures; allow a later retry.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trip, user.uid, patchTrip, setTrip]);
+
+  async function dismissTripReview() {
+    reviewHandledRef.current = true;
+    setReviewOpen(false);
+    try {
+      await patchTrip({ reviewDismissedAt: Timestamp.now() });
+    } catch {
+      // Keep closed even if dismiss write fails.
+    }
+  }
 
   function closeCoverMenu() {
     setCoverMenuOpen(false);
     setCoverLinkOpen(false);
     setCoverLinkDraft("");
+  }
+
+  /** Mark a saved location visited/planned and mirror status onto itinerary slots. */
+  async function markPlaceStatus(
+    locationId: string,
+    status: LocationStatus
+  ) {
+    await patchLocation(locationId, { status });
+
+    const latest =
+      tripDetailStore.get(tripDetailKey(user.uid, tripId)) ?? trip;
+    if (!latest || latest.itinerary.days.length === 0) return;
+
+    if (status === "cancelled") {
+      const days = latest.itinerary.days.map((day) => ({
+        ...day,
+        places: day.places
+          .filter((p) => p.locationId !== locationId)
+          .map((p, order) => ({ ...p, order })),
+      }));
+      await patchTrip({
+        itinerary: { status: "edited", days },
+      });
+      return;
+    }
+
+    const nextDays = latest.itinerary.days.map((day) => ({
+      ...day,
+      places: day.places.map((p) =>
+        p.locationId === locationId ? { ...p, status } : p
+      ),
+    }));
+    await patchTrip({
+      itinerary: {
+        status:
+          latest.itinerary.status === "empty"
+            ? "edited"
+            : latest.itinerary.status,
+        days: nextDays,
+      },
+    });
   }
 
   const fetchCityIntelligence = useCallback(async () => {
@@ -234,18 +368,20 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   }, [trip?.id, trip?.cityIntelligence.status]);
 
   const completed = useMemo(
-    () => ({
-      details: true,
-      preparation:
-        trip != null &&
-        trip.preparation.items.length > 0 &&
-        trip.preparation.items.every((i) => i.completed),
-      places:
-        trip != null &&
-        trip.savedPlaceIds.length > 0 &&
-        placesProgress(trip, locations).percent === 100,
-    }),
-    [trip, locations]
+    () => {
+      const places = trip ? placesProgress(trip, locations) : null;
+      const routes = routesProgress(tripRoutes);
+      return {
+        details: true,
+        preparation:
+          trip != null &&
+          trip.preparation.items.length > 0 &&
+          trip.preparation.items.every((i) => i.completed),
+        routes: routes.total > 0 && routes.percent === 100,
+        places: places != null && places.total > 0 && places.percent === 100,
+      };
+    },
+    [trip, locations, tripRoutes]
   );
 
   const coverCandidates = useMemo(() => {
@@ -312,7 +448,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   useEffect(() => {
     if (!coverMenuOpen) return;
     const onDoc = (event: MouseEvent) => {
-      if (!coverMenuRef.current?.contains(event.target as Node)) {
+      if (!menuRef.current?.contains(event.target as Node)) {
         closeCoverMenu();
       }
     };
@@ -468,21 +604,21 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   }
 
   const days = tripDayCount(trip.startDate, trip.endDate);
+  const nights = Math.max(0, days - 1);
   const overall = overallTripProgress(trip, locations);
   const places = placesProgress(trip, locations);
+  const routes = routesProgress(tripRoutes);
   const prep = preparationProgress(trip.preparation.items);
   const checklist = tripChecklistProgress(trip, locations);
   const primaryDest = primaryTripDestination(trip);
-  const destLabel = [primaryDest.cityName, primaryDest.countryName]
-    .filter(Boolean)
-    .join(", ");
-  const coverUrl =
-    coverCandidates[
-      Math.min(coverIndex, Math.max(coverCandidates.length - 1, 0))
-    ] ?? null;
-
+  const cityLabel = primaryDest.cityName?.trim() || trip.name;
+  const leisureLabel =
+    trip.leisureType === "custom"
+      ? trip.leisureCustom?.trim() || t("planner.detail.summary.styleFallback")
+      : LEISURE_TYPE_OPTIONS.find((o) => o.value === trip.leisureType)?.label ??
+        t("planner.detail.summary.styleFallback");
   return (
-    <main className="relative flex min-h-0 flex-1 flex-col">
+    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
       {offline ? (
         <div
           role="status"
@@ -494,7 +630,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
           </p>
         </div>
       ) : null}
-      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-10 pt-4 sm:px-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pb-10 pt-4 sm:px-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <button
             type="button"
@@ -505,215 +641,248 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
             {t("planner.detail.backToTrips")}
           </button>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              icon={Pencil}
-              className="!h-9 !rounded-lg !px-3 !text-[13px]"
-              onClick={openEditTrip}
+          <div className="relative" ref={menuRef}>
+            <input
+              ref={coverFileRef}
+              type="file"
+              accept={IMAGE_FILE_ACCEPT}
+              className="sr-only"
+              onChange={(e) =>
+                void handleCoverFileChange(e.target.files?.[0])
+              }
+            />
+            <button
+              type="button"
+              aria-label={t("trip.optionsAria")}
+              onClick={() => {
+                setMenuOpen((v) => !v);
+                if (coverMenuOpen) closeCoverMenu();
+              }}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface-elevated text-text-secondary shadow-sm hover:bg-surface hover:text-text"
             >
-              {t("trip.edit")}
-            </Button>
-            <div className="relative" ref={menuRef}>
-              <button
-                type="button"
-                aria-label={t("trip.optionsAria")}
-                onClick={() => setMenuOpen((v) => !v)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface-elevated text-text-secondary shadow-sm hover:bg-surface hover:text-text"
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </button>
-              {menuOpen ? (
-                <div className="absolute right-0 z-20 mt-1 min-w-[10rem] rounded-xl border border-border bg-surface-elevated py-1 shadow-lg">
-                  <button
-                    type="button"
-                    disabled={deleting}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error-background disabled:opacity-50"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setConfirmDeleteOpen(true);
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t("trip.delete")}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        <section className="relative overflow-hidden rounded-2xl bg-text shadow-sm">
-          <div className="relative aspect-[21/9] min-h-[200px] w-full sm:min-h-[240px]">
-            {coverUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- remote cover / static map URLs vary
-              <img
-                src={coverUrl}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div className="absolute inset-0 bg-gradient-to-br from-primary via-primary-light to-primary-hover" />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-black/10" />
-
-            <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-4 sm:p-6">
-              <div className="min-w-0 text-white">
-                <h1 className="truncate text-2xl font-semibold tracking-tight sm:text-3xl">
-                  {trip.name}
-                </h1>
-                <p className="mt-1 text-sm text-white/90 sm:text-[15px]">
-                  {formatTripHeroDates(trip.startDate, trip.endDate)}
-                  <span className="mx-1.5 text-white/50">•</span>
-                  {t(
-                    days === 1 ? "common.day_one" : "common.day_other",
-                    { count: days }
-                  )}
-                </p>
-                <p className="mt-1.5 flex items-center gap-1.5 text-sm text-white/85">
-                  <MapPin className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{destLabel}</span>
-                </p>
-              </div>
-
-              <div className="relative shrink-0" ref={coverMenuRef}>
-                <input
-                  ref={coverFileRef}
-                  type="file"
-                  accept={IMAGE_FILE_ACCEPT}
-                  className="sr-only"
-                  onChange={(e) =>
-                    void handleCoverFileChange(e.target.files?.[0])
-                  }
-                />
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 z-20 mt-1 min-w-[12rem] rounded-xl border border-border bg-surface-elevated py-1 shadow-lg">
                 <button
                   type="button"
                   disabled={coverUploading}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface disabled:opacity-50"
                   onClick={() => {
-                    if (coverMenuOpen) {
-                      closeCoverMenu();
-                    } else {
-                      setCoverMenuOpen(true);
-                      setCoverUploadError(null);
-                    }
+                    setMenuOpen(false);
+                    coverFileRef.current?.click();
                   }}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-black/45 px-3 py-2 text-xs font-medium text-white backdrop-blur-sm hover:bg-black/55 disabled:opacity-60"
                 >
                   {coverUploading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <ImageIcon className="h-3.5 w-3.5" />
+                    <Upload className="h-3.5 w-3.5" />
                   )}
-                  {coverUploading
-                    ? t("planner.detail.uploading")
-                    : t("planner.detail.changeCover")}
+                  {t("planner.detail.uploadPhoto")}
                 </button>
-                {coverMenuOpen ? (
-                  <div
-                    className={cx(
-                      "absolute bottom-full right-0 mb-2 overflow-hidden rounded-xl border border-white/15 bg-black/80 py-1 shadow-lg backdrop-blur-md",
-                      coverLinkOpen ? "w-[min(18rem,calc(100vw-2rem))]" : "min-w-[11.5rem]"
-                    )}
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setCoverMenuOpen(true);
+                    setCoverLinkOpen(true);
+                    setCoverUploadError(null);
+                  }}
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  {t("planner.detail.addImageLink")}
+                </button>
+                {coverCandidates.length > 1 ? (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface"
+                    onClick={() => {
+                      setCoverIndex((i) => (i + 1) % coverCandidates.length);
+                      setMenuOpen(false);
+                    }}
                   >
-                    {coverLinkOpen ? (
-                      <form
-                        className="flex flex-col gap-2 px-3 py-2"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          void handleCoverLinkSubmit();
-                        }}
-                      >
-                        <label
-                          htmlFor="trip-cover-image-link"
-                          className="text-xs font-medium text-white/80"
-                        >
-                          {t("planner.detail.addImageLink")}
-                        </label>
-                        <TextInput
-                          id="trip-cover-image-link"
-                          type="url"
-                          value={coverLinkDraft}
-                          onChange={(e) => {
-                            setCoverLinkDraft(e.target.value);
-                            if (coverUploadError) setCoverUploadError(null);
-                          }}
-                          placeholder={t("planner.detail.imageLinkPlaceholder")}
-                          autoFocus
-                          className="!rounded-lg !border-white/20 !bg-white/10 !py-2 !text-white !placeholder:text-white/45 focus:!border-white/40 focus:!ring-white/20"
-                        />
-                        <div className="flex gap-2">
-                          <Button
-                            type="submit"
-                            color="primary"
-                            disabled={coverUploading || !coverLinkDraft.trim()}
-                            className="!h-8 !flex-1 !rounded-lg !px-2 !text-xs"
-                          >
-                            {t("common.save")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={coverUploading}
-                            className="!h-8 !rounded-lg !border-white/20 !bg-white/10 !px-2 !text-xs !text-white hover:!bg-white/15"
-                            onClick={() => {
-                              setCoverLinkOpen(false);
-                              setCoverLinkDraft("");
-                              setCoverUploadError(null);
-                            }}
-                          >
-                            {t("common.cancel")}
-                          </Button>
-                        </div>
-                      </form>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
-                          onClick={() => coverFileRef.current?.click()}
-                        >
-                          <Upload className="h-3.5 w-3.5" />
-                          {t("planner.detail.uploadPhoto")}
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
-                          onClick={() => {
-                            setCoverLinkOpen(true);
-                            setCoverUploadError(null);
-                          }}
-                        >
-                          <Link2 className="h-3.5 w-3.5" />
-                          {t("planner.detail.addImageLink")}
-                        </button>
-                        {coverCandidates.length > 1 ? (
-                          <button
-                            type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-white hover:bg-white/10"
-                            onClick={() => {
-                              setCoverIndex(
-                                (i) => (i + 1) % coverCandidates.length
-                              );
-                              closeCoverMenu();
-                            }}
-                          >
-                            <ImageIcon className="h-3.5 w-3.5" />
-                            {t("planner.detail.nextPhoto")}
-                          </button>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    {t("planner.detail.nextPhoto")}
+                  </button>
                 ) : null}
-                {coverUploadError ? (
-                  <p className="absolute right-0 top-full mt-1 max-w-[14rem] rounded-lg bg-error px-2 py-1 text-[11px] text-white shadow">
-                    {coverUploadError}
-                  </p>
-                ) : null}
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  disabled={deleting}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error-background disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setConfirmDeleteOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("trip.delete")}
+                </button>
               </div>
-            </div>
+            ) : null}
+            {coverMenuOpen && coverLinkOpen ? (
+              <form
+                className="absolute right-0 z-20 mt-1 flex w-[min(18rem,calc(100vw-2rem))] flex-col gap-2 rounded-xl border border-border bg-surface-elevated p-3 shadow-lg"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleCoverLinkSubmit();
+                }}
+              >
+                <label
+                  htmlFor="trip-cover-image-link"
+                  className="text-xs font-medium text-text-secondary"
+                >
+                  {t("planner.detail.addImageLink")}
+                </label>
+                <TextInput
+                  id="trip-cover-image-link"
+                  type="url"
+                  value={coverLinkDraft}
+                  onChange={(e) => {
+                    setCoverLinkDraft(e.target.value);
+                    if (coverUploadError) setCoverUploadError(null);
+                  }}
+                  placeholder={t("planner.detail.imageLinkPlaceholder")}
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+                    color="primary"
+                    disabled={coverUploading || !coverLinkDraft.trim()}
+                    className="!h-8 !flex-1 !rounded-lg !px-2 !text-xs"
+                  >
+                    {t("common.save")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={coverUploading}
+                    className="!h-8 !rounded-lg !px-2 !text-xs"
+                    onClick={closeCoverMenu}
+                  >
+                    {t("common.cancel")}
+                  </Button>
+                </div>
+                {coverUploadError ? (
+                  <p className="text-[11px] text-error">{coverUploadError}</p>
+                ) : null}
+              </form>
+            ) : null}
           </div>
-        </section>
+        </div>
+
+        {/* Mobile: compact trip summary bar. */}
+        <button
+          type="button"
+          onClick={openEditTrip}
+          className="flex w-full items-center gap-3 rounded-xl border-[3px] border-accent bg-surface-elevated px-3.5 py-3 text-left shadow-sm sm:hidden"
+          aria-label={t("trip.edit")}
+        >
+          <Search className="h-5 w-5 shrink-0 text-text" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[15px] font-semibold leading-tight text-text">
+              {cityLabel}
+            </span>
+            <span className="mt-0.5 block truncate text-[13px] leading-snug text-text-secondary">
+              {formatTripSummaryDates(trip.startDate, trip.endDate)}
+              {" ("}
+              {t(nights === 1 ? "common.night_one" : "common.night_other", {
+                count: nights,
+              })}
+              {")"}
+            </span>
+          </span>
+        </button>
+
+        {/* Desktop: multi-field trip summary bar. */}
+        <div className="hidden rounded-xl border-[3px] border-accent bg-surface-elevated p-1.5 shadow-sm sm:block">
+          <div className="flex min-h-[4.5rem] items-stretch gap-0">
+            <button
+              type="button"
+              onClick={openEditTrip}
+              className="flex min-w-0 flex-[1.1] items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-surface"
+            >
+              <BedDouble
+                className="h-5 w-5 shrink-0 text-text-secondary"
+                aria-hidden
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs text-text-secondary">
+                  {t("planner.detail.summary.whereLabel")}
+                </span>
+                <span className="mt-0.5 block truncate text-sm font-semibold text-text">
+                  {cityLabel}
+                </span>
+              </span>
+            </button>
+
+            <div className="my-2 w-px shrink-0 bg-border" aria-hidden />
+
+            <button
+              type="button"
+              onClick={openEditTrip}
+              className="flex min-w-0 flex-[1.2] items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-surface"
+            >
+              <CalendarDays
+                className="h-5 w-5 shrink-0 text-text-secondary"
+                aria-hidden
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs text-text-secondary">
+                  {t("planner.detail.summary.datesLabel")}
+                </span>
+                <span className="mt-0.5 block truncate text-sm font-semibold text-text">
+                  {formatTripSummaryDatesWithWeekday(
+                    trip.startDate,
+                    trip.endDate
+                  )}
+                </span>
+              </span>
+            </button>
+
+            <div className="my-2 w-px shrink-0 bg-border" aria-hidden />
+
+            <button
+              type="button"
+              onClick={openEditTrip}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-surface"
+            >
+              <Sparkles
+                className="h-5 w-5 shrink-0 text-text-secondary"
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs text-text-secondary">
+                  {t("planner.detail.summary.styleLabel")}
+                </span>
+                <span className="mt-0.5 block truncate text-sm font-semibold text-text">
+                  {leisureLabel}
+                  <span className="font-normal text-text-secondary">
+                    {" · "}
+                    {t(nights === 1 ? "common.night_one" : "common.night_other", {
+                      count: nights,
+                    })}
+                  </span>
+                </span>
+              </span>
+              <ChevronDown
+                className="h-4 w-4 shrink-0 text-text-muted"
+                aria-hidden
+              />
+            </button>
+
+            <Button
+              type="button"
+              color="primary"
+              onClick={openEditTrip}
+              className="!ml-1 !h-auto !min-h-[3.25rem] !shrink-0 !self-center !rounded-lg !px-6 !text-sm !font-semibold"
+            >
+              {t("planner.detail.summary.edit")}
+            </Button>
+          </div>
+        </div>
 
         {/* <section className="mt-4 rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-6">
@@ -762,23 +931,27 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         </section> */}
 
 
-<section className="mt-4">
-              <TripStepNav
-                active={step}
-                completed={completed}
-                onChange={setStep}
-                progress={{
-                  preparation: {
-                    completed: prep.completed,
-                    total: prep.total,
-                  },
-                  places: {
-                    completed: places.visited,
-                    total: places.total,
-                  },
-                }}
-              />
-            </section>
+        <section className="mt-3">
+          <TripStepNav
+            active={step}
+            completed={completed}
+            onChange={setStep}
+            progress={{
+              preparation: {
+                completed: prep.completed,
+                total: prep.total,
+              },
+              routes: {
+                completed: routes.done,
+                total: routes.total,
+              },
+              places: {
+                completed: places.visited,
+                total: places.total,
+              },
+            }}
+          />
+        </section>
 
         <div className="mt-6 min-h-0 flex-1 pb-4">
           {step === "details" ? (
@@ -799,37 +972,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               trip={trip}
               userId={user.uid}
               locations={locations}
-              onMarkPlaceStatus={async (locationId, status: LocationStatus) => {
-                await patchLocation(locationId, { status });
-                if (trip.itinerary.days.length === 0) return;
-                if (status === "cancelled") {
-                  const days = trip.itinerary.days.map((day) => ({
-                    ...day,
-                    places: day.places
-                      .filter((p) => p.locationId !== locationId)
-                      .map((p, order) => ({ ...p, order })),
-                  }));
-                  await patchTrip({
-                    itinerary: { status: "edited", days },
-                  });
-                  return;
-                }
-                const nextDays = trip.itinerary.days.map((day) => ({
-                  ...day,
-                  places: day.places.map((p) =>
-                    p.locationId === locationId ? { ...p, status } : p
-                  ),
-                }));
-                await patchTrip({
-                  itinerary: {
-                    status:
-                      trip.itinerary.status === "empty"
-                        ? "edited"
-                        : trip.itinerary.status,
-                    days: nextDays,
-                  },
-                });
-              }}
+              onMarkPlaceStatus={markPlaceStatus}
               onSavePlaceNote={async (locationId, note) => {
                 await patchLocation(locationId, { note });
               }}
@@ -861,6 +1004,7 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               userId={user.uid}
               aiCreditsBalance={profile?.aiCreditsBalance ?? 0}
               canSearchPlaces={canUsePlaceNameSearch(profile?.subscription)}
+              allowGooglePlacePhotos={isProEntitled(profile?.subscription)}
               language={profile?.preferences?.language}
               onUpdateSavedPlaces={async (ids) => {
                 await patchTrip({ savedPlaceIds: ids });
@@ -872,45 +1016,18 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 await patchTrip({ savedPlaceIds, itinerary });
                 await refreshLocations();
               }}
-              onMarkPlaceStatus={async (locationId, status: LocationStatus) => {
-                await patchLocation(locationId, { status });
-                if (trip.itinerary.days.length === 0) return;
-
-                if (status === "cancelled") {
-                  const days = trip.itinerary.days
-                    .map((day) => ({
-                      ...day,
-                      places: day.places
-                        .filter((p) => p.locationId !== locationId)
-                        .map((p, order) => ({ ...p, order })),
-                    }));
-                  await patchTrip({
-                    itinerary: {
-                      status: "edited",
-                      days,
-                    },
-                  });
-                  return;
-                }
-
-                const nextDays = trip.itinerary.days.map((day) => ({
-                  ...day,
-                  places: day.places.map((p) =>
-                    p.locationId === locationId ? { ...p, status } : p
-                  ),
-                }));
-                await patchTrip({
-                  itinerary: {
-                    status:
-                      trip.itinerary.status === "empty"
-                        ? "edited"
-                        : trip.itinerary.status,
-                    days: nextDays,
-                  },
-                });
-              }}
+              onMarkPlaceStatus={markPlaceStatus}
               onSavePlaceNote={async (locationId, note) => {
                 await patchLocation(locationId, { note });
+              }}
+              onSavePlaceTravelInfo={async (locationId, patch) => {
+                await patchLocation(locationId, patch);
+              }}
+              onSavePlaceImages={async (
+                locationId,
+                images: LocationImage[]
+              ) => {
+                await patchLocation(locationId, { images });
               }}
             />
           ) : null}
@@ -936,6 +1053,18 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
           if (!deleting) setConfirmDeleteOpen(false);
         }}
         onConfirm={() => void handleDelete()}
+      />
+
+      <TripReviewModal
+        open={reviewOpen}
+        userId={user.uid}
+        tripId={trip.id}
+        tripName={trip.name}
+        onClose={() => void dismissTripReview()}
+        onSubmitted={() => {
+          reviewHandledRef.current = true;
+          setReviewOpen(false);
+        }}
       />
     </main>
   );

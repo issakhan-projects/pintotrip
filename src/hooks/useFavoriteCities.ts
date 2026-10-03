@@ -101,7 +101,7 @@ export function useFavoriteCities(userId: string | undefined) {
     (
       cityName: string,
       country: string,
-      coords?: { lat: number; lon: number }
+      coords?: { lat: number; lon: number; cityId?: string }
     ) => {
       return Boolean(
         findFavoriteCity(favoriteCities, {
@@ -109,6 +109,7 @@ export function useFavoriteCities(userId: string | undefined) {
           country,
           lat: coords?.lat,
           lon: coords?.lon,
+          cityId: coords?.cityId,
         })
       );
     },
@@ -122,8 +123,11 @@ export function useFavoriteCities(userId: string | undefined) {
       lat: number;
       lon: number;
       status?: LocationStatus;
+      /** English/ASCII city slug (not the favorite doc id). */
+      cityId?: string;
     }) => {
       if (!userId) throw new Error("Not signed in.");
+      // Doc id is always `{countryId}_{cityId}` from coords/names — never the bare slug.
       const cityId = await resolveFavoriteCityId(input);
       if (!cityId) {
         throw new Error(
@@ -149,7 +153,7 @@ export function useFavoriteCities(userId: string | undefined) {
     async (
       cityName: string,
       country: string,
-      coords?: { lat: number; lon: number }
+      coords?: { lat: number; lon: number; cityId?: string }
     ) => {
       if (!userId) throw new Error("Not signed in.");
       const existing = findFavoriteCity(favoriteCities, {
@@ -157,6 +161,7 @@ export function useFavoriteCities(userId: string | undefined) {
         country,
         lat: coords?.lat,
         lon: coords?.lon,
+        cityId: coords?.cityId,
       });
       const cityId =
         existing?.cityId ||
@@ -182,16 +187,19 @@ export function useFavoriteCities(userId: string | undefined) {
       lat: number;
       lon: number;
       status?: LocationStatus;
+      cityId?: string;
     }) => {
       if (
         isFavorite(input.cityName, input.country, {
           lat: input.lat,
           lon: input.lon,
+          cityId: input.cityId,
         })
       ) {
         await removeFavorite(input.cityName, input.country, {
           lat: input.lat,
           lon: input.lon,
+          cityId: input.cityId,
         });
         return false;
       }

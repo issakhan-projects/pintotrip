@@ -40,6 +40,8 @@ export const common = {
   ofCompleted: "{completed} of {total} completed",
   day_one: "{count} day",
   day_other: "{count} days",
+  night_one: "{count} night",
+  night_other: "{count} nights",
   unknown: "Unknown",
   emDash: "—",
 } as const;

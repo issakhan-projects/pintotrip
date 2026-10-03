@@ -12,6 +12,7 @@ import {
   MapPin,
   Plane,
   Tag,
+  Utensils,
   X,
 } from "lucide-react";
 import type { SavedLocation } from "@/hooks/useLocations";
@@ -20,6 +21,7 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { CURRENCY_OPTIONS, resolveCurrencyCode } from "@/lib/currencies";
 import {
   countryIdFromParts,
+  cx,
   isAsciiId,
   slugifyId,
 } from "@/lib/utils";
@@ -31,10 +33,14 @@ import {
   resolveTimezoneFromCoords,
 } from "@/lib/maps";
 import { timestampFromDate } from "@/services/trip-planner";
-import type {
-  TripDestinationStop,
-  TripPlannerDoc,
-  TripPlannerUpdateInput,
+import {
+  MEAL_CUSTOM_MAX_LENGTH,
+  MEAL_TYPE_OPTIONS,
+  MEAL_TYPES,
+  type MealType,
+  type TripDestinationStop,
+  type TripPlannerDoc,
+  type TripPlannerUpdateInput,
 } from "@/types/trip-planner";
 import {
   LEISURE_CUSTOM_MAX_LENGTH,
@@ -62,6 +68,14 @@ function leisureTypeFromTrip(trip: TripPlannerDoc): LeisureType {
     return value;
   }
   return "mixed";
+}
+
+function mealTypeFromTrip(trip: TripPlannerDoc): MealType {
+  const value = trip.mealType;
+  if (value && (MEAL_TYPES as readonly string[]).includes(value)) {
+    return value;
+  }
+  return "default";
 }
 
 interface EditTripSheetProps {
@@ -146,6 +160,12 @@ function EditTripForm({
   );
   const [leisureCustom, setLeisureCustom] = useState(
     () => trip.leisureCustom?.trim() ?? ""
+  );
+  const [mealType, setMealType] = useState<MealType>(() =>
+    mealTypeFromTrip(trip)
+  );
+  const [mealCustom, setMealCustom] = useState(
+    () => trip.mealCustom?.trim() ?? ""
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -360,6 +380,10 @@ function EditTripForm({
       setError("Describe the activities you want for Custom leisure.");
       return;
     }
+    if (mealType === "other" && !mealCustom.trim()) {
+      setError("Describe your meal preference for Other.");
+      return;
+    }
 
     if (isAdvanced) {
       for (const item of destinations) {
@@ -447,6 +471,12 @@ function EditTripForm({
               leisureCustom: leisureCustom
                 .trim()
                 .slice(0, LEISURE_CUSTOM_MAX_LENGTH),
+            }
+          : {}),
+        mealType,
+        ...(mealType === "other" && mealCustom.trim()
+          ? {
+              mealCustom: mealCustom.trim().slice(0, MEAL_CUSTOM_MAX_LENGTH),
             }
           : {}),
       };
@@ -593,6 +623,61 @@ function EditTripForm({
               />
               <p className="text-xs text-text-muted">
                 Tell us what you want to do — we’ll prioritize those activities.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-2">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-text">
+            <Utensils className="h-3.5 w-3.5 text-text-muted" aria-hidden />
+            Meal type
+          </span>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {MEAL_TYPE_OPTIONS.map((option) => {
+              const selected = mealType === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setMealType(option.id)}
+                  className={cx(
+                    "rounded-xl border px-2.5 py-2.5 text-left transition-all",
+                    selected
+                      ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/15"
+                      : "border-border bg-surface-elevated text-text-secondary hover:border-primary/30 hover:text-text"
+                  )}
+                >
+                  <span className="block text-sm font-semibold">
+                    {option.label}
+                  </span>
+                  <span
+                    className={cx(
+                      "mt-0.5 block text-[10px] leading-snug",
+                      selected ? "text-primary/75" : "text-text-muted"
+                    )}
+                  >
+                    {option.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {mealType === "other" ? (
+            <div className="space-y-1.5">
+              <TextInput
+                value={mealCustom}
+                onChange={(e) =>
+                  setMealCustom(
+                    e.target.value.slice(0, MEAL_CUSTOM_MAX_LENGTH)
+                  )
+                }
+                placeholder="e.g. vegan, gluten-free, no seafood"
+                maxLength={MEAL_CUSTOM_MAX_LENGTH}
+                disabled={saving}
+              />
+              <p className="text-xs text-text-muted">
+                We’ll prefer restaurants and food spots that match this.
               </p>
             </div>
           ) : null}

@@ -76,7 +76,7 @@ function markersSignature(markers: MapMarkerInput[]): string {
   return markers
     .map(
       (m) =>
-        `${m.id}:${m.lat}:${m.lon}:${m.googlePlaceId ?? ""}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}`
+        `${m.id}:${m.lat}:${m.lon}:${m.googlePlaceId ?? ""}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}:${m.order ?? ""}`
     )
     .sort()
     .join("|");
@@ -245,9 +245,12 @@ export function TravelMap({
           }
         }, 0);
       }
-      // Keep the reused camera; skip first device-city snap / fit-to-markers.
-      didCenterOnUserRef.current = true;
-      lastFitSignatureRef.current = "__reused_map__";
+      // Trip / embedded maps ask to fit their markers and not the device city —
+      // allow the first markers sync to reframe (e.g. PlacesStep destination).
+      // Main map keeps the reused camera so pan/zoom survives tab switches.
+      const shouldFitOnAttach = fitToMarkers && !centerOnCurrentLocation;
+      didCenterOnUserRef.current = !shouldFitOnAttach;
+      lastFitSignatureRef.current = shouldFitOnAttach ? "" : "__reused_map__";
       lastMarkersSignatureRef.current = "";
       attachControllers(cached);
       return () => {

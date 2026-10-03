@@ -19,6 +19,13 @@ export interface MapMarkerInput {
   /** Place pins use status colors; city/stay/airport pins use fixed brand accents. */
   kind?: "place" | "city" | "stay" | "airport";
   /**
+   * Visit order shown on place pins (1, 2, 3…).
+   * Only applied to `kind: "place"` markers.
+   */
+  order?: number;
+  /** Emphasize the pin when the matching itinerary row is selected. */
+  selected?: boolean;
+  /**
    * Google Place ID fallback when lat/lon are missing or Null Island (0,0).
    * TravelMap resolves geometry before placing the pin.
    */
@@ -72,7 +79,7 @@ export interface MapProvider {
 }
 
 function markerVisualKey(m: MapMarkerInput): string {
-  return `${m.kind ?? "place"}:${m.status ?? "planned"}:${m.title ?? ""}`;
+  return `${m.kind ?? "place"}:${m.status ?? "planned"}:${m.title ?? ""}:${m.order ?? ""}:${m.selected ? "1" : "0"}`;
 }
 
 const STATUS_HEX: Record<LocationStatus, string> = {
@@ -86,6 +93,8 @@ const CITY_PIN_HEX = "#6D28D9";
 const STAY_PIN_HEX = "#0F766E";
 /** Arrival airport pin from trip-essentials flights. */
 const AIRPORT_PIN_HEX = "#C2410C";
+/** Selected itinerary pin — brand primary. */
+const SELECTED_PIN_HEX = "#42005E";
 
 export { DEMO_MAP_ID };
 
@@ -107,10 +116,30 @@ export function resolveMapsMapId(explicit?: string): {
   };
 }
 
-function pinSvg(color: string): string {
+function pinSvg(color: string, order?: number, selected = false): string {
+  const label =
+    typeof order === "number" && Number.isFinite(order) && order > 0
+      ? String(Math.floor(order))
+      : "";
+  const fontSize = label.length >= 3 ? 8 : label.length === 2 ? 9.5 : 11;
+  const body = label
+    ? `<text x="14" y="16.5" text-anchor="middle" fill="#fff" font-size="${fontSize}" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${label}</text>`
+    : `<circle cx="14" cy="13" r="4.5" fill="#fff"/>`;
+  if (selected) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44">
+      <ellipse cx="17" cy="41" rx="7" ry="2.2" fill="rgba(66,0,94,0.28)"/>
+      <path fill="${color}" stroke="#fff" stroke-width="2.5" d="M17 2C9.8 2 4 7.8 4 15c0 9.2 11.2 22.2 12.2 23.3a1.3 1.3 0 0 0 2 0C19.2 37.2 30 24.2 30 15 30 7.8 24.2 2 17 2z"/>
+      ${
+        label
+          ? `<text x="17" y="18.5" text-anchor="middle" fill="#fff" font-size="${fontSize + 1}" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${label}</text>`
+          : `<circle cx="17" cy="15" r="5" fill="#fff"/>`
+      }
+    </svg>`;
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
     <path fill="${color}" stroke="#fff" stroke-width="2" d="M14 1C7.4 1 2 6.4 2 13c0 8.4 10.2 20.3 11.1 21.3a1.2 1.2 0 0 0 1.8 0C15.8 33.3 26 21.4 26 13 26 6.4 20.6 1 14 1z"/>
-    <circle cx="14" cy="13" r="4.5" fill="#fff"/>
+    ${body}
   </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
@@ -151,7 +180,12 @@ function airportPinSvg(color: string): string {
 
 type MarkerKind = NonNullable<MapMarkerInput["kind"]>;
 
-function pinColorFor(kind: MarkerKind, status?: LocationStatus): string {
+function pinColorFor(
+  kind: MarkerKind,
+  status?: LocationStatus,
+  selected = false
+): string {
+  if (selected) return SELECTED_PIN_HEX;
   if (kind === "city") return CITY_PIN_HEX;
   if (kind === "stay") return STAY_PIN_HEX;
   if (kind === "airport") return AIRPORT_PIN_HEX;
@@ -161,7 +195,9 @@ function pinColorFor(kind: MarkerKind, status?: LocationStatus): string {
 function createPinContent(
   color: string,
   title?: string,
-  kind: MarkerKind = "place"
+  kind: MarkerKind = "place",
+  order?: number,
+  selected = false
 ): HTMLElement {
   const img = document.createElement("img");
   img.src =
@@ -171,18 +207,26 @@ function createPinContent(
         ? stayPinSvg(color)
         : kind === "airport"
           ? airportPinSvg(color)
-          : pinSvg(color);
-  img.width = kind === "place" ? 28 : kind === "city" ? 32 : 34;
-  img.height = kind === "place" ? 36 : 40;
+          : pinSvg(color, order, selected);
+  const placeSelected = kind === "place" && selected;
+  img.width = placeSelected ? 34 : kind === "place" ? 28 : kind === "city" ? 32 : 34;
+  img.height = placeSelected ? 44 : kind === "place" ? 36 : 40;
+  const orderSuffix =
+    kind === "place" &&
+    typeof order === "number" &&
+    Number.isFinite(order) &&
+    order > 0
+      ? ` (${Math.floor(order)})`
+      : "";
   img.alt =
-    title ??
-    (kind === "city"
-      ? "City"
-      : kind === "stay"
-        ? "Accommodation"
-        : kind === "airport"
-          ? "Airport"
-          : "Place");
+    (title ??
+      (kind === "city"
+        ? "City"
+        : kind === "stay"
+          ? "Accommodation"
+          : kind === "airport"
+            ? "Airport"
+            : "Place")) + orderSuffix;
   img.draggable = false;
   img.style.display = "block";
   // AdvancedMarkerElement anchors custom HTML at the bottom center (pin tip).
@@ -262,10 +306,17 @@ export const googleMapsProvider: MapProvider = {
         prev.handle.position = { lat: m.lat, lng: m.lon };
         prev.handle.title = m.title ?? "";
         prev.handle.map = map;
+        prev.handle.zIndex = m.selected ? 1000 : undefined;
         if (prev.visualKey !== visualKey) {
           const kind = m.kind ?? "place";
-          const color = pinColorFor(kind, m.status);
-          prev.handle.content = createPinContent(color, m.title, kind);
+          const color = pinColorFor(kind, m.status, m.selected);
+          prev.handle.content = createPinContent(
+            color,
+            m.title,
+            kind,
+            m.order,
+            m.selected
+          );
           prev.visualKey = visualKey;
         }
         next.set(m.id, prev);
@@ -274,12 +325,13 @@ export const googleMapsProvider: MapProvider = {
       }
 
       const kind = m.kind ?? "place";
-      const color = pinColorFor(kind, m.status);
+      const color = pinColorFor(kind, m.status, m.selected);
       const marker = new AdvancedMarkerElement({
         map,
         position: { lat: m.lat, lng: m.lon },
         title: m.title,
-        content: createPinContent(color, m.title, kind),
+        content: createPinContent(color, m.title, kind, m.order, m.selected),
+        zIndex: m.selected ? 1000 : undefined,
         gmpClickable: Boolean(onSelect),
       });
 

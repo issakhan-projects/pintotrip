@@ -1,4 +1,7 @@
-import { geocodeByAddress } from "@/lib/maps";
+import {
+  cityCountryFromAddressComponents,
+  geocodeByAddress,
+} from "@/lib/maps";
 import { resolveCountryCode } from "@/lib/countries";
 
 export type ResolvedAccommodationLocation = {
@@ -78,18 +81,6 @@ function readComponent(
   );
 }
 
-function parseCityCountry(
-  components: Array<{ long_name: string; types: string[] }> | undefined
-): { cityName: string; countryName: string } {
-  const countryName = readComponent(components, "country");
-  const cityName =
-    readComponent(components, "locality") ||
-    readComponent(components, "postal_town") ||
-    readComponent(components, "administrative_area_level_2") ||
-    readComponent(components, "administrative_area_level_1");
-  return { cityName, countryName };
-}
-
 type GeocodeResultLike = {
   place_id?: string;
   formatted_address?: string;
@@ -133,7 +124,9 @@ function fromGeocodeResult(
   const lon = typeof loc.lng === "function" ? loc.lng() : Number(loc.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
-  const { cityName, countryName } = parseCityCountry(result.address_components);
+  const { city, country } = cityCountryFromAddressComponents(
+    result.address_components
+  );
   const title = titleFromGeocodeResult(result, query);
   const address = result.formatted_address?.trim() || title;
 
@@ -141,8 +134,8 @@ function fromGeocodeResult(
     placeId,
     title,
     address,
-    cityName: cityName || countryName || "Unknown",
-    countryName: countryName || cityName || "Unknown",
+    cityName: city || country || "Unknown",
+    countryName: country || city || "Unknown",
     lat,
     lon,
   };

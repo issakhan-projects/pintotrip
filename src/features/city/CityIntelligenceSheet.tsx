@@ -37,6 +37,8 @@ interface CityIntelligenceSheetProps {
     countryName: string;
     lat: number;
     lon: number;
+    cityId?: string;
+    countryId?: string;
   } | null;
   /** Whether this city is already in the user's favorites. */
   isFavorite?: boolean;
@@ -167,7 +169,7 @@ export function CityIntelligenceSheet({
 
     void (async () => {
       try {
-        // Prefer English/ASCII ids so readyCityIntelligence keys are ISO country codes.
+        // Prefer ids from the selection (map pick / list), then English resolve.
         const englishIds =
           englishPlaceIdsFromNames(
             city.cityName,
@@ -180,11 +182,20 @@ export function CityIntelligenceSheet({
           englishIds?.countryCode ||
           resolveCountryCode(city.countryName) ||
           undefined;
-        const countryId = countryIdFromParts(
-          englishIds?.countryNameEn || city.countryName,
-          countryCode
-        );
+        const countryId =
+          (city.countryId &&
+          isAsciiId(city.countryId) &&
+          /^[a-z]{2}$/.test(city.countryId.trim().toLowerCase())
+            ? city.countryId.trim().toLowerCase()
+            : null) ||
+          countryIdFromParts(
+            englishIds?.countryNameEn || city.countryName,
+            countryCode
+          );
         const cityId =
+          (city.cityId && isAsciiId(city.cityId)
+            ? city.cityId.trim().toLowerCase()
+            : null) ||
           (englishIds?.cityId && isAsciiId(englishIds.cityId)
             ? englishIds.cityId
             : null) ||

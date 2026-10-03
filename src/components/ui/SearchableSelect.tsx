@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Search, X, type LucideIcon } from "lucide-react";
 import { cx } from "@/lib/utils";
 
@@ -61,6 +71,9 @@ interface SearchableSelectProps {
   triggerLayout?: "single" | "stacked";
 }
 
+const MENU_MAX_HEIGHT = 240;
+const MENU_GAP = 6;
+
 export function SearchableSelect({
   value,
   onChange,
@@ -75,10 +88,13 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [focusIndex, setFocusIndex] = useState(-1);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const selected = useMemo(
     () => options.find((o) => o.value === value) ?? null,
@@ -97,13 +113,66 @@ export function SearchableSelect({
   }, [options, query]);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuStyle(null);
+      return;
+    }
+
+    function updatePosition() {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const estimatedHeight = Math.min(MENU_MAX_HEIGHT + 64, 320);
+      const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP;
+      const spaceAbove = rect.top - MENU_GAP;
+      const openUp =
+        spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+
+      setMenuStyle({
+        position: "fixed",
+        left: rect.left,
+        width: Math.max(rect.width, 0),
+        zIndex: 200,
+        maxWidth: "min(100vw - 16px, 100%)",
+        ...(openUp
+          ? {
+              bottom: window.innerHeight - rect.top + MENU_GAP,
+              top: "auto",
+            }
+          : {
+              top: rect.bottom + MENU_GAP,
+              bottom: "auto",
+            }),
+      });
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    // Capture scroll from sheet / nested overflow containers.
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, filtered.length]);
+
+  useEffect(() => {
     if (!open) return;
     const onDoc = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
-        setFocusIndex(-1);
+      const target = event.target as Node;
+      if (
+        rootRef.current?.contains(target) ||
+        menuRef.current?.contains(target)
+      ) {
+        return;
       }
+      setOpen(false);
+      setQuery("");
+      setFocusIndex(-1);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -127,7 +196,7 @@ export function SearchableSelect({
     close();
   }
 
-  function onKeyDown(event: React.KeyboardEvent) {
+  function onKeyDown(event: KeyboardEvent) {
     if (!open) {
       if (
         event.key === "ArrowDown" ||
@@ -163,6 +232,109 @@ export function SearchableSelect({
   }
 
   const stacked = triggerLayout === "stacked";
+
+  const menu =
+    open && mounted && menuStyle
+      ? createPortal(
+          <div
+            ref={menuRef}
+            style={menuStyle}
+            className="overflow-hidden rounded-xl border border-border bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)]"
+          >
+            <div className="border-b border-divider p-2.5 pb-1.5">
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  aria-label={searchPlaceholder}
+                  className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-[13px] text-text outline-none placeholder:text-text-muted focus:border-primary"
+                />
+              </div>
+            </div>
+
+            <ul
+              id={listId}
+              role="listbox"
+              className="max-h-60 overflow-y-auto p-1.5"
+            >
+              {filtered.length === 0 ? (
+                <li className="px-3 py-5 text-center text-[13px] text-text-muted">
+                  No results
+                </li>
+              ) : (
+                filtered.map((option, index) => {
+                  const isSelected = option.value === value;
+                  const isFocused = index === focusIndex;
+                  return (
+                    <li
+                      key={option.value}
+                      role="option"
+                      aria-selected={isSelected}
+                    >
+                      <button
+                        type="button"
+                        className={cx(
+                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition",
+                          isSelected && "bg-primary-tint font-medium text-primary",
+                          !isSelected && isFocused && "bg-surface",
+                          !isSelected &&
+                            !isFocused &&
+                            "text-text hover:bg-surface"
+                        )}
+                        onMouseEnter={() => setFocusIndex(index)}
+                        onClick={() => select(option.value)}
+                      >
+                        {option.iconUrl ? (
+                          <OptionIcon src={option.iconUrl} alt="" size="sm" />
+                        ) : null}
+                        {stacked ? (
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">
+                              {option.label}
+                            </span>
+                            {option.description ? (
+                              <span
+                                className={cx(
+                                  "mt-0.5 block truncate text-xs",
+                                  isSelected
+                                    ? "text-primary/80"
+                                    : "text-text-secondary"
+                                )}
+                              >
+                                {option.description}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : (
+                          <>
+                            <span className="min-w-0 flex-1 truncate">
+                              {option.label}
+                            </span>
+                            {option.description ? (
+                              <span className="shrink-0 text-[11px] font-semibold tracking-wide text-text-muted uppercase">
+                                {option.description}
+                              </span>
+                            ) : (
+                              <span className="shrink-0 font-mono text-[11px] font-semibold tracking-wide text-text-muted">
+                                {option.value}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <div
@@ -240,94 +412,7 @@ export function SearchableSelect({
         )}
       />
 
-      {open ? (
-        <div className="absolute top-[calc(100%+6px)] right-0 left-0 z-50 overflow-hidden rounded-xl border border-border bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-          <div className="border-b border-divider p-2.5 pb-1.5">
-            <div className="relative">
-              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted" />
-              <input
-                ref={searchRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                aria-label={searchPlaceholder}
-                className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-[13px] text-text outline-none placeholder:text-text-muted focus:border-primary"
-              />
-            </div>
-          </div>
-
-          <ul
-            id={listId}
-            role="listbox"
-            className="max-h-60 overflow-y-auto p-1.5"
-          >
-            {filtered.length === 0 ? (
-              <li className="px-3 py-5 text-center text-[13px] text-text-muted">
-                No results
-              </li>
-            ) : (
-              filtered.map((option, index) => {
-                const isSelected = option.value === value;
-                const isFocused = index === focusIndex;
-                return (
-                  <li key={option.value} role="option" aria-selected={isSelected}>
-                    <button
-                      type="button"
-                      className={cx(
-                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition",
-                        isSelected && "bg-primary-tint font-medium text-primary",
-                        !isSelected && isFocused && "bg-surface",
-                        !isSelected && !isFocused && "text-text hover:bg-surface"
-                      )}
-                      onMouseEnter={() => setFocusIndex(index)}
-                      onClick={() => select(option.value)}
-                    >
-                      {option.iconUrl ? (
-                        <OptionIcon src={option.iconUrl} alt="" size="sm" />
-                      ) : null}
-                      {stacked ? (
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-semibold">
-                            {option.label}
-                          </span>
-                          {option.description ? (
-                            <span
-                              className={cx(
-                                "mt-0.5 block truncate text-xs",
-                                isSelected
-                                  ? "text-primary/80"
-                                  : "text-text-secondary"
-                              )}
-                            >
-                              {option.description}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <>
-                          <span className="min-w-0 flex-1 truncate">
-                            {option.label}
-                          </span>
-                          {option.description ? (
-                            <span className="shrink-0 text-[11px] font-semibold tracking-wide text-text-muted uppercase">
-                              {option.description}
-                            </span>
-                          ) : (
-                            <span className="shrink-0 font-mono text-[11px] font-semibold tracking-wide text-text-muted">
-                              {option.value}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </button>
-                  </li>
-                );
-              })
-            )}
-          </ul>
-        </div>
-      ) : null}
+      {menu}
     </div>
   );
 }

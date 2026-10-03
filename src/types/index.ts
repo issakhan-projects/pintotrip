@@ -178,6 +178,13 @@ export type {
   TripPlannerStep,
 } from "./trip-planner";
 export type {
+  TripReview,
+  TripReviewCreateInput,
+  TripReviewDoc,
+  TripReviewRating,
+  TripReviewRecommend,
+} from "./trip-review";
+export type {
   TripPlannerAiStopType,
   TripPlannerAiRequestTrip,
   TripPlannerAiCityInfo,

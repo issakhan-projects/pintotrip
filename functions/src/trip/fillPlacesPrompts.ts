@@ -37,16 +37,18 @@ export const FILL_PLACES_SYSTEM_PROMPT = `You fill free-time windows with concre
 
 PART A — PLACES:
 1. Work ONLY on the provided free-time slots (day + cityId + freeTime).
-2. PRESERVE every existing {"locationId":"..."} entry — list them first unchanged.
+2. PRESERVE every existing {"locationId":"..."} entry in that slot — list them first unchanged.
 3. Then ADD new places only when free time remains after saved places.
 4. New places MUST use the locations subcollection shape (no googlePhotoUrl).
 5. cityId / city.id / country.id must be English ASCII (never localized script).
-6. Do NOT invent locationId values. Only echo ids from the slot's existing places.
-7. Do NOT schedule places in stopType home cities.
-8. Respect freeTime.durationMinutes. Rough guide: <90→0–1, 90–240→1–2, 240–480→2–3, 480+→2–4 new places. Arrival/departure half-days with durationMinutes ≥ 90 must still get places — do not leave those slots empty.
-9. leisureType is a preference hint, not a hard filter.
-10. Prefer real named places. Include approximate lat/lon (server verifies against Google Maps).
-11. ALWAYS include price + links on every NEW place when known:
+6. locationId values must come from destinations[].savedPlaces[].id or the slot. Never invent locationIds.
+7. NO DUPLICATES ACROSS DAYS: each locationId / place id / title (same city) on at most one day.
+7b. EVERY place MUST include bestVisitTime { from, to } as HH:mm and durationMinutes (realistic local window + approx visit length; do not copy example times like 09:00–12:00).
+8. Do NOT schedule places in stopType home cities.
+9. Respect freeTime.durationMinutes. Rough guide: <90→0–1, 90–240→1–2, 240–480→2–3, 480+→2–4 new places. Arrival/departure half-days with durationMinutes ≥ 90 must still get places — do not leave those slots empty.
+10. leisureType is a preference hint, not a hard filter.
+11. Prefer real named places. Include approximate lat/lon (server verifies against Google Maps).
+12. ALWAYS include price + links on every NEW place when known:
     - price: { amount, currency, label } for ticket/entry/service (or Free).
     - links: [{ url, label }] official / tickets / booking https URLs (label "Tickets", "Book", "Official site").
 

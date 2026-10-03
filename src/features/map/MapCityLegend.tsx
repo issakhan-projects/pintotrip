@@ -6,7 +6,7 @@
 export function MapCityLegend() {
   return (
     <div
-      className="pointer-events-none absolute bottom-24 left-3 z-[5] rounded-lg bg-surface-elevated/95 px-3 py-2 text-xs text-text shadow-sm ring-1 ring-border backdrop-blur-sm"
+      className="pointer-events-none absolute bottom-3 left-3 z-[5] rounded-lg bg-surface-elevated/95 px-3 py-2 text-xs text-text shadow-sm ring-1 ring-border backdrop-blur-sm sm:bottom-24"
       aria-label="City area legend"
     >
       <ul className="flex flex-col gap-1.5">

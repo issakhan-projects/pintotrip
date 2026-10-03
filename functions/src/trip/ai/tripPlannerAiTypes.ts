@@ -17,6 +17,12 @@ export type TemperatureType = "celsius" | "fahrenheit";
 export type TripPlannerAiStopType = "home" | "transit" | "destination";
 
 export type SpendMoneyLevel = "low" | "medium" | "high";
+export type MealType =
+  | "default"
+  | "halal"
+  | "vegetarian"
+  | "kosher"
+  | "other";
 export type TripCreateMode = "ordinary" | "advanced";
 
 export type TripPlannerAiSavedPlace = {
@@ -56,6 +62,9 @@ export type TripPlannerAiRequestTrip = {
   /** Free-text focus when leisureType is "custom". */
   leisureCustom?: string;
   spendMoney?: SpendMoneyLevel;
+  mealType?: MealType;
+  /** Free-text dietary note when mealType is "other". */
+  mealCustom?: string;
   createMode?: TripCreateMode;
 };
 
@@ -161,6 +170,11 @@ export type TripPlannerAiResponseRoute = {
   priceLabel?: string;
   link?: string;
   source: TripPlannerAiResponseRouteSource;
+  /**
+   * Shared day timeline position with nested places (1, 2, 3, …).
+   * Not a separate routes-only sequence.
+   */
+  order?: number;
 };
 
 export type TripPlannerAiResponseFreeTime = {
@@ -169,8 +183,23 @@ export type TripPlannerAiResponseFreeTime = {
   durationMinutes?: number;
 };
 
+/** Suggested local-time window to visit a place (HH:mm, 24h). */
+export type TripPlannerAiBestVisitTime = {
+  from: string;
+  to: string;
+};
+
 export type TripPlannerAiResponseSavedPlaceRef = {
   locationId: string;
+  /** Suggested local visit window for this day (from / to as HH:mm). */
+  bestVisitTime?: TripPlannerAiBestVisitTime;
+  /** Approximate minutes to plan for this place. */
+  durationMinutes?: number;
+  /**
+   * Shared day timeline position with routes (1, 2, 3, …).
+   * Not a places-only sequence.
+   */
+  order?: number;
 };
 
 export type TripPlannerAiResponseLocationPlace = {
@@ -187,6 +216,15 @@ export type TripPlannerAiResponseLocationPlace = {
   images: Array<{ url: string; storagePath?: string; kind?: string }>;
   price?: { amount?: number; currency?: string; label?: string };
   links?: Array<{ url: string; label?: string }>;
+  /** Suggested local visit window for this day (from / to as HH:mm). */
+  bestVisitTime?: TripPlannerAiBestVisitTime;
+  /** Approximate minutes to plan for this place. */
+  durationMinutes?: number;
+  /**
+   * Shared day timeline position with routes (1, 2, 3, …).
+   * Not a places-only sequence.
+   */
+  order?: number;
   confidence?: number;
   source?: { type: string };
   ai?: { why: string; model: string };
@@ -201,6 +239,11 @@ export type TripPlannerAiResponsePlace = {
   freeTime: TripPlannerAiResponseFreeTime;
   leisureType?: LeisureType;
   places: TripPlannerAiResponseNestedPlace[];
+  /**
+   * Popular dining suggestions for this free-time window (food/cafe/market).
+   * Hard-filtered by trip.mealType — never violates dietary preference.
+   */
+  whereToEat?: TripPlannerAiResponseLocationPlace[];
 };
 
 export type TripPlannerAiResponseDay = {

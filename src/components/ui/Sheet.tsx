@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { lockBodyScroll } from "@/lib/bodyScrollLock";
 import { cx } from "@/lib/utils";
 
 interface SheetProps {
@@ -59,13 +60,12 @@ export function Sheet({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     window.addEventListener("keydown", onKey);
 
     return () => {
       window.clearTimeout(armId);
-      document.body.style.overflow = previous;
+      unlock();
       window.removeEventListener("keydown", onKey);
     };
   }, [open, onClose]);
@@ -144,7 +144,7 @@ export function Sheet({
         )}
         <div
           className={cx(
-            "min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-5",
+            "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 md:px-5",
             bodyClassName
           )}
         >

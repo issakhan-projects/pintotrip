@@ -52,11 +52,17 @@ export function ManualPlaceSheet({
     let cancelled = false;
     setResolving(true);
     setError(null);
-    void reverseGeocode(coords.lat, coords.lng)
-      .then((place) => {
-        if (cancelled || !place) return;
-        if (place.city) setCity(place.city);
-        if (place.country) setCountry(place.country);
+    // language=en + English ids so we save the city (not a district), like city pick.
+    void Promise.all([
+      reverseGeocode(coords.lat, coords.lng, { language: "en" }),
+      resolveEnglishPlaceIds(coords.lat, coords.lng),
+    ])
+      .then(([place, englishIds]) => {
+        if (cancelled) return;
+        const cityName = englishIds?.cityNameEn || place?.city || "";
+        const countryName = englishIds?.countryNameEn || place?.country || "";
+        if (cityName) setCity(cityName);
+        if (countryName) setCountry(countryName);
       })
       .finally(() => {
         if (!cancelled) setResolving(false);

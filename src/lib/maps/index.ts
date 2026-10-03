@@ -26,8 +26,14 @@ export {
   resolveEnglishPlaceIds,
   resolveEnglishPlaceIdsFromAddress,
   englishPlaceIdsFromNames,
+  cityCountryFromGeocodeResults,
+  cityCountryFromAddressComponents,
+  resolveCitySelectionFromCoords,
   type DetectedUserLocation,
   type EnglishPlaceIds,
+  type AddressComponentLike,
+  type CityCountryParts,
+  type ResolvedCitySelection,
 } from "./detectLocation";
 export { resolveTimezoneFromCoords } from "./timezone";
 export {

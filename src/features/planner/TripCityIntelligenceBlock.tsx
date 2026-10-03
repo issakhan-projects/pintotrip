@@ -369,7 +369,7 @@ export function TripCityIntelligenceBlock({
         </div>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+      <div className="mt-4 grid grid-cols-2 gap-2.5">
         {tiles.map((tile) => (
           <IntelTile
             key={tile.key}
@@ -423,8 +423,8 @@ function IntelTile({
 
   return (
     <>
-      <div className="rounded-xl border border-border/70 bg-surface px-3 py-3">
-        <div className="flex items-center gap-2">
+      <div className="flex h-full min-h-[6.75rem] min-w-0 flex-col rounded-xl border border-border/70 bg-surface px-3 py-3">
+        <div className="flex shrink-0 items-center gap-2">
           <span
             className={cx(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
@@ -448,7 +448,7 @@ function IntelTile({
           ) : null}
         </div>
         {loading ? (
-          <p className="mt-2.5 flex items-center gap-1.5 text-xs text-text-muted">
+          <p className="mt-2.5 flex h-10 items-center gap-1.5 text-xs text-text-muted">
             <Loader2 className="h-3 w-3 animate-spin text-primary" />
             Checking…
           </p>
@@ -460,12 +460,12 @@ function IntelTile({
               if (canOpen) setOpen(true);
             }}
             className={cx(
-              "mt-2.5 w-full text-left text-sm font-medium leading-snug text-text",
+              "mt-2.5 h-10 min-w-0 w-full text-left text-sm font-medium leading-snug text-text",
               canOpen && "cursor-pointer",
               !canOpen && "cursor-default"
             )}
           >
-            <span className="line-clamp-2">{text || "—"}</span>
+            <span className="line-clamp-2 break-words">{text || "—"}</span>
           </button>
         )}
       </div>

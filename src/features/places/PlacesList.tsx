@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Coffee,
+  Compass,
   FerrisWheel,
   Landmark,
   MapPin,
@@ -25,7 +26,9 @@ import {
   Mountain,
   Plus,
   ShoppingBag,
+  Sparkles,
   Store,
+  Theater,
   TrainFront,
   Trash2,
   Trees,
@@ -81,6 +84,8 @@ interface PlacesListProps {
     countryName: string;
     lat: number;
     lon: number;
+    cityId?: string;
+    countryId?: string;
   }) => void;
   /** Delete every saved place under a city group. */
   onDeleteCity?: (places: SavedLocation[]) => Promise<void>;
@@ -139,6 +144,9 @@ const PLACE_CATEGORY_ICONS: Record<PlaceCategory, LucideIcon> = {
   wellness: Waves,
   neighborhood: Building2,
   transport: TrainFront,
+  tour: Compass,
+  experience: Sparkles,
+  show: Theater,
   other: MapPin,
 };
 
@@ -159,6 +167,9 @@ const CATEGORY_TAG_TONES: Record<PlaceCategory, string> = {
   wellness: "bg-sky-50 text-sky-700",
   neighborhood: "bg-primary-tint text-primary",
   transport: "bg-surface text-text-secondary",
+  tour: "bg-primary-tint text-primary",
+  experience: "bg-violet-50 text-violet-700",
+  show: "bg-pink-50 text-pink-700",
   other: "bg-surface text-text-secondary",
 };
 
@@ -453,6 +464,10 @@ export function PlacesList({
                   countryName: country.countryName,
                   lat: first.lat,
                   lon: first.lon,
+                  ...(city.cityId ? { cityId: city.cityId } : {}),
+                  ...(country.countryId
+                    ? { countryId: country.countryId }
+                    : {}),
                 });
               }
 

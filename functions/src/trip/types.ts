@@ -38,6 +38,12 @@ export const PLACE_CATEGORIES = [
   "wellness",
   "neighborhood",
   "transport",
+  /** Guided / ticketed tour (city walk, museum tour, day trip). */
+  "tour",
+  /** Bookable tourist experience (boat trip, workshop, tasting, local activity). */
+  "experience",
+  /** Show / performance / entertainment booking. */
+  "show",
   "other",
 ] as const;
 
@@ -271,6 +277,9 @@ export type TripPlanningContext = {
     planMode: PlanTripMode;
     currency?: string;
     spendMoney?: "low" | "medium" | "high";
+    mealType?: "default" | "halal" | "vegetarian" | "kosher" | "other";
+    /** Free-text dietary note when mealType is "other". */
+    mealCustom?: string;
     createMode?: "ordinary" | "advanced";
   };
   /**
@@ -317,6 +326,13 @@ export interface PlannedPlaceSuggestion {
   priceLabel?: string;
   /** Booking / tickets / timetable URL when available. */
   link?: string;
+  /**
+   * Suggested local visit window for this place (HH:mm).
+   * Example shape only: { from: "09:00", to: "12:00" } — times must fit the place/day.
+   */
+  bestVisitTime?: { from: string; to: string };
+  /** Approximate minutes to plan for seeing this place (e.g. 180 ≈ 3 hours). */
+  durationMinutes?: number;
   /**
    * Google Maps place photo URI — filled by the client after planTrip
    * (not returned by the Cloud Function). Optional; UI must handle null.

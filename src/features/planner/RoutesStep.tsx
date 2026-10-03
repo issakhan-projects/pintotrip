@@ -13,7 +13,7 @@ import {
 import { Button, DeleteConfirmModal } from "@/components/ui";
 import { cx } from "@/lib/utils";
 import type {
-  TripAccommodation,
+  // TripAccommodation,
   TripPlannerDoc,
   TripRoute,
   TripRouteStatus,
@@ -25,31 +25,33 @@ import {
   subscribeTripRoutes,
   updateTripRoute,
 } from "@/services/trip-routes";
-import { getTrip, updateTrip } from "@/services/trip-planner";
+import { getTrip /*, updateTrip */ } from "@/services/trip-planner";
 import type { SavedLocation } from "@/hooks/useLocations";
-import { PlaceDetailSheet } from "@/features/places/PlaceDetailSheet";
+// import { PlaceDetailSheet } from "@/features/places/PlaceDetailSheet";
 import { RouteLegCard } from "./RouteLegCard";
 import { RouteSheet, type RouteSheetSavePayload } from "./RouteSheet";
-import { RoutesTimeline } from "./RoutesTimeline";
+// import { RoutesTimeline } from "./RoutesTimeline";
 import { nextRouteOrder } from "./routeHelpers";
-import {
-  applyAccommodationsToDestinations,
-  preparationWithoutLegacyAccommodation,
-} from "./essentialsHelpers";
-import {
-  preparationInputFromTrip,
-  syncTripPreparationItems,
-} from "./buildPreparation";
+// Timeline-only helpers (kept for when timeline is re-enabled):
+// import {
+//   applyAccommodationsToDestinations,
+//   preparationWithoutLegacyAccommodation,
+// } from "./essentialsHelpers";
+// import {
+//   preparationInputFromTrip,
+//   syncTripPreparationItems,
+// } from "./buildPreparation";
 
-type RoutesTab = "edit" | "timeline";
-
-const TABS: Array<{ id: RoutesTab; label: string }> = [
-  { id: "edit", label: "Edit" },
-  { id: "timeline", label: "Timeline" },
-];
+// Timeline view temporarily closed — edit list only.
+// type RoutesTab = "edit" | "timeline";
+// const TABS: Array<{ id: RoutesTab; label: string }> = [
+//   { id: "edit", label: "Edit" },
+//   { id: "timeline", label: "Timeline" },
+// ];
 
 function RouteCard({
   route,
+  index,
   menuOpen,
   onToggleMenu,
   onEdit,
@@ -57,6 +59,7 @@ function RouteCard({
   onDelete,
 }: {
   route: TripRoute;
+  index: number;
   menuOpen: boolean;
   onToggleMenu: () => void;
   onEdit: () => void;
@@ -156,6 +159,7 @@ function RouteCard({
     <li>
       <RouteLegCard
         route={route}
+        index={index}
         actions={
           <div className="relative">
             <button
@@ -165,9 +169,16 @@ function RouteCard({
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               onClick={onToggleMenu}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text"
+              className={cx(
+                "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+                // Mobile: bordered pencil (matches attachment)
+                "border border-[#C4A574] text-[#C4A574] hover:bg-[#C4A574]/10",
+                // Desktop: quiet overflow control
+                "sm:border-transparent sm:text-text-secondary sm:hover:bg-surface sm:hover:text-text"
+              )}
             >
-              <MoreVertical className="h-4 w-4" />
+              <Pencil className="h-3.5 w-3.5 sm:hidden" />
+              <MoreVertical className="hidden h-4 w-4 sm:block" />
             </button>
             {menu}
           </div>
@@ -180,9 +191,9 @@ function RouteCard({
 export function RoutesStep({
   trip,
   userId,
-  locations = [],
-  onMarkPlaceStatus,
-  onSavePlaceNote,
+  locations: _locations = [],
+  onMarkPlaceStatus: _onMarkPlaceStatus,
+  onSavePlaceNote: _onSavePlaceNote,
 }: {
   trip: TripPlannerDoc;
   userId: string;
@@ -193,7 +204,7 @@ export function RoutesStep({
   ) => Promise<void>;
   onSavePlaceNote?: (locationId: string, note: string) => Promise<void>;
 }) {
-  const [tab, setTab] = useState<RoutesTab>("edit");
+  //const [tab, setTab] = useState<RoutesTab>("edit");
   const [routes, setRoutes] = useState<TripRoute[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -202,7 +213,7 @@ export function RoutesStep({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TripRoute | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [previewPlace, setPreviewPlace] = useState<SavedLocation | null>(null);
+  // const [previewPlace, setPreviewPlace] = useState<SavedLocation | null>(null);
   /** Fresh trip doc so `transport.airports` isn’t stuck on a stale cache. */
   const [liveTrip, setLiveTrip] = useState(trip);
 
@@ -258,10 +269,10 @@ export function RoutesStep({
     void openSheet(null);
   }
 
-  function openAddFromTimeline() {
-    setTab("edit");
-    void openSheet(null);
-  }
+  // function openAddFromTimeline() {
+  //   setTab("edit");
+  //   void openSheet(null);
+  // }
 
   function openEdit(route: TripRoute) {
     void openSheet(route);
@@ -338,38 +349,34 @@ export function RoutesStep({
     }
   }
 
-  async function handleSaveAccommodations(items: TripAccommodation[]) {
-    const destinations = applyAccommodationsToDestinations(liveTrip, items);
-    const nextTrip = {
-      ...liveTrip,
-      destinations,
-      preparation: preparationWithoutLegacyAccommodation(liveTrip.preparation),
-    };
-    const nextPreparation = {
-      ...preparationWithoutLegacyAccommodation(liveTrip.preparation),
-      items: syncTripPreparationItems(
-        liveTrip.preparation.items,
-        preparationInputFromTrip(nextTrip)
-      ),
-    };
-    await updateTrip(userId, trip.id, {
-      destinations,
-      preparation: nextPreparation,
-    });
-    setLiveTrip((prev) => ({
-      ...prev,
-      destinations,
-      preparation: nextPreparation,
-    }));
-  }
+  // Timeline-only: save accommodations from the timeline editor.
+  // async function handleSaveAccommodations(items: TripAccommodation[]) {
+  //   const destinations = applyAccommodationsToDestinations(liveTrip, items);
+  //   const nextTrip = {
+  //     ...liveTrip,
+  //     destinations,
+  //     preparation: preparationWithoutLegacyAccommodation(liveTrip.preparation),
+  //   };
+  //   const nextPreparation = {
+  //     ...preparationWithoutLegacyAccommodation(liveTrip.preparation),
+  //     items: syncTripPreparationItems(
+  //       liveTrip.preparation.items,
+  //       preparationInputFromTrip(nextTrip)
+  //     ),
+  //   };
+  //   await updateTrip(userId, trip.id, {
+  //     destinations,
+  //     preparation: nextPreparation,
+  //   });
+  //   setLiveTrip((prev) => ({
+  //     ...prev,
+  //     destinations,
+  //     preparation: nextPreparation,
+  //   }));
+  // }
 
   return (
-    <section
-      className={cx(
-        "mx-auto w-full",
-        tab === "timeline" ? "max-w-[1120px]" : "max-w-[1080px]"
-      )}
-    >
+    <section className="mx-auto w-full max-w-[1080px]">
       <div className="rounded-2xl bg-white">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -383,6 +390,7 @@ export function RoutesStep({
               Plan and manage how you move between destinations.
             </p>
           </div>
+          {/* Timeline tab closed
           <div
             role="tablist"
             aria-label="Routes views"
@@ -409,9 +417,20 @@ export function RoutesStep({
               );
             })}
           </div>
+          */}
+          <Button
+            type="button"
+            variant="primary"
+            icon={Plus}
+            onClick={openAdd}
+            className="!h-10 shrink-0 self-start"
+          >
+            Add route
+          </Button>
         </div>
 
-        <div className="mt-6" role="tabpanel">
+        <div className="mt-6">
+          {/* Timeline view closed
           {tab === "timeline" ? (
             <RoutesTimeline
               trip={liveTrip}
@@ -428,74 +447,64 @@ export function RoutesStep({
               onSaveAccommodations={handleSaveAccommodations}
             />
           ) : (
-            <>
-              <div className="mb-5 flex items-center justify-end">
+          */}
+          <>
+            {error ? (
+              <p className="rounded-xl bg-error-background px-4 py-3 text-sm text-error">
+                {error}
+              </p>
+            ) : null}
+
+            {loading ? (
+              <p className="py-10 text-center text-sm text-text-secondary">
+                Loading routes…
+              </p>
+            ) : routes.length === 0 ? (
+              <div className="flex flex-col items-center rounded-xl border border-dashed border-border bg-surface/60 px-6 py-14 text-center">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-tint text-primary">
+                  <Route className="h-5 w-5" aria-hidden />
+                </span>
+                <h3 className="mt-4 text-base font-semibold text-text">
+                  Plan your journey
+                </h3>
+                <p className="mt-1.5 max-w-sm text-sm text-text-secondary">
+                  Add your first route to connect your destinations.
+                </p>
                 <Button
                   type="button"
                   variant="primary"
                   icon={Plus}
+                  className="mt-5 !h-10"
                   onClick={openAdd}
-                  className="!h-10"
                 >
                   Add route
                 </Button>
               </div>
-
-              {error ? (
-                <p className="rounded-xl bg-error-background px-4 py-3 text-sm text-error">
-                  {error}
-                </p>
-              ) : null}
-
-              {loading ? (
-                <p className="py-10 text-center text-sm text-text-secondary">
-                  Loading routes…
-                </p>
-              ) : routes.length === 0 ? (
-                <div className="flex flex-col items-center rounded-xl border border-dashed border-border bg-surface/60 px-6 py-14 text-center">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-tint text-primary">
-                    <Route className="h-5 w-5" aria-hidden />
-                  </span>
-                  <h3 className="mt-4 text-base font-semibold text-text">
-                    Plan your journey
-                  </h3>
-                  <p className="mt-1.5 max-w-sm text-sm text-text-secondary">
-                    Add your first route to build your trip timeline.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="primary"
-                    icon={Plus}
-                    className="mt-5 !h-10"
-                    onClick={openAdd}
-                  >
-                    Add route
-                  </Button>
-                </div>
-              ) : (
-                <ul className="flex list-none flex-col gap-3 p-0">
-                  {routes.map((route) => (
-                    <RouteCard
-                      key={route.id}
-                      route={route}
-                      menuOpen={menuOpenId === route.id}
-                      onToggleMenu={() =>
-                        setMenuOpenId((id) =>
-                          id === route.id ? null : route.id
-                        )
-                      }
-                      onEdit={() => openEdit(route)}
-                      onToggleDone={() => void handleToggleDone(route)}
-                      onDelete={() => {
-                        setMenuOpenId(null);
-                        setDeleteTarget(route);
-                      }}
-                    />
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
+            ) : (
+              <ul className="flex list-none flex-col gap-3 p-0">
+                {routes.map((route, routeIndex) => (
+                  <RouteCard
+                    key={route.id}
+                    route={route}
+                    index={routeIndex + 1}
+                    menuOpen={menuOpenId === route.id}
+                    onToggleMenu={() =>
+                      setMenuOpenId((id) =>
+                        id === route.id ? null : route.id
+                      )
+                    }
+                    onEdit={() => openEdit(route)}
+                    onToggleDone={() => void handleToggleDone(route)}
+                    onDelete={() => {
+                      setMenuOpenId(null);
+                      setDeleteTarget(route);
+                    }}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
+          {/* )} */}
         </div>
       </div>
 
@@ -522,6 +531,7 @@ export function RoutesStep({
         onConfirm={() => void handleConfirmDelete()}
       />
 
+      {/* Place preview only used by timeline
       <PlaceDetailSheet
         place={previewPlace}
         open={Boolean(previewPlace)}
@@ -537,6 +547,7 @@ export function RoutesStep({
           setPreviewPlace({ ...previewPlace, note });
         }}
       />
+      */}
     </section>
   );
 }

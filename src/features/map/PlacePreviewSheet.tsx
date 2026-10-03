@@ -8,6 +8,7 @@ import {
   CircleDot,
   Coffee,
   Coins,
+  Compass,
   FerrisWheel,
   ImagePlus,
   Images,
@@ -25,6 +26,7 @@ import {
   Sparkles,
   Store,
   Tag,
+  Theater,
   TrainFront,
   Trees,
   Trash2,
@@ -92,6 +94,9 @@ const PLACE_CATEGORY_ICONS: Record<PlaceCategory, LucideIcon> = {
   wellness: Waves,
   neighborhood: Building2,
   transport: TrainFront,
+  tour: Compass,
+  experience: Sparkles,
+  show: Theater,
   other: MapPin,
 };
 

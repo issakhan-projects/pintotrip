@@ -1,3 +1,4 @@
+import { cityCountryFromAddressComponents } from "@/lib/maps/detectLocation";
 import { loadPlacesLibrary } from "@/lib/maps/loader";
 import { fetchPexelsPhoto, fetchPexelsPhotos } from "@/lib/pexels";
 import {
@@ -21,27 +22,6 @@ export type SearchedPlace = {
   /** Pexels image URL when resolved. */
   photoUrl?: string;
 };
-
-function readComponent(
-  components: google.maps.places.AddressComponent[] | undefined,
-  type: string
-): string {
-  return (
-    components?.find((c) => c.types.includes(type))?.longText?.trim() ?? ""
-  );
-}
-
-function parseCityCountry(
-  components: google.maps.places.AddressComponent[] | undefined
-): { cityName: string; countryName: string } {
-  const countryName = readComponent(components, "country");
-  const cityName =
-    readComponent(components, "locality") ||
-    readComponent(components, "postal_town") ||
-    readComponent(components, "administrative_area_level_2") ||
-    readComponent(components, "administrative_area_level_1");
-  return { cityName, countryName };
-}
 
 function toLatLng(location: google.maps.LatLng | google.maps.LatLngLiteral): {
   lat: number;
@@ -134,15 +114,15 @@ export async function searchPlacesByName(
           const title = place.displayName?.trim();
           if (!coords || !placeId || !title) continue;
 
-          const { cityName, countryName } = parseCityCountry(
+          const { city, country } = cityCountryFromAddressComponents(
             place.addressComponents
           );
           results.push({
             placeId,
             title,
             address: place.formattedAddress?.trim() || title,
-            cityName: cityName || countryName || "Unknown",
-            countryName: countryName || cityName || "Unknown",
+            cityName: city || country || "Unknown",
+            countryName: country || city || "Unknown",
             lat: coords.lat,
             lon: coords.lon,
           });

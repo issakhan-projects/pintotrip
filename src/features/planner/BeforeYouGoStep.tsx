@@ -3,15 +3,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ArrowLeftRight,
   ArrowRight,
   BedDouble,
   Check,
-  ChevronRight,
   ClipboardList,
   Coins,
   ExternalLink,
   FileText,
-  Info,
   ListChecks,
   Loader2,
   Luggage,
@@ -40,7 +39,6 @@ import {
   isCustomPreparationItem,
   preparationInputFromTrip,
   preparationItemsEqual,
-  spendMoneyCurrencyTip,
   syncTripPreparationItems,
   type LocalDocSignals,
 } from "./buildPreparation";
@@ -128,30 +126,70 @@ export function BeforeYouGoStep({
   ]);
 
   const intel = trip.cityIntelligence.results?.[0];
+  /** Prefer trip-stored Frankfurter rate from city intelligence. */
+  const intelExchange = useMemo(() => {
+    const results = trip.cityIntelligence.results ?? [];
+    for (const result of results) {
+      const er = result.exchangeRate;
+      if (
+        er &&
+        typeof er.rate === "number" &&
+        Number.isFinite(er.rate) &&
+        er.rate > 0 &&
+        er.from?.trim() &&
+        er.to?.trim()
+      ) {
+        return er;
+      }
+    }
+    return null;
+  }, [trip.cityIntelligence.results]);
+
   const destCurrency = resolveCurrencyCode(
-    trip.currency?.code ||
+    intelExchange?.to ||
+      trip.currency?.code ||
       trip.currency?.name ||
       intel?.details?.dailyBudget?.currency ||
-      intel?.exchangeRate?.to ||
       ""
   );
-  // Prefer profile currency; fall back to city-intel "from", then USD so rates still load.
+  // Prefer profile currency; fall back to city-intel "from", then USD.
   const fromCurrency = resolveCurrencyCode(
-    homeCurrency || intel?.exchangeRate?.from || "USD"
+    homeCurrency || intelExchange?.from || intel?.exchangeRate?.from || "USD"
   );
-  const destLabel =
-    trip.currency?.name?.trim() || destCurrency;
+  const destLabel = trip.currency?.name?.trim() || destCurrency;
   const destSymbol = trip.currency?.symbol?.trim() || "";
 
-  const [fxRate, setFxRate] = useState<number | null>(null);
-  const [fxDate, setFxDate] = useState<string | null>(null);
+  const [fxRate, setFxRate] = useState<number | null>(
+    () => intelExchange?.rate ?? null
+  );
+  const [fxDate, setFxDate] = useState<string | null>(
+    () => intelExchange?.asOf ?? null
+  );
+  const [fxSource, setFxSource] = useState<string | null>(
+    () => intelExchange?.source?.trim() || (intelExchange ? "City intelligence" : null)
+  );
   const [fxLoading, setFxLoading] = useState(false);
   const [fxError, setFxError] = useState<string | null>(null);
+  const [convertAmount, setConvertAmount] = useState("100");
+  const [convertDirection, setConvertDirection] = useState<"home-to-local" | "local-to-home">(
+    "home-to-local"
+  );
 
   useEffect(() => {
+    // City intelligence already has the rate — no network needed.
+    if (intelExchange) {
+      setFxRate(intelExchange.rate);
+      setFxDate(intelExchange.asOf || null);
+      setFxSource(intelExchange.source?.trim() || "City intelligence");
+      setFxError(null);
+      setFxLoading(false);
+      return;
+    }
+
     if (!destCurrency) {
       setFxRate(null);
       setFxDate(null);
+      setFxSource(null);
       setFxError(null);
       setFxLoading(false);
       return;
@@ -160,6 +198,7 @@ export function BeforeYouGoStep({
     if (fromCurrency === destCurrency) {
       setFxRate(1);
       setFxDate(null);
+      setFxSource(null);
       setFxError(null);
       setFxLoading(false);
       return;
@@ -174,6 +213,7 @@ export function BeforeYouGoStep({
         if (cancelled) return;
         setFxRate(result.rate);
         setFxDate(result.date);
+        setFxSource("Frankfurter");
         setFxError(null);
         setFxLoading(false);
       })
@@ -181,6 +221,7 @@ export function BeforeYouGoStep({
         if (cancelled) return;
         setFxRate(null);
         setFxDate(null);
+        setFxSource(null);
         setFxError(
           err instanceof Error ? err.message : "Could not load exchange rate."
         );
@@ -190,14 +231,23 @@ export function BeforeYouGoStep({
     return () => {
       cancelled = true;
     };
-  }, [fromCurrency, destCurrency]);
-
-  const currencyTip = spendMoneyCurrencyTip(
-    trip.spendMoney,
-    intel?.details?.practicalInfo?.payment
-  );
+  }, [intelExchange, fromCurrency, destCurrency]);
 
   const aiInsight = buildAiInsight(trip);
+
+  const convertedAmount = useMemo(() => {
+    if (fxRate == null || fxRate <= 0) return null;
+    const raw = Number.parseFloat(convertAmount.replace(",", "."));
+    if (!Number.isFinite(raw) || raw < 0) return null;
+    const value =
+      convertDirection === "home-to-local" ? raw * fxRate : raw / fxRate;
+    return value;
+  }, [convertAmount, convertDirection, fxRate]);
+
+  const inputCurrency =
+    convertDirection === "home-to-local" ? fromCurrency : destCurrency;
+  const outputCurrency =
+    convertDirection === "home-to-local" ? destCurrency : fromCurrency;
 
   function submitCustomItem() {
     const title = draft.trim();
@@ -375,36 +425,122 @@ export function BeforeYouGoStep({
           </a>
 
           {aiInsight ? (
-        <section className="flex flex-col gap-3 rounded-2xl border border-primary/15 bg-primary-tint px-4 py-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary shadow-sm">
-              <Sparkles className="h-4 w-4" aria-hidden />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-primary">AI Insight</p>
-              <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-                {aiInsight}
-              </p>
-            </div>
-          </div>
+            <section className="flex flex-col gap-3 rounded-2xl border border-primary/15 bg-primary-tint px-4 py-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-primary shadow-sm">
+                  <Sparkles className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-primary">AI Insight</p>
+                  <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+                    {aiInsight}
+                  </p>
+                </div>
+              </div>
 
-
-          {onViewGuide ? (
-            <Button
-              type="button"
-              variant="secondary"
-              className="shrink-0 border-primary/25 bg-white text-primary hover:bg-white hover:text-primary-hover"
-              onClick={onViewGuide}
-            >
-              View full guide
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-            </Button>
+              {onViewGuide ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="shrink-0 border-primary/25 bg-white text-primary hover:bg-white hover:text-primary-hover"
+                  onClick={onViewGuide}
+                >
+                  View full guide
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                </Button>
+              ) : null}
+            </section>
           ) : null}
-        </section>
-      ) : null}
 
+          {destCurrency && fromCurrency ? (
+            <section className="rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-tint text-primary">
+                  <Coins className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-text">
+                    Money converter
+                  </h3>
+                  <p className="text-xs text-text-secondary">
+                    {destLabel}
+                    {destSymbol ? ` (${destSymbol})` : ""}
+                  </p>
+                </div>
+              </div>
 
+              {fxLoading ? (
+                <p className="mt-3 inline-flex items-center gap-2 text-sm text-text-secondary">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Loading rate…
+                </p>
+              ) : null}
 
+              {fxError ? (
+                <p className="mt-3 text-xs text-error">{fxError}</p>
+              ) : null}
+
+              {fxRate != null ? (
+                <div className="mt-3 space-y-3">
+                  <p className="text-xs text-text-secondary">
+                    1 {fromCurrency} ={" "}
+                    <span className="font-semibold tabular-nums text-text">
+                      {formatRate(fxRate)} {destCurrency}
+                    </span>
+                  </p>
+
+                  <div className="flex items-end gap-2">
+                    <div className="min-w-0 flex-1">
+                      <label className="mb-1 block text-[11px] font-medium text-text-muted">
+                        {inputCurrency}
+                      </label>
+                      <TextInput
+                        type="text"
+                        inputMode="decimal"
+                        value={convertAmount}
+                        onChange={(e) => setConvertAmount(e.target.value)}
+                        placeholder="0"
+                        className="tabular-nums"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Swap currencies"
+                      title="Swap currencies"
+                      onClick={() =>
+                        setConvertDirection((d) =>
+                          d === "home-to-local"
+                            ? "local-to-home"
+                            : "home-to-local"
+                        )
+                      }
+                      className="mb-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:border-primary/30 hover:text-primary"
+                    >
+                      <ArrowLeftRight className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
+
+                  <div className="rounded-xl bg-surface px-3 py-2.5">
+                    <p className="text-[11px] font-medium text-text-muted">
+                      {outputCurrency}
+                    </p>
+                    <p className="mt-0.5 text-lg font-semibold tabular-nums text-text">
+                      {convertedAmount != null
+                        ? formatConverted(convertedAmount)
+                        : "—"}
+                    </p>
+                  </div>
+
+                  {fxSource ? (
+                    <p className="text-[11px] text-text-muted">
+                      Rate from {fxSource}
+                      {fxDate ? ` · ${fxDate.slice(0, 10)}` : ""}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </aside>
       </div>
 
@@ -525,6 +661,22 @@ function formatRate(rate: number): string {
   if (rate >= 10) return rate.toFixed(1);
   if (rate >= 1) return rate.toFixed(2);
   return rate.toPrecision(3);
+}
+
+function formatConverted(amount: number): string {
+  if (amount >= 1000) {
+    return amount.toLocaleString(undefined, {
+      maximumFractionDigits: 0,
+    });
+  }
+  if (amount >= 100) {
+    return amount.toLocaleString(undefined, {
+      maximumFractionDigits: 1,
+    });
+  }
+  return amount.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  });
 }
 
 function buildAiInsight(trip: TripPlannerDoc): string | null {

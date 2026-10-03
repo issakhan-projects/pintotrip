@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { lockBodyScroll } from "@/lib/bodyScrollLock";
 import { Button } from "./Button";
 import { cx } from "@/lib/utils";
 
@@ -47,8 +48,7 @@ export function ConfirmModal({
     }
 
     const armId = window.setTimeout(() => setBackdropArmed(true), 120);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !loading) onCancel();
@@ -57,7 +57,7 @@ export function ConfirmModal({
 
     return () => {
       window.clearTimeout(armId);
-      document.body.style.overflow = previous;
+      unlock();
       window.removeEventListener("keydown", onKey);
     };
   }, [open, loading, onCancel]);

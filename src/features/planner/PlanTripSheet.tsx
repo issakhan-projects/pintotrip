@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Coins,
   Coffee,
+  Compass,
   FerrisWheel,
   Landmark,
   Loader2,
@@ -20,6 +21,7 @@ import {
   ShoppingBag,
   Sparkles,
   Store,
+  Theater,
   Trees,
   TrainFront,
   ExternalLink,
@@ -31,6 +33,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
+import { lockBodyScroll } from "@/lib/bodyScrollLock";
 import { devLog, isDevLoggingEnabled } from "@/lib/devLog";
 import { planTrip } from "@/services/functions";
 import { getUserProfile } from "@/services/users";
@@ -45,6 +48,8 @@ import {
   tripDayCount,
 } from "@/services/trip-planner";
 import { fetchSuggestedPlacePhoto, pexelsPhotoUrlExcludeId } from "@/features/add-place/placeSearch";
+import { assignSharedItineraryOrders } from "@/lib/planner/assign-shared-orders";
+import { assignPlaceVisitTimes } from "@/lib/planner/assign-place-visit-times";
 import { resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
 import {
@@ -103,6 +108,7 @@ import {
   ROUTE_TRANSPORT_ICON,
   ROUTE_TRANSPORT_LABEL,
 } from "./RouteLegCard";
+import { formatAvailableDuration } from "./timelineHelpers";
 import { getFlagEmoji } from "country-flag-select";
 
 function leisureTypeFromTrip(trip: TripPlannerDoc): LeisureType {
@@ -130,6 +136,9 @@ const PLACE_CATEGORY_ICONS: Record<PlaceCategory, LucideIcon> = {
   wellness: Waves,
   neighborhood: MapPin,
   transport: TrainFront,
+  tour: Compass,
+  experience: Sparkles,
+  show: Theater,
   other: MapPin,
 };
 
@@ -703,7 +712,13 @@ export function PlanTripSheet({
       return aiResult.itinerary.reduce(
         (sum, day) =>
           sum +
-          day.places.reduce((n, slot) => n + (slot.places?.length ?? 0), 0),
+          day.places.reduce(
+            (n, slot) =>
+              n +
+              (slot.places?.length ?? 0) +
+              (slot.whereToEat?.length ?? 0),
+            0
+          ),
         0
       );
     }
@@ -843,7 +858,12 @@ export function PlanTripSheet({
         setError(null);
       }
 
-      setAiResult(data);
+      setAiResult({
+        ...data,
+        itinerary: assignPlaceVisitTimes(
+          assignSharedItineraryOrders(data.itinerary ?? [])
+        ),
+      });
       setResult(null);
       setPhase("results");
     } catch (err) {
@@ -998,6 +1018,9 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
+          order?: number;
         }>
       >();
 
@@ -1007,10 +1030,35 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
+          order?: number;
         }> = [];
 
         for (const slot of day.places) {
-          for (const place of slot.places ?? []) {
+          const slotPlaces = [
+            ...(slot.places ?? []),
+            ...(slot.whereToEat ?? []),
+          ];
+          for (const place of slotPlaces) {
+            const visitMeta = {
+              ...(place.bestVisitTime?.from && place.bestVisitTime?.to
+                ? {
+                    bestVisitTime: {
+                      from: place.bestVisitTime.from,
+                      to: place.bestVisitTime.to,
+                    },
+                  }
+                : {}),
+              ...(place.durationMinutes != null &&
+              Number.isFinite(place.durationMinutes)
+                ? { durationMinutes: Math.round(place.durationMinutes) }
+                : {}),
+              ...(typeof place.order === "number" && Number.isFinite(place.order)
+                ? { order: place.order }
+                : {}),
+            };
+
             if ("locationId" in place && place.locationId?.trim()) {
               const locationId = place.locationId.trim();
               if (usedLocationIds.has(locationId) && !replaceAll) {
@@ -1027,6 +1075,7 @@ export function PlanTripSheet({
                 ...(existing?.images?.[0]?.url?.trim()
                   ? { imageUrl: existing.images[0].url.trim() }
                   : {}),
+                ...visitMeta,
               });
               continue;
             }
@@ -1043,6 +1092,7 @@ export function PlanTripSheet({
                 ? { description: place.description.trim() }
                 : {}),
               ...(imageUrl?.trim() ? { imageUrl: imageUrl.trim() } : {}),
+              ...visitMeta,
             });
           }
         }
@@ -1055,15 +1105,18 @@ export function PlanTripSheet({
       let nextOrder = nextRouteOrder(existingRoutes);
       const createdRouteIdsByDay = new Map<
         number,
-        Array<{ routeId: string; insertAt: number; title: string }>
+        Array<{ routeId: string; title: string; order?: number }>
       >();
 
       for (const day of aiResult.itinerary) {
-        const list: Array<{ routeId: string; insertAt: number; title: string }> =
+        const list: Array<{ routeId: string; title: string; order?: number }> =
           [];
-        let insertAt = 0;
         for (const route of day.routes) {
           const title = `${route.from.name} → ${route.to.name}`;
+          const sharedOrder =
+            typeof route.order === "number" && Number.isFinite(route.order)
+              ? route.order
+              : undefined;
           if (route.source === "existing") {
             const existingId = findExistingRouteId(
               route,
@@ -1072,8 +1125,11 @@ export function PlanTripSheet({
             );
             if (existingId) {
               usedRouteIds.add(existingId);
-              list.push({ routeId: existingId, insertAt, title });
-              insertAt += 1;
+              list.push({
+                routeId: existingId,
+                title,
+                ...(sharedOrder != null ? { order: sharedOrder } : {}),
+              });
               continue;
             }
           }
@@ -1110,8 +1166,11 @@ export function PlanTripSheet({
           });
           nextOrder += 1;
           usedRouteIds.add(routeId);
-          list.push({ routeId, insertAt, title });
-          insertAt += 1;
+          list.push({
+            routeId,
+            title,
+            ...(sharedOrder != null ? { order: sharedOrder } : {}),
+          });
         }
         createdRouteIdsByDay.set(day.day, list);
       }
@@ -1149,6 +1208,8 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
         },
         order: number
       ): ItineraryPlace => {
@@ -1167,6 +1228,17 @@ export function PlanTripSheet({
           ...(entry.imageUrl?.trim()
             ? { imageUrl: entry.imageUrl.trim() }
             : {}),
+          ...(entry.bestVisitTime?.from && entry.bestVisitTime?.to
+            ? {
+                bestVisitTime: {
+                  from: entry.bestVisitTime.from,
+                  to: entry.bestVisitTime.to,
+                },
+              }
+            : {}),
+          ...(entry.durationMinutes != null
+            ? { durationMinutes: entry.durationMinutes }
+            : {}),
         };
       };
 
@@ -1176,28 +1248,73 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
+          order?: number;
         }>,
-        routeSlots: Array<{ routeId: string; insertAt: number; title: string }>
+        routeSlots: Array<{ routeId: string; title: string; order?: number }>
       ): ItineraryPlace[] => {
-        const sortedRoutes = [...routeSlots].sort(
-          (a, b) => a.insertAt - b.insertAt
-        );
-        const slots: ItineraryPlace[] = [];
-        // Routes first (chronological travel), then places for the day.
-        for (const route of sortedRoutes) {
-          slots.push({
-            locationId: `route:${route.routeId}`,
-            order: slots.length,
-            status: "planned",
-            type: "route",
+        type MergeItem =
+          | {
+              kind: "route";
+              sharedOrder: number;
+              seq: number;
+              routeId: string;
+              title: string;
+            }
+          | {
+              kind: "place";
+              sharedOrder: number;
+              seq: number;
+              entry: (typeof locationEntries)[number];
+            };
+
+        const items: MergeItem[] = [];
+        let seq = 0;
+        for (const route of routeSlots) {
+          items.push({
+            kind: "route",
+            sharedOrder:
+              typeof route.order === "number" && Number.isFinite(route.order)
+                ? route.order
+                : Number.POSITIVE_INFINITY,
+            seq: seq++,
             routeId: route.routeId,
             title: route.title,
           });
         }
         for (const entry of locationEntries) {
-          slots.push(slotFromId(entry, slots.length));
+          items.push({
+            kind: "place",
+            sharedOrder:
+              typeof entry.order === "number" && Number.isFinite(entry.order)
+                ? entry.order
+                : Number.POSITIVE_INFINITY,
+            seq: seq++,
+            entry,
+          });
         }
-        return slots;
+
+        items.sort((a, b) => {
+          if (a.sharedOrder !== b.sharedOrder) {
+            return a.sharedOrder - b.sharedOrder;
+          }
+          return a.seq - b.seq;
+        });
+
+        return items.map((item, order) => {
+          if (item.kind === "route") {
+            return {
+              locationId: `route:${item.routeId}`,
+              order,
+              status: "planned" as const,
+              type: "route" as const,
+              routeId: item.routeId,
+              title: item.title,
+            };
+          }
+          return slotFromId(item.entry, order);
+        });
       };
 
       const mergedDays: ItineraryDay[] = [];
@@ -1366,6 +1483,8 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
         }>
       >();
 
@@ -1375,12 +1494,28 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
         }> = [];
         for (const place of day.places) {
           const placeTitle = place.title.trim();
           const placeDescription =
             place.description?.trim() || place.why?.trim() || undefined;
           const placeImageUrl = suggestionImageUrl(place) || undefined;
+          const visitMeta = {
+            ...(place.bestVisitTime?.from && place.bestVisitTime?.to
+              ? {
+                  bestVisitTime: {
+                    from: place.bestVisitTime.from,
+                    to: place.bestVisitTime.to,
+                  },
+                }
+              : {}),
+            ...(place.durationMinutes != null &&
+            Number.isFinite(place.durationMinutes)
+              ? { durationMinutes: Math.round(place.durationMinutes) }
+              : {}),
+          };
           const hit = matchSuggestionToSaved(place, matchPool, used);
           if (hit) {
             used.add(hit.id);
@@ -1389,6 +1524,7 @@ export function PlanTripSheet({
               title: placeTitle || hit.title,
               ...(placeDescription ? { description: placeDescription } : {}),
               ...(placeImageUrl ? { imageUrl: placeImageUrl } : {}),
+              ...visitMeta,
             });
             await syncLocationFromSuggestion(userId, hit, place);
             continue;
@@ -1406,6 +1542,7 @@ export function PlanTripSheet({
             title: placeTitle,
             ...(placeDescription ? { description: placeDescription } : {}),
             ...(placeImageUrl ? { imageUrl: placeImageUrl } : {}),
+            ...visitMeta,
           });
         }
         locationIdsByDay.set(day.day, ids);
@@ -1497,6 +1634,8 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
         },
         order: number
       ): ItineraryPlace => {
@@ -1515,6 +1654,17 @@ export function PlanTripSheet({
           ...(entry.imageUrl?.trim()
             ? { imageUrl: entry.imageUrl.trim() }
             : {}),
+          ...(entry.bestVisitTime?.from && entry.bestVisitTime?.to
+            ? {
+                bestVisitTime: {
+                  from: entry.bestVisitTime.from,
+                  to: entry.bestVisitTime.to,
+                },
+              }
+            : {}),
+          ...(entry.durationMinutes != null
+            ? { durationMinutes: entry.durationMinutes }
+            : {}),
         };
       };
 
@@ -1527,6 +1677,8 @@ export function PlanTripSheet({
           title: string;
           description?: string;
           imageUrl?: string;
+          bestVisitTime?: { from: string; to: string };
+          durationMinutes?: number;
         }>,
         routeSlots: Array<{ routeId: string; insertAt: number; title: string }>
       ): ItineraryPlace[] => {
@@ -2102,28 +2254,6 @@ function AiCreditCostBadge({
   );
 }
 
-function formatFreeTimeLabel(freeTime: {
-  start?: string;
-  end?: string;
-  durationMinutes?: number;
-}): string | null {
-  const parts: string[] = [];
-  if (
-    typeof freeTime.durationMinutes === "number" &&
-    Number.isFinite(freeTime.durationMinutes)
-  ) {
-    const mins = Math.max(0, Math.round(freeTime.durationMinutes));
-    if (mins >= 60) {
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      parts.push(m > 0 ? `${h}h ${m}m free` : `${h}h free`);
-    } else if (mins > 0) {
-      parts.push(`${mins}m free`);
-    }
-  }
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
 function nestedPlaceTitle(
   place: TripPlannerAiResponseNestedPlace,
   locationTitleById: Map<string, SavedLocation>
@@ -2159,8 +2289,81 @@ function AiResultDayCard({
     (n, slot) => n + (slot.places?.length ?? 0),
     0
   );
-  const hasPlaces = placeCount > 0;
+  const eatCount = day.places.reduce(
+    (n, slot) => n + (slot.whereToEat?.length ?? 0),
+    0
+  );
+  const hasPlaces = placeCount > 0 || eatCount > 0;
   const empty = !hasRoutes && !hasPlaces;
+
+  type TimelineRow =
+    | {
+        kind: "route";
+        order: number;
+        seq: number;
+        route: TripPlannerAiResponseRoute;
+        routeIndex: number;
+      }
+    | {
+        kind: "place";
+        order: number;
+        seq: number;
+        place: TripPlannerAiResponseNestedPlace;
+        cityId: string;
+        placeKey: string;
+        isDining?: boolean;
+      };
+
+  const timeline: TimelineRow[] = [];
+  let seq = 0;
+  day.routes.forEach((route, routeIndex) => {
+    timeline.push({
+      kind: "route",
+      order:
+        typeof route.order === "number" && Number.isFinite(route.order)
+          ? route.order
+          : Number.POSITIVE_INFINITY,
+      seq: seq++,
+      route,
+      routeIndex,
+    });
+  });
+  day.places.forEach((slot, slotIndex) => {
+    (slot.places ?? []).forEach((place, placeIndex) => {
+      const isSaved = "locationId" in place && place.locationId;
+      timeline.push({
+        kind: "place",
+        order:
+          typeof place.order === "number" && Number.isFinite(place.order)
+            ? place.order
+            : Number.POSITIVE_INFINITY,
+        seq: seq++,
+        place,
+        cityId: slot.cityId,
+        placeKey: isSaved
+          ? `saved-${place.locationId}`
+          : `new-${"id" in place ? place.id : `${slotIndex}-${placeIndex}`}`,
+      });
+    });
+    (slot.whereToEat ?? []).forEach((place, eatIndex) => {
+      timeline.push({
+        kind: "place",
+        order:
+          typeof place.order === "number" && Number.isFinite(place.order)
+            ? place.order
+            : Number.POSITIVE_INFINITY,
+        seq: seq++,
+        place,
+        cityId: slot.cityId,
+        placeKey: `eat-${place.id || `${slotIndex}-${eatIndex}`}`,
+        isDining: true,
+      });
+    });
+  });
+  timeline.sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order;
+    return a.seq - b.seq;
+  });
 
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm">
@@ -2179,9 +2382,14 @@ function AiResultDayCard({
                 {day.routes.length}r
               </span>
             ) : null}
-            {hasPlaces ? (
+            {placeCount > 0 ? (
               <span className="rounded-full bg-primary-tint px-2 py-0.5 text-[10px] font-medium text-primary">
                 {placeCount}p
+              </span>
+            ) : null}
+            {eatCount > 0 ? (
+              <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-secondary ring-1 ring-border/70">
+                {eatCount} eat
               </span>
             ) : null}
           </div>
@@ -2193,100 +2401,105 @@ function AiResultDayCard({
           No routes or places on this day.
         </p>
       ) : (
-        <div className="space-y-2.5 p-3">
-          {day.routes.map((route, index) => (
-            <AiResultRouteRow
-              key={`route-${day.day}-${index}-${route.transport}`}
-              route={route}
-            />
-          ))}
-
-          {day.places.map((slot) => {
-            const freeLabel = formatFreeTimeLabel(slot.freeTime ?? {});
-            const places = slot.places ?? [];
-            if (places.length === 0 && !freeLabel) return null;
-            return (
-              <div
-                key={`slot-${day.day}-${slot.cityId}`}
-                className="rounded-xl border border-border/70 bg-surface px-3 py-2.5"
-              >
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-surface-elevated px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border/60">
-                    <MapPin className="h-3 w-3 text-primary" aria-hidden />
-                    {slot.cityId}
+        <ol className="space-y-2.5 p-3">
+          {timeline.map((row, index) => {
+            const displayOrder =
+              Number.isFinite(row.order) && row.order !== Number.POSITIVE_INFINITY
+                ? row.order
+                : index + 1;
+            if (row.kind === "route") {
+              return (
+                <li
+                  key={`route-${day.day}-${row.routeIndex}-${row.route.transport}`}
+                  className="flex items-start gap-2"
+                >
+                  <span className="mt-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-[11px] font-semibold text-text-secondary ring-1 ring-border/70">
+                    {displayOrder}
                   </span>
-                  {freeLabel ? (
-                    <span className="rounded-full bg-primary-tint px-2 py-0.5 text-[11px] font-medium text-primary">
-                      {freeLabel}
+                  <div className="min-w-0 flex-1">
+                    <AiResultRouteRow route={row.route} />
+                  </div>
+                </li>
+              );
+            }
+
+            const title = nestedPlaceTitle(row.place, locationTitleById);
+            const isSaved =
+              "locationId" in row.place && Boolean(row.place.locationId);
+            const category =
+              !isSaved && "category" in row.place
+                ? row.place.category
+                : undefined;
+            const CategoryIcon = category
+              ? PLACE_CATEGORY_ICONS[category] ?? MapPin
+              : MapPin;
+            return (
+              <li
+                key={row.placeKey}
+                className="flex items-start gap-2"
+              >
+                <span className="mt-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-[11px] font-semibold text-text-secondary ring-1 ring-border/70">
+                  {displayOrder}
+                </span>
+                <div className="min-w-0 flex-1 rounded-xl border border-border/70 bg-surface px-3 py-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-primary">
+                      <CategoryIcon className="h-3.5 w-3.5" aria-hidden />
                     </span>
-                  ) : null}
-                  {slot.leisureType ? (
-                    <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-[11px] font-medium text-text-muted ring-1 ring-border/60">
-                      {slot.leisureType}
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-text">
+                        {title}
+                      </span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-surface-elevated px-2 py-0.5 text-[11px] font-medium text-text-secondary ring-1 ring-border/60">
+                          <MapPin className="h-3 w-3 text-primary" aria-hidden />
+                          {row.cityId}
+                        </span>
+                        {row.isDining ? (
+                          <span className="rounded-full bg-primary-tint px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                            Where to eat
+                          </span>
+                        ) : null}
+                        {isSaved ? (
+                          <span className="rounded-full bg-success-background px-1.5 py-0.5 text-[10px] font-medium text-success">
+                            Saved
+                          </span>
+                        ) : null}
+                        {category ? (
+                          <span className="text-[11px] text-text-secondary">
+                            {PLACE_CATEGORY_LABELS[category] ?? category}
+                          </span>
+                        ) : null}
+                      </span>
+                      {row.place.bestVisitTime?.from &&
+                      row.place.bestVisitTime?.to ? (
+                        <span className="mt-1 block text-xs text-text-secondary">
+                          Best time {row.place.bestVisitTime.from} –{" "}
+                          {row.place.bestVisitTime.to}
+                          {row.place.durationMinutes != null
+                            ? ` · ~${formatAvailableDuration(row.place.durationMinutes)}`
+                            : ""}
+                        </span>
+                      ) : row.place.durationMinutes != null ? (
+                        <span className="mt-1 block text-xs text-text-secondary">
+                          ~{formatAvailableDuration(row.place.durationMinutes)}{" "}
+                          visit
+                        </span>
+                      ) : null}
+                      {!isSaved &&
+                      "description" in row.place &&
+                      row.place.description?.trim() ? (
+                        <span className="mt-1 block text-xs leading-relaxed text-text-secondary line-clamp-2">
+                          {row.place.description.trim()}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
+                  </div>
                 </div>
-                {places.length > 0 ? (
-                  <ul className="mt-2.5 space-y-2">
-                    {places.map((place, i) => {
-                      const title = nestedPlaceTitle(place, locationTitleById);
-                      const isSaved = "locationId" in place && place.locationId;
-                      const category =
-                        !isSaved && "category" in place
-                          ? place.category
-                          : undefined;
-                      const CategoryIcon = category
-                        ? PLACE_CATEGORY_ICONS[category] ?? MapPin
-                        : MapPin;
-                      return (
-                        <li
-                          key={
-                            isSaved
-                              ? `saved-${place.locationId}`
-                              : `new-${"id" in place ? place.id : i}`
-                          }
-                          className="flex items-start gap-2.5 rounded-lg bg-surface-elevated px-2.5 py-2 ring-1 ring-border/50"
-                        >
-                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-primary">
-                            <CategoryIcon className="h-3.5 w-3.5" aria-hidden />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block text-sm font-medium text-text">
-                              {title}
-                            </span>
-                            <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                              {isSaved ? (
-                                <span className="rounded-full bg-success-background px-1.5 py-0.5 text-[10px] font-medium text-success">
-                                  Saved
-                                </span>
-                              ) : null}
-                              {category ? (
-                                <span className="text-[11px] text-text-secondary">
-                                  {PLACE_CATEGORY_LABELS[category] ?? category}
-                                </span>
-                              ) : null}
-                            </span>
-                            {!isSaved &&
-                            "description" in place &&
-                            place.description?.trim() ? (
-                              <span className="mt-1 block text-xs leading-relaxed text-text-secondary line-clamp-2">
-                                {place.description.trim()}
-                              </span>
-                            ) : null}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-xs text-text-secondary">
-                    Free time — no places filled.
-                  </p>
-                )}
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ol>
       )}
     </section>
   );
@@ -2507,6 +2720,19 @@ function ResultDayCard({
                     <p className="mt-1.5 text-xs leading-relaxed text-text-secondary line-clamp-3">
                       {place.description}
                     </p>
+                    {place.bestVisitTime?.from && place.bestVisitTime?.to ? (
+                      <p className="mt-1.5 text-xs text-text-secondary">
+                        Best time {place.bestVisitTime.from} –{" "}
+                        {place.bestVisitTime.to}
+                        {place.durationMinutes != null
+                          ? ` · ~${formatAvailableDuration(place.durationMinutes)}`
+                          : ""}
+                      </p>
+                    ) : place.durationMinutes != null ? (
+                      <p className="mt-1.5 text-xs text-text-secondary">
+                        ~{formatAvailableDuration(place.durationMinutes)} visit
+                      </p>
+                    ) : null}
                     {(place.priceLabel ||
                       place.priceAmount != null ||
                       place.link) && (
@@ -2574,14 +2800,13 @@ function SuggestedPlaceThumb({
 
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = previous;
+      unlock();
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);

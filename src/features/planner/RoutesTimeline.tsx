@@ -223,13 +223,21 @@ function placeTimelineStyle(category?: PlaceCategory): TimelineStyle {
   if (
     category === "nightlife" ||
     category === "adventure" ||
-    category === "wellness"
+    category === "wellness" ||
+    category === "tour" ||
+    category === "experience" ||
+    category === "show"
   ) {
     return {
       Icon: Camera,
       iconWrap: "bg-violet-100",
       iconClass: "text-violet-600",
-      badge: { label: "Activity", tone: "activity" },
+      badge: {
+        label: category
+          ? PLACE_CATEGORY_LABELS[category] ?? "Activity"
+          : "Activity",
+        tone: "activity",
+      },
     };
   }
   return {

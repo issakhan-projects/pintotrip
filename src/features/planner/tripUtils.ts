@@ -2,6 +2,7 @@ import type { Timestamp } from "firebase/firestore";
 import type {
   PreparationItem,
   TripPlannerDoc,
+  TripRoute,
   TripStatus,
 } from "@/types/trip-planner";
 import type { SavedLocation } from "@/hooks/useLocations";
@@ -77,6 +78,41 @@ export function formatTripCompactDateRange(
   return `${fmt.format(startDate.toDate())} — ${fmt.format(endDate.toDate())}`;
 }
 
+/** Mobile summary bar: "3 Oct – 4 Oct" (no year when same year). */
+export function formatTripSummaryDates(
+  startDate: Timestamp,
+  endDate: Timestamp,
+  locale = "en-GB"
+): string {
+  const start = startDate.toDate();
+  const end = endDate.toDate();
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const fmt = new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${fmt.format(start)} – ${fmt.format(end)}`;
+}
+
+/** Desktop summary bar: "Sat, 3 Oct – Sun, 4 Oct". */
+export function formatTripSummaryDatesWithWeekday(
+  startDate: Timestamp,
+  endDate: Timestamp,
+  locale = "en-GB"
+): string {
+  const start = startDate.toDate();
+  const end = endDate.toDate();
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const fmt = new Intl.DateTimeFormat(locale, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+  return `${fmt.format(start)} – ${fmt.format(end)}`;
+}
+
 export function tripChecklistProgress(
   trip: TripPlannerDoc,
   locations: SavedLocation[]
@@ -145,27 +181,63 @@ export function placesProgress(
   locations: SavedLocation[]
 ): { visited: number; total: number; percent: number } {
   const byId = new Map(locations.map((l) => [l.id, l]));
-  const savedPlaceIds = trip.savedPlaceIds ?? [];
-  const total = savedPlaceIds.length;
-  const itineraryPlaces = (trip.itinerary?.days ?? []).flatMap(
-    (d) => d.places ?? []
-  );
-  let visited = 0;
+  const itinerarySlots = (trip.itinerary?.days ?? [])
+    .flatMap((d) => d.places ?? [])
+    .filter((slot) => {
+      if (slot.type === "gap" || slot.type === "route") return false;
+      if (slot.status === "cancelled") return false;
+      return byId.get(slot.locationId)?.status !== "cancelled";
+    });
 
-  for (const id of savedPlaceIds) {
-    const place = byId.get(id);
-    const itineraryStatus = itineraryPlaces.find(
-      (p) => p.locationId === id
-    )?.status;
-    if (itineraryStatus === "visited" || place?.status === "visited") {
-      visited += 1;
+  // Prefer itinerary place slots — those are what the Places step checkbox marks.
+  if (itinerarySlots.length > 0) {
+    const placeIds = new Set<string>();
+    const visitedIds = new Set<string>();
+    for (const slot of itinerarySlots) {
+      placeIds.add(slot.locationId);
+      if (
+        slot.status === "visited" ||
+        byId.get(slot.locationId)?.status === "visited"
+      ) {
+        visitedIds.add(slot.locationId);
+      }
     }
+    const total = placeIds.size;
+    const visited = visitedIds.size;
+    return {
+      visited,
+      total,
+      percent: total === 0 ? 0 : Math.round((visited / total) * 100),
+    };
+  }
+
+  // No itinerary places yet — fall back to saved trip places.
+  const savedPlaceIds = (trip.savedPlaceIds ?? []).filter((id) => {
+    const place = byId.get(id);
+    return !place || place.status !== "cancelled";
+  });
+  const total = savedPlaceIds.length;
+  let visited = 0;
+  for (const id of savedPlaceIds) {
+    if (byId.get(id)?.status === "visited") visited += 1;
   }
 
   return {
     visited,
     total,
     percent: total === 0 ? 0 : Math.round((visited / total) * 100),
+  };
+}
+
+export function routesProgress(
+  routes: TripRoute[]
+): { done: number; total: number; percent: number } {
+  const total = routes.length;
+  const done = routes.filter((route) => route.status === "done").length;
+  return {
+    done,
+    total,
+    percent: total === 0 ? 0 : Math.round((done / total) * 100),
   };
 }
 

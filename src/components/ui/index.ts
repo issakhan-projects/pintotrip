@@ -13,7 +13,7 @@ export { TextInput } from "./TextInput";
 export type { TextInputProps } from "./TextInput";
 export { Switch } from "./Switch";
 export { DateRangePicker } from "./DateRangePicker";
-export type { DateRangeValue } from "./DateRangePicker";
+export type { BusyDateRange, DateRangeValue } from "./DateRangePicker";
 export { ConfirmModal } from "./ConfirmModal";
 export type { ConfirmModalProps } from "./ConfirmModal";
 export { DeleteConfirmModal } from "./DeleteConfirmModal";

@@ -5,6 +5,7 @@ import {
   BedDouble,
   CalendarDays,
   ChevronDown,
+  Clock,
   ExternalLink,
   FileText,
   Info,
@@ -44,6 +45,37 @@ import {
 type AccommodationMode = "link" | "map";
 
 type StayKind = "current" | "upcoming" | "past" | "stay";
+
+const DEFAULT_CHECK_IN_TIME = "14:00";
+const DEFAULT_CHECK_OUT_TIME = "12:00";
+
+const TIME_INPUT_CLASS = cx(
+  "block w-full min-h-11 rounded-xl border border-border bg-white",
+  "py-2.5 pl-9 pr-3 text-sm text-text outline-none transition-colors",
+  "cursor-pointer focus:border-primary focus:ring-2 focus:ring-primary/20",
+  "[color-scheme:light]"
+);
+
+/** Normalize to `HH:mm` for `<input type="time">`; fall back when missing/invalid. */
+function normalizeStayTime(value: string | undefined, fallback: string): string {
+  const raw = value?.trim();
+  if (!raw) return fallback;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!match) return fallback;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return fallback;
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
 
 function todayLocalIso(): string {
   return toLocalIsoDate(new Date());
@@ -109,6 +141,8 @@ export function AccommodationSheet({
   const [source, setSource] = useState<TripAccommodation["source"]>("link");
   const [dateRange, setDateRange] = useState<DateRangeValue>({});
   const [datesOpen, setDatesOpen] = useState(false);
+  const [checkInTime, setCheckInTime] = useState(DEFAULT_CHECK_IN_TIME);
+  const [checkOutTime, setCheckOutTime] = useState(DEFAULT_CHECK_OUT_TIME);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<AccommodationSearchResult[]>([]);
@@ -120,6 +154,8 @@ export function AccommodationSheet({
   const nameId = useId();
   const linkId = useId();
   const notesId = useId();
+  const checkInTimeId = useId();
+  const checkOutTimeId = useId();
   const primaryDest = primaryTripDestination(trip);
 
   const editing = editingId
@@ -149,6 +185,12 @@ export function AccommodationSheet({
         : {}
     );
     setDatesOpen(Boolean(initial?.startDate && initial?.endDate));
+    setCheckInTime(
+      normalizeStayTime(initial?.checkInTime, DEFAULT_CHECK_IN_TIME)
+    );
+    setCheckOutTime(
+      normalizeStayTime(initial?.checkOutTime, DEFAULT_CHECK_OUT_TIME)
+    );
     setSearchQuery("");
     setResults([]);
     setAutoFilledName(null);
@@ -388,6 +430,8 @@ export function AccommodationSheet({
         countryName: nextCountryName || primaryDest.countryName || undefined,
         notes: notes.trim() || undefined,
         source: nextSource,
+        checkInTime: normalizeStayTime(checkInTime, DEFAULT_CHECK_IN_TIME),
+        checkOutTime: normalizeStayTime(checkOutTime, DEFAULT_CHECK_OUT_TIME),
         ...(dateRange.from && dateRange.to
           ? {
               startDate: toLocalIsoDate(dateRange.from),
@@ -459,6 +503,14 @@ export function AccommodationSheet({
                   stay.name?.trim() || stay.address?.trim() || "Stay";
                 const checkIn = formatStayDate(stay.startDate);
                 const checkOut = formatStayDate(stay.endDate);
+                const stayCheckInTime = normalizeStayTime(
+                  stay.checkInTime,
+                  DEFAULT_CHECK_IN_TIME
+                );
+                const stayCheckOutTime = normalizeStayTime(
+                  stay.checkOutTime,
+                  DEFAULT_CHECK_OUT_TIME
+                );
                 const bookingHref = stay.link
                   ? normalizeUrl(stay.link)
                   : undefined;
@@ -591,6 +643,10 @@ export function AccommodationSheet({
                                 <p className="mt-0.5 text-sm font-medium text-text">
                                   {checkIn ?? "—"}
                                 </p>
+                                <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-secondary">
+                                  <Clock className="h-3 w-3" aria-hidden />
+                                  {stayCheckInTime}
+                                </p>
                               </div>
                               <div className="min-w-0">
                                 <p className="inline-flex items-center gap-1 text-[11px] font-medium text-text-muted">
@@ -602,6 +658,10 @@ export function AccommodationSheet({
                                 </p>
                                 <p className="mt-0.5 text-sm font-medium text-text">
                                   {checkOut ?? "—"}
+                                </p>
+                                <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-secondary">
+                                  <Clock className="h-3 w-3" aria-hidden />
+                                  {stayCheckOutTime}
                                 </p>
                               </div>
                             </div>
@@ -835,6 +895,47 @@ export function AccommodationSheet({
             ) : null}
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <EssentialsField label="Check-in time" htmlFor={checkInTimeId}>
+              <div className="relative">
+                <Clock
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                  aria-hidden
+                />
+                <input
+                  id={checkInTimeId}
+                  type="time"
+                  value={checkInTime}
+                  onChange={(e) =>
+                    setCheckInTime(
+                      normalizeStayTime(e.target.value, DEFAULT_CHECK_IN_TIME)
+                    )
+                  }
+                  className={TIME_INPUT_CLASS}
+                />
+              </div>
+            </EssentialsField>
+            <EssentialsField label="Check-out time" htmlFor={checkOutTimeId}>
+              <div className="relative">
+                <Clock
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                  aria-hidden
+                />
+                <input
+                  id={checkOutTimeId}
+                  type="time"
+                  value={checkOutTime}
+                  onChange={(e) =>
+                    setCheckOutTime(
+                      normalizeStayTime(e.target.value, DEFAULT_CHECK_OUT_TIME)
+                    )
+                  }
+                  className={TIME_INPUT_CLASS}
+                />
+              </div>
+            </EssentialsField>
+          </div>
+
           <div className="min-w-0">
             <label
               htmlFor={notesId}
@@ -853,7 +954,7 @@ export function AccommodationSheet({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
-                placeholder="Check-in time, confirmation code, host notes…"
+                placeholder="Confirmation code, host notes…"
                 className="block w-full resize-y rounded-xl border border-border bg-white py-2.5 pl-9 pr-3 text-sm leading-relaxed text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </div>

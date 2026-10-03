@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 import {
   Bus,
   CalendarDays,
@@ -8,10 +15,10 @@ import {
   Clock,
   FileText,
   Footprints,
-  ImageIcon,
   Paperclip,
   Plane,
   Ship,
+  StickyNote,
   Train,
   TrainFront,
   ArrowLeftRight,
@@ -167,11 +174,24 @@ function timeBoundsForDate(
 }
 
 const DATETIME_INPUT_CLASS = cx(
-  "block w-full min-h-11 rounded-xl border border-border bg-white",
+  // Native date/time controls have a large intrinsic min-width; force them
+  // into the container (see also globals.css input[type=date|time] rules).
+  "block h-11 w-full min-w-0 max-w-full rounded-xl border border-border bg-white",
   "py-2.5 text-sm text-text outline-none transition-colors",
   "focus:border-primary focus:ring-2 focus:ring-primary/20",
   "[color-scheme:light]"
 );
+
+/** Open the native picker when clicking/focusing anywhere on the field. */
+function openNativePicker(event: SyntheticEvent<HTMLInputElement>) {
+  const input = event.currentTarget;
+  if (input.disabled) return;
+  try {
+    input.showPicker?.();
+  } catch {
+    // showPicker throws if the input isn't activation-gated; ignore.
+  }
+}
 
 const TRANSPORT_UI: Array<{
   id: TripRouteTransport;
@@ -189,16 +209,14 @@ const TRANSPORT_UI: Array<{
   { id: "other", label: "Other", Icon: Footprints },
 ];
 
-function RouteDatetimeField({
+function RouteDateTimeInputs({
   id,
-  label,
   value,
   onChange,
   min,
   max,
 }: {
   id: string;
-  label: string;
   value: string;
   onChange: (value: string) => void;
   min?: string;
@@ -216,57 +234,152 @@ function RouteDatetimeField({
   }
 
   return (
-    <EssentialsField label={label}>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="min-w-0">
-          <label htmlFor={dateId} className="sr-only">
-            Date
-          </label>
-          <div className="relative">
-            <CalendarDays
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden
-            />
-            <input
-              id={dateId}
-              type="date"
-              value={date}
-              min={minDate || undefined}
-              max={maxDate || undefined}
-              onChange={(event) =>
-                commit(event.target.value, time || "09:00")
-              }
-              className={cx(DATETIME_INPUT_CLASS, "cursor-pointer pl-9 pr-3")}
-            />
-          </div>
-        </div>
-        <div className="min-w-0">
-          <label htmlFor={timeId} className="sr-only">
-            Time
-          </label>
-          <div className="relative">
-            <Clock
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden
-            />
-            <input
-              id={timeId}
-              type="time"
-              value={time}
-              min={timeBounds.min}
-              max={timeBounds.max}
-              disabled={!date}
-              onChange={(event) => commit(date, event.target.value)}
-              className={cx(
-                DATETIME_INPUT_CLASS,
-                "pl-9 pr-3",
-                date ? "cursor-pointer" : "cursor-not-allowed opacity-60"
-              )}
-            />
-          </div>
+    <div className="flex w-full min-w-0 flex-col gap-2">
+      <div className="min-w-0 overflow-hidden">
+        <label htmlFor={dateId} className="sr-only">
+          Date
+        </label>
+        <div className="relative min-w-0">
+          <CalendarDays
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+            aria-hidden
+          />
+          <input
+            id={dateId}
+            type="date"
+            value={date}
+            min={minDate || undefined}
+            max={maxDate || undefined}
+            onChange={(event) => commit(event.target.value, time || "09:00")}
+            onClick={openNativePicker}
+            onFocus={openNativePicker}
+            className={cx(DATETIME_INPUT_CLASS, "cursor-pointer pl-9 pr-2")}
+          />
         </div>
       </div>
+      <div className="min-w-0 overflow-hidden">
+        <label htmlFor={timeId} className="sr-only">
+          Time
+        </label>
+        <div className="relative min-w-0">
+          <Clock
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+            aria-hidden
+          />
+          <input
+            id={timeId}
+            type="time"
+            value={time}
+            min={timeBounds.min}
+            max={timeBounds.max}
+            disabled={!date}
+            onChange={(event) => commit(date, event.target.value)}
+            onClick={openNativePicker}
+            onFocus={openNativePicker}
+            className={cx(
+              DATETIME_INPUT_CLASS,
+              "pl-9 pr-2",
+              date ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+            )}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RouteDatetimeField({
+  id,
+  label,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  min?: string;
+  max?: string;
+}) {
+  return (
+    <EssentialsField label={label}>
+      <RouteDateTimeInputs
+        id={id}
+        value={value}
+        onChange={onChange}
+        min={min}
+        max={max}
+      />
     </EssentialsField>
+  );
+}
+
+type RouteSheetNavId =
+  | "transport"
+  | "leg"
+  | "flight"
+  | "note"
+  | "attachments";
+
+function RouteSheetSectionNav({
+  items,
+  activeId,
+  onSelect,
+}: {
+  items: Array<{ id: RouteSheetNavId; label: string; Icon: LucideIcon }>;
+  activeId: RouteSheetNavId;
+  onSelect: (id: RouteSheetNavId) => void;
+}) {
+  return (
+    <nav
+      aria-label="Route form sections"
+      className="grid w-full shrink-0 grid-cols-5 gap-1.5 sm:flex sm:w-auto sm:flex-col sm:pb-0"
+    >
+      {items.map((item) => {
+        const active = item.id === activeId;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            title={item.label}
+            aria-label={item.label}
+            aria-current={active ? "true" : undefined}
+            onClick={() => onSelect(item.id)}
+            className={cx(
+              "inline-flex h-10 w-full items-center justify-center rounded-xl border transition-colors sm:h-10 sm:w-10",
+              active
+                ? "border-primary/30 bg-primary-tint text-primary"
+                : "border-border bg-white text-text-secondary hover:border-primary/20 hover:text-text"
+            )}
+          >
+            <item.Icon className="h-4 w-4" aria-hidden />
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function RouteTimelineMarker({
+  label,
+  active = true,
+}: {
+  label: string;
+  active?: boolean;
+}) {
+  return (
+    <span
+      className={cx(
+        "relative z-[1] flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold",
+        active
+          ? "bg-primary-tint text-primary ring-1 ring-primary/20"
+          : "bg-surface text-text-secondary ring-1 ring-border"
+      )}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -362,6 +475,8 @@ export function RouteSheet({
   const [returnAttachments, setReturnAttachments] = useState<
     TripRouteAttachment[]
   >([]);
+  const [activeSection, setActiveSection] =
+    useState<RouteSheetNavId>("transport");
   const routeDocIdRef = useRef<string>("");
   const returnRouteDocIdRef = useRef<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -394,11 +509,74 @@ export function RouteSheet({
 
   const exact = isExactScheduleTransport(transport);
   const isReturn = exact && tripKind === "return";
-  const showOutboundDeparture = !exact || exactStep === "departure";
-  const showOutboundArrival = !exact || exactStep === "arrival";
-  const showReturnDeparture = isReturn && exactStep === "return_departure";
-  const showReturnArrival = isReturn && exactStep === "return_arrival";
-  const onReturnSteps = showReturnDeparture || showReturnArrival;
+  /** Combined A→B card (departure + arrival together). */
+  const showOutboundLeg =
+    !exact ||
+    (tripKind != null &&
+      (exactStep === "departure" || exactStep === "arrival"));
+  const showOutboundSummary =
+    exact &&
+    tripKind != null &&
+    (exactStep === "return_departure" || exactStep === "return_arrival");
+  /** Combined return card (C→D). */
+  const showReturnLeg =
+    isReturn &&
+    (exactStep === "return_departure" || exactStep === "return_arrival");
+  const showOutboundDeparture = showOutboundLeg;
+  const showOutboundArrival = showOutboundLeg;
+  const showReturnDeparture = showReturnLeg;
+  const showReturnArrival = showReturnLeg;
+  /** Keep outbound flight/note editable while planning the return leg. */
+  const showOutboundDetails = showOutboundLeg || showOutboundSummary;
+  const onReturnSteps = showReturnLeg;
+  const TransportIcon =
+    TRANSPORT_UI.find((t) => t.id === transport)?.Icon ?? Plane;
+
+  const sectionNavItems = useMemo(() => {
+    const items: Array<{
+      id: RouteSheetNavId;
+      label: string;
+      Icon: LucideIcon;
+    }> = [
+      { id: "transport", label: "Transport type", Icon: TransportIcon },
+    ];
+    if (showOutboundLeg || showOutboundSummary || showReturnLeg) {
+      items.push({
+        id: "leg",
+        label: "Departure & arrival",
+        Icon: ArrowRight,
+      });
+    }
+    if (
+      transport === "flight" &&
+      (showOutboundLeg || showReturnLeg || showOutboundSummary)
+    ) {
+      items.push({ id: "flight", label: "Flight details", Icon: Plane });
+    }
+    if (showOutboundLeg || showReturnLeg) {
+      items.push({ id: "note", label: "Note", Icon: StickyNote });
+      items.push({ id: "attachments", label: "Attachments", Icon: Paperclip });
+    }
+    return items;
+  }, [
+    TransportIcon,
+    showOutboundLeg,
+    showOutboundSummary,
+    showReturnLeg,
+    transport,
+  ]);
+
+  const visibleSection: RouteSheetNavId = sectionNavItems.some(
+    (i) => i.id === activeSection
+  )
+    ? activeSection
+    : sectionNavItems[0]!.id;
+
+  useEffect(() => {
+    if (!sectionNavItems.some((i) => i.id === activeSection)) {
+      setActiveSection(sectionNavItems[0]!.id);
+    }
+  }, [sectionNavItems, activeSection]);
   const fromCity = cities.find((c) => c.key === fromKey);
   const toCity = cities.find((c) => c.key === toKey);
   const tripBounds = useMemo(() => tripDatetimeLocalBounds(trip), [trip]);
@@ -519,6 +697,7 @@ export function RouteSheet({
     setReturnAttachments([]);
     if (editing) {
       setTripKind("one_way");
+      setActiveSection("leg");
       setTransport(editing.transport);
       const fromMatch =
         cities.find(
@@ -550,6 +729,7 @@ export function RouteSheet({
       return;
     }
     setTripKind(null);
+    setActiveSection("transport");
     setTransport("flight");
     setFromKey(cities[0]?.key ?? "");
     setToKey(cities[1]?.key ?? cities[0]?.key ?? "");
@@ -591,6 +771,7 @@ export function RouteSheet({
     setReturnToHubKey((prev) => prev || fromHubKey);
     if (!returnAirline && airline) setReturnAirline(airline);
     setExactStep("return_departure");
+    setActiveSection("leg");
   }
 
   async function handleAttachFiles(fileList: FileList | null) {
@@ -1082,10 +1263,18 @@ export function RouteSheet({
       title={editing ? "Edit route" : "Add route"}
       description="Plan how you’ll move between destinations."
       size="lg"
-      className={cx(ESSENTIALS_SHEET_CLASS, "md:!max-w-lg")}
+      className={cx(ESSENTIALS_SHEET_CLASS, "md:!max-w-2xl")}
       bodyClassName="pb-4"
     >
-      <div className={ESSENTIALS_FORM_STACK}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+        <RouteSheetSectionNav
+          items={sectionNavItems}
+          activeId={visibleSection}
+          onSelect={setActiveSection}
+        />
+        <div className={cx(ESSENTIALS_FORM_STACK, "min-w-0 flex-1")}>
+        {visibleSection === "transport" ? (
+        <section data-route-section="transport" className="space-y-3.5">
         <EssentialsField label="Transport type">
           <div className="grid grid-cols-4 gap-1.5">
             {TRANSPORT_UI.map((item) => {
@@ -1099,6 +1288,7 @@ export function RouteSheet({
                     setFromHubKey("");
                     setToHubKey("");
                     setExactStep("departure");
+                    setActiveSection("transport");
                     if (!isExactScheduleTransport(item.id)) {
                       setTripKind(null);
                     } else if (editing) {
@@ -1159,12 +1349,11 @@ export function RouteSheet({
                     type="button"
                     onClick={() => {
                       setTripKind(item.id);
-                      if (
-                        item.id === "one_way" &&
-                        (exactStep === "return_departure" ||
-                          exactStep === "return_arrival")
-                      ) {
-                        setExactStep("arrival");
+                      setExactStep("departure");
+                      setActiveSection("leg");
+                      if (item.id === "one_way") {
+                        setReturnDepartureLocal("");
+                        setReturnArrivalLocal("");
                       }
                     }}
                     className={cx(
@@ -1189,245 +1378,296 @@ export function RouteSheet({
             </div>
           </EssentialsField>
         ) : null}
+        </section>
+        ) : null}
 
-        {showOutboundDeparture ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4">
-            <header className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-[11px] font-semibold text-primary">
-                A
-              </span>
-              <div>
-                <h3 className="text-sm font-semibold text-text">
-                  {isReturn ? "Outbound departure" : "Departure"}
-                </h3>
-                <p className="text-xs text-text-muted">
-                  Where and when you leave
+        {visibleSection === "leg" ? (
+        <>
+        {showOutboundSummary && fromCity && toCity ? (
+          <section data-route-section="leg">
+            <button
+              type="button"
+              onClick={() => {
+                setExactStep("departure");
+                setActiveSection("leg");
+              }}
+              className="flex w-full items-center gap-3 rounded-xl border border-border bg-white px-3.5 py-3 text-left transition-colors hover:border-primary/25"
+            >
+              <div className="flex flex-col items-center gap-1">
+                <RouteTimelineMarker label="A" />
+                <span className="h-4 w-px bg-border" aria-hidden />
+                <RouteTimelineMarker label="B" active={false} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-text-muted">
+                  {isReturn ? "Outbound route" : "Route"}
+                </p>
+                <p className="truncate text-sm font-medium text-text">
+                  {fromCity.cityName}
+                  {departureLocal
+                    ? ` · ${formatDatetimeLocalDisplay(departureLocal)}`
+                    : ""}
+                  {" → "}
+                  {toCity.cityName}
+                  {arrivalLocal
+                    ? ` · ${formatDatetimeLocalDisplay(arrivalLocal)}`
+                    : ""}
                 </p>
               </div>
-            </header>
-
-            <EssentialsField label="From city">
-              <SearchableSelect
-                value={fromKey}
-                onChange={(value) => {
-                  setFromKey(value);
-                  setFromHubKey("");
-                }}
-                options={cityOptions}
-                placeholder="Select city"
-                clearable={false}
-              />
-            </EssentialsField>
-
-            {transport === "flight" ? (
-              <EssentialsField
-                label="Departure airport"
-                hint={
-                  fromAirportOptions.length === 0 ? (
-                    <p className="text-xs text-text-muted">
-                      No airports on this city yet. They appear after trip
-                      transport discovery finishes.
-                    </p>
-                  ) : null
-                }
-              >
-                <SearchableSelect
-                  value={fromHubKey}
-                  onChange={setFromHubKey}
-                  options={fromAirportOptions}
-                  placeholder="Select airport"
-                  triggerLayout="stacked"
-                  clearable={false}
-                  disabled={!fromKey || fromAirportOptions.length === 0}
-                />
-              </EssentialsField>
-            ) : null}
-
-            {transport === "train" && fromStationOptions.length > 0 ? (
-              <EssentialsField label="Departure station">
-                <SearchableSelect
-                  value={fromHubKey}
-                  onChange={setFromHubKey}
-                  options={fromStationOptions}
-                  placeholder="Select station"
-                  clearable={false}
-                  disabled={!fromKey}
-                />
-              </EssentialsField>
-            ) : null}
-
-            <RouteDatetimeField
-              id={departureId}
-              label={exact ? "Departure" : "Start"}
-              value={departureLocal}
-              min={departureMin}
-              max={departureMax}
-              onChange={(value) => {
-                const next = clampToTripBounds(value);
-                setDepartureLocal(next);
-                syncArrivalAfterDeparture(next);
-              }}
-            />
+              <span className="shrink-0 text-xs font-medium text-primary">
+                Edit
+              </span>
+            </button>
           </section>
         ) : null}
 
-        {exact &&
-        (exactStep === "arrival" ||
-          exactStep === "return_departure" ||
-          exactStep === "return_arrival") &&
-        fromCity ? (
-          <button
-            type="button"
-            onClick={() => setExactStep("departure")}
-            className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface/70 px-3.5 py-3 text-left transition-colors hover:border-primary/25"
+        {showOutboundLeg ? (
+          <section
+            data-route-section="leg"
+            className="rounded-xl border border-border bg-white"
           >
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-tint text-[11px] font-semibold text-primary">
-              A
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-text-muted">
-                {isReturn ? "Outbound departure" : "Departure"}
-              </p>
-              <p className="truncate text-sm font-medium text-text">
-                {fromCity.cityName}
-                {departureLocal
-                  ? ` · ${formatDatetimeLocalDisplay(departureLocal)}`
-                  : ""}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-medium text-primary">
-              Edit
-            </span>
-          </button>
-        ) : null}
-
-        {showOutboundArrival ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-white p-3.5 ring-1 ring-border/60 sm:p-4">
-            <header className="flex items-center gap-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface text-[11px] font-semibold text-text-secondary ring-1 ring-border">
-                B
-              </span>
-              <div>
-                <h3 className="text-sm font-semibold text-text">
-                  {isReturn ? "Outbound arrival" : "Arrival"}
-                </h3>
-                <p className="text-xs text-text-muted">
-                  {exact
-                    ? "Where and when you arrive"
-                    : "Destination and how long it takes"}
-                </p>
+            <div className="flex min-w-0 gap-3 p-3.5 sm:gap-4 sm:p-4">
+              <div className="relative flex w-7 shrink-0 flex-col items-center pt-1">
+                <span
+                  className="absolute top-4 bottom-4 left-1/2 w-px -translate-x-1/2 bg-border"
+                  aria-hidden
+                />
+                <RouteTimelineMarker label="A" />
+                <span className="relative z-[1] my-auto flex h-7 w-7 items-center justify-center rounded-full bg-surface text-text-secondary ring-1 ring-border">
+                  <TransportIcon className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                <RouteTimelineMarker label="B" />
               </div>
-            </header>
 
-            <EssentialsField label="To city">
-              <SearchableSelect
-                value={toKey}
-                onChange={(value) => {
-                  setToKey(value);
-                  setToHubKey("");
-                }}
-                options={cityOptions}
-                placeholder="Select city"
-                clearable={false}
-              />
-            </EssentialsField>
-
-            {!exact && toAirportOptions.length > 0 ? (
-              <EssentialsField
-                label="To place (optional)"
-                hint={
-                  <p className="text-xs text-text-muted">
-                    Pick an airport for transfers like taxi to the terminal, or
-                    leave as the city.
-                  </p>
-                }
-              >
-                <SearchableSelect
-                  value={toHubKey}
-                  onChange={setToHubKey}
-                  options={[
-                    {
-                      value: "",
-                      label: toCity?.cityName ?? "City center",
-                      description: "City",
-                    },
-                    ...toAirportOptions,
-                  ]}
-                  placeholder="City or airport"
-                  triggerLayout="stacked"
-                  clearable
-                  disabled={!toKey}
-                />
-              </EssentialsField>
-            ) : null}
-
-            {transport === "flight" ? (
-              <EssentialsField
-                label="Arrival airport"
-                hint={
-                  toAirportOptions.length === 0 ? (
+              <div className="min-w-0 flex-1 space-y-5">
+                <div className="space-y-3">
+                  <header>
+                    <h3 className="text-sm font-semibold text-text">
+                      {isReturn ? "Outbound departure" : "Departure"}
+                    </h3>
                     <p className="text-xs text-text-muted">
-                      No airports found for this city yet.
+                      Where and when you leave
                     </p>
-                  ) : null
-                }
-              >
-                <SearchableSelect
-                  value={toHubKey}
-                  onChange={setToHubKey}
-                  options={toAirportOptions}
-                  placeholder="Select airport"
-                  triggerLayout="stacked"
-                  clearable={false}
-                  disabled={!toKey || toAirportOptions.length === 0}
-                />
-              </EssentialsField>
-            ) : null}
+                  </header>
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 gap-2.5">
+                      <EssentialsField label="From city">
+                        <SearchableSelect
+                          value={fromKey}
+                          onChange={(value) => {
+                            setFromKey(value);
+                            setFromHubKey("");
+                          }}
+                          options={cityOptions}
+                          placeholder="Select city"
+                          clearable={false}
+                        />
+                      </EssentialsField>
+                      {transport === "flight" ? (
+                        <EssentialsField label="Departure airport">
+                          <SearchableSelect
+                            value={fromHubKey}
+                            onChange={setFromHubKey}
+                            options={fromAirportOptions}
+                            placeholder="Select airport"
+                            triggerLayout="stacked"
+                            clearable={false}
+                            disabled={
+                              !fromKey || fromAirportOptions.length === 0
+                            }
+                          />
+                        </EssentialsField>
+                      ) : transport === "train" &&
+                        fromStationOptions.length > 0 ? (
+                        <EssentialsField label="Departure station">
+                          <SearchableSelect
+                            value={fromHubKey}
+                            onChange={setFromHubKey}
+                            options={fromStationOptions}
+                            placeholder="Select station"
+                            clearable={false}
+                            disabled={!fromKey}
+                          />
+                        </EssentialsField>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                    <RouteDateTimeInputs
+                      id={departureId}
+                      value={departureLocal}
+                      min={departureMin}
+                      max={departureMax}
+                      onChange={(value) => {
+                        const next = clampToTripBounds(value);
+                        setDepartureLocal(next);
+                        syncArrivalAfterDeparture(next);
+                      }}
+                    />
+                  </div>
+                </div>
 
-            {transport === "train" && toStationOptions.length > 0 ? (
-              <EssentialsField label="Arrival station">
-                <SearchableSelect
-                  value={toHubKey}
-                  onChange={setToHubKey}
-                  options={toStationOptions}
-                  placeholder="Select station"
-                  clearable={false}
-                  disabled={!toKey}
-                />
-              </EssentialsField>
-            ) : null}
+                <div className="space-y-3">
+                  <header>
+                    <h3 className="text-sm font-semibold text-text">
+                      {isReturn ? "Outbound arrival" : "Arrival"}
+                    </h3>
+                    <p className="text-xs text-text-muted">
+                      {exact
+                        ? "Where and when you arrive"
+                        : "Destination and how long it takes"}
+                    </p>
+                  </header>
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 gap-2.5">
+                      <EssentialsField label="To city">
+                        <SearchableSelect
+                          value={toKey}
+                          onChange={(value) => {
+                            setToKey(value);
+                            setToHubKey("");
+                          }}
+                          options={cityOptions}
+                          placeholder="Select city"
+                          clearable={false}
+                        />
+                      </EssentialsField>
+                      {transport === "flight" ? (
+                        <EssentialsField label="Arrival airport">
+                          <SearchableSelect
+                            value={toHubKey}
+                            onChange={setToHubKey}
+                            options={toAirportOptions}
+                            placeholder="Select airport"
+                            triggerLayout="stacked"
+                            clearable={false}
+                            disabled={!toKey || toAirportOptions.length === 0}
+                          />
+                        </EssentialsField>
+                      ) : transport === "train" &&
+                        toStationOptions.length > 0 ? (
+                        <EssentialsField label="Arrival station">
+                          <SearchableSelect
+                            value={toHubKey}
+                            onChange={setToHubKey}
+                            options={toStationOptions}
+                            placeholder="Select station"
+                            clearable={false}
+                            disabled={!toKey}
+                          />
+                        </EssentialsField>
+                      ) : !exact && toAirportOptions.length > 0 ? (
+                        <EssentialsField label="To place (optional)">
+                          <SearchableSelect
+                            value={toHubKey}
+                            onChange={setToHubKey}
+                            options={[
+                              {
+                                value: "",
+                                label: toCity?.cityName ?? "City center",
+                                description: "City",
+                              },
+                              ...toAirportOptions,
+                            ]}
+                            placeholder="City or airport"
+                            triggerLayout="stacked"
+                            clearable
+                            disabled={!toKey}
+                          />
+                        </EssentialsField>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                    {exact ? (
+                      <RouteDateTimeInputs
+                        id={arrivalId}
+                        value={arrivalLocal}
+                        min={arrivalMin}
+                        max={arrivalMax}
+                        onChange={(value) => {
+                          const clamped = clampToTripBounds(value);
+                          if (departureLocal && clamped <= departureLocal) {
+                            const next =
+                              addMinutesToDatetimeLocal(departureLocal, 1) ??
+                              departureLocal;
+                            setArrivalLocal(clampToTripBounds(next));
+                            return;
+                          }
+                          setArrivalLocal(clamped);
+                          if (
+                            returnDepartureLocal &&
+                            returnDepartureLocal <= clamped
+                          ) {
+                            setReturnDepartureLocal("");
+                            setReturnArrivalLocal("");
+                          }
+                        }}
+                      />
+                    ) : (
+                      <EssentialsField
+                        label="Approximate duration"
+                        htmlFor={durationId}
+                      >
+                          <div className="flex flex-wrap gap-1.5">
+                            {APPROX_DURATION_PRESETS.map((preset) => {
+                              const active = approxMinutes === preset.minutes;
+                              return (
+                                <button
+                                  key={preset.minutes}
+                                  type="button"
+                                  onClick={() =>
+                                    setApproxMinutes(preset.minutes)
+                                  }
+                                  className={cx(
+                                    "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
+                                    active
+                                      ? "border-primary/30 bg-primary-tint text-primary"
+                                      : "border-border bg-white text-text-secondary hover:text-text"
+                                  )}
+                                >
+                                  ~{preset.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2">
+                            <TextInput
+                              id={durationId}
+                              type="number"
+                              min={1}
+                              step={5}
+                              value={String(approxMinutes)}
+                              onChange={(e) => {
+                                const next = Number(e.target.value);
+                                if (Number.isFinite(next) && next > 0) {
+                                  setApproxMinutes(Math.round(next));
+                                }
+                              }}
+                              placeholder="Minutes"
+                              className="!shadow-none"
+                            />
+                            <p className="mt-1.5 text-xs text-text-muted">
+                              Minutes · estimated arrival{" "}
+                              {estimatedArrivalLabel
+                                ? estimatedArrivalLabel
+                                : "after start time"}
+                            </p>
+                          </div>
+                        </EssentialsField>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {exact ? (
-              <>
-                <RouteDatetimeField
-                  id={arrivalId}
-                  label="Arrival"
-                  value={arrivalLocal}
-                  min={arrivalMin}
-                  max={arrivalMax}
-                  onChange={(value) => {
-                    const clamped = clampToTripBounds(value);
-                    if (departureLocal && clamped <= departureLocal) {
-                      const next =
-                        addMinutesToDatetimeLocal(departureLocal, 1) ??
-                        departureLocal;
-                      setArrivalLocal(clampToTripBounds(next));
-                      return;
-                    }
-                    setArrivalLocal(clamped);
-                    if (
-                      returnDepartureLocal &&
-                      returnDepartureLocal <= clamped
-                    ) {
-                      setReturnDepartureLocal("");
-                      setReturnArrivalLocal("");
-                    }
-                  }}
-                />
+              <div className="flex items-center gap-2 border-t border-border px-3.5 py-2.5 sm:px-4">
+                <Clock className="h-3.5 w-3.5 text-text-muted" aria-hidden />
                 {computedExactDuration != null ? (
                   <p className="text-xs text-text-secondary">
                     Duration{" "}
-                    <span className="font-medium text-text">
+                    <span className="font-semibold text-text">
                       {formatRouteDuration(computedExactDuration)}
                     </span>
                   </p>
@@ -1435,88 +1675,21 @@ export function RouteSheet({
                   <p className="text-xs text-error">
                     Arrival must be after departure.
                   </p>
-                ) : null}
-              </>
-            ) : (
-              <EssentialsField label="Approximate duration" htmlFor={durationId}>
-                <div className="flex flex-wrap gap-1.5">
-                  {APPROX_DURATION_PRESETS.map((preset) => {
-                    const active = approxMinutes === preset.minutes;
-                    return (
-                      <button
-                        key={preset.minutes}
-                        type="button"
-                        onClick={() => setApproxMinutes(preset.minutes)}
-                        className={cx(
-                          "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
-                          active
-                            ? "border-primary/30 bg-primary-tint text-primary"
-                            : "border-border bg-white text-text-secondary hover:text-text"
-                        )}
-                      >
-                        ~{preset.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-2">
-                  <TextInput
-                    id={durationId}
-                    type="number"
-                    min={1}
-                    step={5}
-                    value={String(approxMinutes)}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
-                      if (Number.isFinite(next) && next > 0) {
-                        setApproxMinutes(Math.round(next));
-                      }
-                    }}
-                    placeholder="Minutes"
-                    className="!shadow-none"
-                  />
-                  <p className="mt-1.5 text-xs text-text-muted">
-                    Minutes · estimated arrival{" "}
-                    {estimatedArrivalLabel
-                      ? estimatedArrivalLabel
-                      : "after start time"}
+                ) : (
+                  <p className="text-xs text-text-muted">
+                    Duration appears when both times are set
                   </p>
-                </div>
-              </EssentialsField>
-            )}
+                )}
+              </div>
+            ) : null}
           </section>
         ) : null}
 
-        {exact &&
-        (exactStep === "return_departure" || exactStep === "return_arrival") &&
-        toCity ? (
-          <button
-            type="button"
-            onClick={() => setExactStep("arrival")}
-            className="flex w-full items-center gap-3 rounded-xl border border-border bg-white px-3.5 py-3 text-left ring-1 ring-border/60 transition-colors hover:border-primary/25"
-          >
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface text-[11px] font-semibold text-text-secondary ring-1 ring-border">
-              B
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-text-muted">
-                Outbound arrival
-              </p>
-              <p className="truncate text-sm font-medium text-text">
-                {toCity.cityName}
-                {arrivalLocal
-                  ? ` · ${formatDatetimeLocalDisplay(arrivalLocal)}`
-                  : ""}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-medium text-primary">
-              Edit
-            </span>
-          </button>
-        ) : null}
-
         {showReturnDeparture ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4">
+          <section
+            data-route-section="leg"
+            className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
+          >
             <header className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-[11px] font-semibold text-primary">
                 C
@@ -1584,32 +1757,6 @@ export function RouteSheet({
               }}
             />
           </section>
-        ) : null}
-
-        {exact && exactStep === "return_arrival" && toCity ? (
-          <button
-            type="button"
-            onClick={() => setExactStep("return_departure")}
-            className="flex w-full items-center gap-3 rounded-xl border border-border bg-surface/70 px-3.5 py-3 text-left transition-colors hover:border-primary/25"
-          >
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-tint text-[11px] font-semibold text-primary">
-              C
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-text-muted">
-                Return departure
-              </p>
-              <p className="truncate text-sm font-medium text-text">
-                {toCity.cityName}
-                {returnDepartureLocal
-                  ? ` · ${formatDatetimeLocalDisplay(returnDepartureLocal)}`
-                  : ""}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-medium text-primary">
-              Edit
-            </span>
-          </button>
         ) : null}
 
         {showReturnArrival ? (
@@ -1693,9 +1840,16 @@ export function RouteSheet({
             ) : null}
           </section>
         ) : null}
+        </>
+        ) : null}
 
-        {showOutboundArrival && transport === "flight" ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4">
+        {visibleSection === "flight" ? (
+        <>
+        {showOutboundDetails && transport === "flight" ? (
+          <section
+            data-route-section="flight"
+            className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
+          >
             <header className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-primary">
                 <Plane className="h-3.5 w-3.5" aria-hidden />
@@ -1712,20 +1866,31 @@ export function RouteSheet({
               <EssentialsField label="Airline">
                 <SearchableSelect
                   value={airline}
-                  onChange={setAirline}
+                  onChange={(value) => {
+                    setAirline(value);
+                    // Prefill return only when it is still empty.
+                    if (isReturn && !returnAirline.trim()) {
+                      setReturnAirline(value);
+                    }
+                  }}
                   options={airlineOptions}
                   placeholder="Select airline"
                   searchPlaceholder="Search airline or code…"
-                  triggerLayout="stacked"
                 />
               </EssentialsField>
               <EssentialsField label="Flight number" htmlFor={flightNumberId}>
                 <TextInput
                   id={flightNumberId}
                   value={flightNumber}
-                  onChange={(e) => setFlightNumber(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFlightNumber(next);
+                    if (isReturn && !returnFlightNumber.trim()) {
+                      setReturnFlightNumber(next);
+                    }
+                  }}
                   placeholder="TK 123"
-                  className="!shadow-none"
+                  className="!shadow-none !min-h-11 !h-11"
                   autoCapitalize="characters"
                 />
               </EssentialsField>
@@ -1734,7 +1899,10 @@ export function RouteSheet({
         ) : null}
 
         {showReturnArrival && transport === "flight" ? (
-          <section className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4">
+          <section
+            data-route-section="flight"
+            className="space-y-3.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
+          >
             <header className="flex items-center gap-2">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-primary">
                 <Plane className="h-3.5 w-3.5" aria-hidden />
@@ -1755,7 +1923,6 @@ export function RouteSheet({
                   options={returnAirlineOptions}
                   placeholder="Select airline"
                   searchPlaceholder="Search airline or code…"
-                  triggerLayout="stacked"
                 />
               </EssentialsField>
               <EssentialsField
@@ -1767,43 +1934,71 @@ export function RouteSheet({
                   value={returnFlightNumber}
                   onChange={(e) => setReturnFlightNumber(e.target.value)}
                   placeholder="TK 456"
-                  className="!shadow-none"
+                  className="!shadow-none !min-h-11 !h-11"
                   autoCapitalize="characters"
                 />
               </EssentialsField>
             </div>
           </section>
         ) : null}
+        </>
+        ) : null}
 
-        {showOutboundArrival ? (
-          <EssentialsField label="Note (optional)" htmlFor={noteId}>
-            <textarea
-              id={noteId}
-              rows={2}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Seat, booking ref, tips…"
-              className={ESSENTIALS_NOTES_CLASS}
-            />
-          </EssentialsField>
+        {visibleSection === "note" ? (
+        <>
+        {showOutboundDetails ? (
+          <section data-route-section="note">
+            <EssentialsField
+              label={isReturn ? "Outbound note (optional)" : "Note (optional)"}
+              htmlFor={noteId}
+            >
+              <textarea
+                id={noteId}
+                rows={2}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Seat, booking ref, tips…"
+                className={ESSENTIALS_NOTES_CLASS}
+              />
+            </EssentialsField>
+          </section>
         ) : null}
 
         {showReturnArrival ? (
-          <EssentialsField label="Return note (optional)" htmlFor={returnNoteId}>
-            <textarea
-              id={returnNoteId}
-              rows={2}
-              value={returnNote}
-              onChange={(e) => setReturnNote(e.target.value)}
-              placeholder="Seat, booking ref, tips…"
-              className={ESSENTIALS_NOTES_CLASS}
-            />
-          </EssentialsField>
+          <section data-route-section="note">
+            <EssentialsField label="Return note (optional)" htmlFor={returnNoteId}>
+              <textarea
+                id={returnNoteId}
+                rows={2}
+                value={returnNote}
+                onChange={(e) => setReturnNote(e.target.value)}
+                placeholder="Seat, booking ref, tips…"
+                className={ESSENTIALS_NOTES_CLASS}
+              />
+            </EssentialsField>
+          </section>
+        ) : null}
+        </>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3.5">
-          {showOutboundArrival || showReturnArrival ? (
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+        {visibleSection === "attachments" &&
+        (showOutboundArrival || showReturnArrival) ? (
+          <section
+            data-route-section="attachments"
+            className="space-y-2.5 rounded-xl border border-border bg-surface/70 p-3.5 sm:p-4"
+          >
+            <header className="flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-primary">
+                <Paperclip className="h-3.5 w-3.5" aria-hidden />
+              </span>
+              <div>
+                <h3 className="text-sm font-semibold text-text">Attachments</h3>
+                <p className="text-xs text-text-muted">
+                  Ticket PDF or photo · optional
+                </p>
+              </div>
+            </header>
+            <div className="space-y-2.5">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1814,8 +2009,6 @@ export function RouteSheet({
               />
               <button
                 type="button"
-                aria-label="Attach ticket PDF or image"
-                title="Attach PDF or image"
                 disabled={
                   saving ||
                   uploadingAttachment ||
@@ -1825,107 +2018,113 @@ export function RouteSheet({
                 }
                 onClick={() => fileInputRef.current?.click()}
                 className={cx(
-                  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-text-secondary shadow-sm transition-colors",
-                  "hover:border-primary/30 hover:bg-primary-tint hover:text-primary",
+                  "inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-white px-3.5 text-sm font-medium text-text shadow-sm transition-colors sm:w-auto sm:justify-start",
+                  "hover:border-primary/40 hover:bg-primary-tint hover:text-primary",
                   "disabled:cursor-not-allowed disabled:opacity-50"
                 )}
               >
                 {uploadingAttachment ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
                 ) : (
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="h-4 w-4 shrink-0" aria-hidden />
                 )}
+                <span className="flex min-w-0 flex-col items-start leading-tight">
+                  <span>Add file</span>
+                  <span className="text-[11px] font-normal text-text-muted">
+                    PDF, JPG, PNG, WEBP
+                  </span>
+                </span>
               </button>
-              {(onReturnSteps ? returnAttachments : attachments).map((file) => (
-                <div
-                  key={file.id}
-                  className="inline-flex max-w-[9.5rem] items-center gap-1 rounded-lg border border-border bg-surface px-1.5 py-1"
-                >
-                  {file.kind === "pdf" ? (
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
-                  ) : (
-                    <ImageIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+
+              {(onReturnSteps ? returnAttachments : attachments).length > 0 ? (
+                <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-white">
+                  {(onReturnSteps ? returnAttachments : attachments).map(
+                    (file) => (
+                      <li
+                        key={file.id}
+                        className="flex items-center gap-3 px-3 py-2.5"
+                      >
+                        {file.kind === "image" ? (
+                          <img
+                            src={file.url}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-border"
+                          />
+                        ) : (
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-tint text-primary ring-1 ring-border">
+                            <FileText className="h-4 w-4" aria-hidden />
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate text-sm font-medium text-text hover:text-primary"
+                            title={file.name}
+                          >
+                            {file.name}
+                          </a>
+                          <p className="text-[11px] text-text-muted">
+                            {file.kind === "pdf" ? "PDF" : "Image"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${file.name}`}
+                          disabled={saving || uploadingAttachment}
+                          onClick={() => void handleRemoveAttachment(file)}
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-error-background hover:text-error disabled:opacity-50"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </li>
+                    )
                   )}
-                  <a
-                    href={file.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="truncate text-[11px] font-medium text-text hover:text-primary"
-                    title={file.name}
-                  >
-                    {file.name}
-                  </a>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${file.name}`}
-                    disabled={saving || uploadingAttachment}
-                    onClick={() => void handleRemoveAttachment(file)}
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-white hover:text-error disabled:opacity-50"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+                </ul>
+              ) : null}
+
               {attachmentError ? (
                 <p className="text-[11px] text-error">{attachmentError}</p>
               ) : null}
             </div>
-          ) : (
-            <div className="min-w-0 flex-1" />
-          )}
+          </section>
+        ) : null}
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3.5">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onClose}
+            disabled={saving || uploadingAttachment}
+          >
+            Cancel
+          </Button>
+          {exact &&
+          (exactStep === "departure" || exactStep === "arrival") &&
+          isReturn ? (
             <Button
               type="button"
-              variant="secondary"
-              onClick={onClose}
-              disabled={saving || uploadingAttachment}
+              variant="primary"
+              disabled={
+                !canContinueOutboundArrival || saving || uploadingAttachment
+              }
+              onClick={beginReturnLeg}
             >
-              Cancel
+              Continue to return
             </Button>
-            {exact && exactStep === "departure" ? (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={!canContinueDeparture || saving || uploadingAttachment}
-                onClick={() => setExactStep("arrival")}
-              >
-                Continue
-              </Button>
-            ) : exact && exactStep === "arrival" && isReturn ? (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={
-                  !canContinueOutboundArrival || saving || uploadingAttachment
-                }
-                onClick={beginReturnLeg}
-              >
-                Continue to return
-              </Button>
-            ) : exact && exactStep === "return_departure" ? (
-              <Button
-                type="button"
-                variant="primary"
-                disabled={
-                  !canContinueReturnDeparture || saving || uploadingAttachment
-                }
-                onClick={() => setExactStep("return_arrival")}
-              >
-                Continue
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="primary"
-                loading={saving}
-                disabled={!canSave || saving || uploadingAttachment}
-                onClick={() => void handleSave()}
-              >
-                {isReturn ? "Save routes" : "Save route"}
-              </Button>
-            )}
-          </div>
+          ) : (
+            <Button
+              type="button"
+              variant="primary"
+              loading={saving}
+              disabled={!canSave || saving || uploadingAttachment}
+              onClick={() => void handleSave()}
+            >
+              {isReturn && showReturnLeg ? "Save routes" : "Save route"}
+            </Button>
+          )}
+        </div>
         </div>
       </div>
     </Sheet>

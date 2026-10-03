@@ -39,6 +39,12 @@ export const PLACE_CATEGORIES = [
   "wellness",
   "neighborhood",
   "transport",
+  /** Guided / ticketed tour (city walk, museum tour, day trip). */
+  "tour",
+  /** Bookable tourist experience (boat trip, workshop, tasting, local activity). */
+  "experience",
+  /** Show / performance / entertainment booking. */
+  "show",
   "other",
 ] as const;
 
@@ -61,6 +67,9 @@ export const PLACE_CATEGORY_LABELS: Record<PlaceCategory, string> = {
   wellness: "Wellness",
   neighborhood: "Neighborhood",
   transport: "Transport",
+  tour: "Tour",
+  experience: "Experience",
+  show: "Show",
   other: "Other",
 };
 
@@ -72,22 +81,22 @@ export const LEISURE_TYPE_OPTIONS: Array<{
   {
     value: "sightseeing",
     label: "Sightseeing & culture",
-    description: "Landmarks, museums, and neighborhoods",
+    description: "Landmarks, museums, tours, and neighborhoods",
   },
   {
     value: "food",
     label: "Food & culinary",
-    description: "Cafes, markets, and local dining",
+    description: "Cafes, markets, dining, and tasting experiences",
   },
   {
     value: "nature",
     label: "Nature & outdoors",
-    description: "Parks, viewpoints, and walks",
+    description: "Parks, viewpoints, walks, and outdoor activities",
   },
   {
     value: "nightlife",
     label: "Nightlife",
-    description: "Evening entertainment and bars",
+    description: "Evening entertainment, shows, and bars",
   },
   {
     value: "shopping",
@@ -175,6 +184,13 @@ export interface PlannedPlaceSuggestion {
   priceLabel?: string;
   /** Booking / tickets / timetable URL when available. */
   link?: string;
+  /**
+   * Suggested local visit window for this place (HH:mm).
+   * Example shape only: { from: "09:00", to: "12:00" } — times must fit the place/day.
+   */
+  bestVisitTime?: { from: string; to: string };
+  /** Approximate minutes to plan for seeing this place (e.g. 180 ≈ 3 hours). */
+  durationMinutes?: number;
   /**
    * Google Maps place photo URI when resolved on the client after planTrip.
    * Optional — UI must fall back when empty/null.

@@ -1,6 +1,10 @@
 /**
  * planTrip — build TripPlannerAiRequest server-side, AI-fill missing routes +
- * places, return TripPlannerAiResponse itinerary to the client.
+ * places/activities, return TripPlannerAiResponse itinerary to the client.
+ *
+ * Place fill (fillPlacesAi) recommends sights AND bookable tourist activities
+ * (tours, experiences, shows, outdoor/wellness/local entertainment) weighted
+ * by leisureType and freeTime — not landmarks only.
  *
  * Client sends only: tripId, language?, temperatureType?
  */
@@ -45,6 +49,8 @@ import {
   mergeAiPlacesIntoItinerary,
 } from "./ai/fillPlacesAi";
 import { enrichItineraryPlaceCoordinates } from "./ai/enrichPlaceCoordinates";
+import { assignSharedItineraryOrders } from "./ai/assignSharedOrders";
+import { assignPlaceVisitTimes } from "./ai/assignPlaceVisitTimes";
 import type {
   PlanTripAiCallableRequest,
   PlanTripAiCallableResult,
@@ -121,8 +127,8 @@ export type PlanTripResponse =
  * 4. Seed existing routes only
  * 5. AI fill missing routes
  * 6. Deterministic freeTime + saved locationId refs
- * 7. AI fill places + non-flight fares (soft-fail → return routes)
- * 8. Resolve place coords: placesLocation cache → Google Places → save cache
+ * 7. AI fill places + whereToEat (mealType-aware) + non-flight fares (soft-fail → return routes)
+ * 8. Resolve place/dining coords: placesLocation cache → Google Places → save cache
  * 9. Deduct credits on success; return itinerary
  */
 export const planTrip = onCall(
@@ -239,7 +245,7 @@ export const planTrip = onCall(
 
     let itinerary = withFreeTime;
 
-    // --- Pass 2: AI places + non-flight fares ---
+    // --- Pass 2: AI places + whereToEat (mealType) + non-flight fares ---
     if (hasSlots || hasNonFlight) {
       try {
         const { system, user } = buildFillPlacesPayload(
@@ -262,6 +268,13 @@ export const planTrip = onCall(
           aiRequest.destinations
         );
         stages.push("places");
+        if (
+          itinerary.some((day) =>
+            (day.places ?? []).some((s) => (s.whereToEat?.length ?? 0) > 0)
+          )
+        ) {
+          stages.push("whereToEat");
+        }
 
         // Cache → Google Places → save (AI lat/lon are approximate).
         try {
@@ -291,6 +304,14 @@ export const planTrip = onCall(
         itinerary = withFreeTime;
       }
     }
+
+    // Shared 1,2,3… order across routes + places on each day (one timeline).
+    itinerary = assignSharedItineraryOrders(itinerary);
+    stages.push("orders");
+
+    // Ensure every place / whereToEat has a suited bestVisitTime { from, to }.
+    itinerary = assignPlaceVisitTimes(itinerary);
+    stages.push("visitTimes");
 
     // Deduct user AI credits only after a successful plan response.
     const remainingCredits = await deductCredits(uid, chargeOperation);
@@ -332,6 +353,12 @@ export const planTrip = onCall(
           n + d.places.reduce((m, s) => m + (s.places?.length ?? 0), 0),
         0
       ),
+      whereToEatCount: itinerary.reduce(
+        (n, d) =>
+          n + d.places.reduce((m, s) => m + (s.whereToEat?.length ?? 0), 0),
+        0
+      ),
+      mealType: aiRequest.trip.mealType ?? "default",
       responseJson: JSON.stringify(response),
     });
 

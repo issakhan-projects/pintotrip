@@ -5,6 +5,7 @@ import type {
   TripRoute,
 } from "@/types/trip-planner";
 import { listTripAccommodations } from "./essentialsHelpers";
+import { placesProgress } from "./tripUtils";
 import { isWeatherFresh } from "./tripWeather";
 
 export type ReadinessTone = "done" | "warn" | "progress";
@@ -65,26 +66,17 @@ function ratioScore(completed: number, total: number): number {
   return Math.round((completed / total) * 100);
 }
 
+/**
+ * Same metric as the Places step / TripStepNav — visited itinerary places.
+ * Keeps readiness in sync with the step checkmark.
+ */
 function placesScore(
   trip: TripPlannerDoc,
   locations: SavedLocation[]
 ): number {
-  const byId = new Map(locations.map((place) => [place.id, place]));
-  const saved = (trip.savedPlaceIds ?? []).filter((id) => {
-    const place = byId.get(id);
-    return !place || place.status !== "cancelled";
-  });
-  if (saved.length === 0) return 0;
-
-  const onItinerary = new Set(
-    (trip.itinerary?.days ?? [])
-      .flatMap((day) => day.places ?? [])
-      .filter((place) => !place.type || place.type === "place")
-      .map((place) => place.locationId)
-  );
-  const scheduled = saved.filter((id) => onItinerary.has(id)).length;
-  // Saved places count as a start; scheduling them on days finishes the score.
-  return Math.round(40 + 60 * (scheduled / saved.length));
+  const progress = placesProgress(trip, locations);
+  if (progress.total <= 0) return 0;
+  return progress.percent;
 }
 
 function weatherScore(trip: TripPlannerDoc): number {

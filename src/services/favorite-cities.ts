@@ -115,6 +115,14 @@ export function findFavoriteCity(
     if (resolvedId && (c.cityId === resolvedId || c.id === resolvedId)) {
       return true;
     }
+    // Match bare city slug against `{countryId}_{cityId}` doc ids.
+    if (
+      resolvedId &&
+      !resolvedId.includes("_") &&
+      (c.cityId.endsWith(`_${resolvedId}`) || c.id.endsWith(`_${resolvedId}`))
+    ) {
+      return true;
+    }
     if (c.cityId === legacyId || c.id === legacyId) return true;
     if (
       c.cityName.trim().toLowerCase() === name &&

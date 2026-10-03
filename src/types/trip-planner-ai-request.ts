@@ -17,6 +17,7 @@ import type {
 } from "./location";
 import type { LeisureType, PlaceCategory } from "./trip-plan";
 import type {
+  MealType,
   RoutePoint,
   SpendMoneyLevel,
   TripAccommodation,
@@ -81,6 +82,10 @@ export type TripPlannerAiRequestTrip = {
   leisureCustom?: string;
   /** Budget preference from trip create (low | medium | high). */
   spendMoney?: SpendMoneyLevel;
+  /** Dietary / meal preference from trip create. */
+  mealType?: MealType;
+  /** Free-text dietary note when mealType is "other". */
+  mealCustom?: string;
   /** How the trip was created (ordinary | advanced). */
   createMode?: TripCreateMode;
 };
@@ -222,6 +227,11 @@ export type TripPlannerAiResponseRoute = {
   /** Official booking / timetable URL — non-flight only when provided by AI. */
   link?: string;
   source: TripPlannerAiResponseRouteSource;
+  /**
+   * Shared day timeline position with nested places (1, 2, 3, …).
+   * Not a separate routes-only sequence.
+   */
+  order?: number;
 };
 
 /**
@@ -237,9 +247,24 @@ export type TripPlannerAiResponseFreeTime = {
   durationMinutes?: number;
 };
 
+/** Suggested local-time window to visit a place (HH:mm, 24h). */
+export type TripPlannerAiBestVisitTime = {
+  from: string;
+  to: string;
+};
+
 /** Existing saved place — reference only (do not expand the location doc). */
 export type TripPlannerAiResponseSavedPlaceRef = {
   locationId: string;
+  /** Suggested local visit window for this day (from / to as HH:mm). */
+  bestVisitTime?: TripPlannerAiBestVisitTime;
+  /** Approximate minutes to plan for this place. */
+  durationMinutes?: number;
+  /**
+   * Shared day timeline position with routes (1, 2, 3, …).
+   * Not a places-only sequence.
+   */
+  order?: number;
 };
 
 /**
@@ -261,6 +286,15 @@ export type TripPlannerAiResponseLocationPlace = {
   images: LocationImage[];
   price?: LocationPrice;
   links?: LocationLink[];
+  /** Suggested local visit window for this day (from / to as HH:mm). */
+  bestVisitTime?: TripPlannerAiBestVisitTime;
+  /** Approximate minutes to plan for this place. */
+  durationMinutes?: number;
+  /**
+   * Shared day timeline position with routes (1, 2, 3, …).
+   * Not a places-only sequence.
+   */
+  order?: number;
   confidence?: number;
   source?: LocationSource;
   ai?: { why: string; model: string };
@@ -285,6 +319,11 @@ export type TripPlannerAiResponsePlace = {
    * - Otherwise → full location place payload (no googlePhotoUrl)
    */
   places: TripPlannerAiResponseNestedPlace[];
+  /**
+   * Popular dining suggestions for this free-time window (food/cafe/market).
+   * Hard-filtered by trip.mealType — never violates dietary preference.
+   */
+  whereToEat?: TripPlannerAiResponseLocationPlace[];
 };
 
 export type TripPlannerAiResponseDay = {

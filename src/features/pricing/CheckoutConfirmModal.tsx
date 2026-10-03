@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Button, TextInput } from "@/components/ui";
 import type { BillingInterval, PlanDefinition } from "@/features/profile/plans";
+import { lockBodyScroll } from "@/lib/bodyScrollLock";
 import { validatePromoCodeOnServer } from "@/services/promo-codes";
 import {
   PROMO_ERROR_MESSAGES,
@@ -118,12 +119,11 @@ export function CheckoutConfirmModal({
     }
 
     const armId = window.setTimeout(() => setBackdropArmed(true), 120);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const unlock = lockBodyScroll();
 
     return () => {
       window.clearTimeout(armId);
-      document.body.style.overflow = previous;
+      unlock();
     };
   }, [open]);
 

@@ -23,6 +23,7 @@ import {
   type TripRouteTransport,
 } from "./types";
 import type {
+  MealType,
   SpendMoneyLevel,
   TemperatureType,
   TripCreateMode,
@@ -68,6 +69,8 @@ type TripRaw = {
   leisureType?: string;
   leisureCustom?: string;
   spendMoney?: string;
+  mealType?: string;
+  mealCustom?: string;
   createMode?: string;
   currency?: { code?: string };
   savedPlaceIds?: string[];
@@ -151,6 +154,22 @@ function isLeisureType(value: unknown): value is LeisureType {
 
 function isSpendMoneyLevel(value: unknown): value is SpendMoneyLevel {
   return value === "low" || value === "medium" || value === "high";
+}
+
+const MEAL_TYPES = [
+  "default",
+  "halal",
+  "vegetarian",
+  "kosher",
+  "other",
+] as const;
+const MEAL_CUSTOM_MAX_LENGTH = 80;
+
+function isMealType(value: unknown): value is MealType {
+  return (
+    typeof value === "string" &&
+    (MEAL_TYPES as readonly string[]).includes(value)
+  );
 }
 
 function parseCreateMode(value: unknown): TripCreateMode {
@@ -582,6 +601,142 @@ export type LoadedTripPlannerAi = {
   createMode: "ordinary" | "advanced";
 };
 
+function locationLatLon(data: Record<string, unknown>): {
+  lat: number;
+  lon: number;
+} | null {
+  const lat =
+    typeof data.lat === "number"
+      ? data.lat
+      : typeof (data.location as { lat?: number } | undefined)?.lat === "number"
+        ? (data.location as { lat: number }).lat
+        : null;
+  const lon =
+    typeof data.lon === "number"
+      ? data.lon
+      : typeof (data.location as { lon?: number } | undefined)?.lon === "number"
+        ? (data.location as { lon: number }).lon
+        : null;
+  if (lat == null || lon == null) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+function slimLocationDoc(
+  id: string,
+  data: Record<string, unknown>
+): { cityId: string; place: TripPlannerAiSavedPlace } | null {
+  if (data.deleted === true) return null;
+  // Planned only — visited/cancelled are not candidates for AI fill.
+  if (data.status && data.status !== "planned") return null;
+  const city =
+    data.city && typeof data.city === "object"
+      ? (data.city as { id?: string; name?: string })
+      : {};
+  const cityId = normalizeCityId(city.id);
+  if (!cityId) return null;
+  const title = typeof data.title === "string" ? data.title.trim() : "";
+  if (!title) return null;
+  const coords = locationLatLon(data);
+  if (!coords) return null;
+  return {
+    cityId,
+    place: {
+      id,
+      title,
+      description:
+        typeof data.description === "string" ? data.description : "",
+      ...(typeof data.note === "string" && data.note.trim()
+        ? { note: data.note.trim() }
+        : {}),
+      lat: coords.lat,
+      lon: coords.lon,
+      ...(typeof data.category === "string"
+        ? { category: data.category as TripPlannerAiSavedPlace["category"] }
+        : {}),
+    },
+  };
+}
+
+/**
+ * Group planned user locations for trip destinations.
+ * Uses savedPlaceIds when present, and always queries by destination city.id
+ * so matching locations are included even when the trip list was never linked.
+ */
+async function loadSavedPlacesByCity(
+  uid: string,
+  trip: TripRaw
+): Promise<Map<string, TripPlannerAiSavedPlace[]>> {
+  const savedByCity = new Map<string, TripPlannerAiSavedPlace[]>();
+  const seen = new Set<string>();
+
+  function ingest(
+    id: string,
+    data: Record<string, unknown>,
+    /** When set, only keep places for these city ids. */
+    allowedCityIds?: Set<string>
+  ): void {
+    if (seen.has(id)) return;
+    const slim = slimLocationDoc(id, data);
+    if (!slim) return;
+    if (allowedCityIds && !allowedCityIds.has(slim.cityId)) return;
+    seen.add(id);
+    const list = savedByCity.get(slim.cityId) ?? [];
+    list.push(slim.place);
+    savedByCity.set(slim.cityId, list);
+  }
+
+  const destCityIds = [
+    ...new Set(
+      (trip.destinations ?? [])
+        .map((d) => normalizeCityId(d.cityId))
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const destCitySet = new Set(destCityIds);
+
+  const savedIds = Array.isArray(trip.savedPlaceIds)
+    ? trip.savedPlaceIds.filter(
+        (id): id is string => typeof id === "string" && Boolean(id.trim())
+      )
+    : [];
+
+  if (savedIds.length > 0) {
+    const refs = savedIds.map((id) =>
+      adminDb().doc(`users/${uid}/locations/${id}`)
+    );
+    for (let i = 0; i < refs.length; i += 100) {
+      const chunk = await adminDb().getAll(...refs.slice(i, i + 100));
+      for (const locSnap of chunk) {
+        if (!locSnap.exists) continue;
+        ingest(locSnap.id, (locSnap.data() ?? {}) as Record<string, unknown>);
+      }
+    }
+  }
+
+  // Fill gaps: planned locations whose city.id matches a destination.
+  if (destCityIds.length > 0) {
+    const col = adminDb().collection(`users/${uid}/locations`);
+    for (let i = 0; i < destCityIds.length; i += 30) {
+      const chunkIds = destCityIds.slice(i, i + 30);
+      try {
+        const snap = await col.where("city.id", "in", chunkIds).get();
+        for (const doc of snap.docs) {
+          ingest(doc.id, (doc.data() ?? {}) as Record<string, unknown>, destCitySet);
+        }
+      } catch (err) {
+        logger.warn("loadSavedPlacesByCity city.id query failed", {
+          uid,
+          chunkIds,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  return savedByCity;
+}
+
 /**
  * Load trip ownership + build TripPlannerAiRequest with weather.
  */
@@ -636,6 +791,16 @@ export async function loadAndBuildTripPlannerAiRequest(params: {
     ? trip.spendMoney
     : "medium";
 
+  const mealType: MealType = isMealType(trip.mealType)
+    ? trip.mealType
+    : "default";
+  const mealCustomRaw =
+    typeof trip.mealCustom === "string" ? trip.mealCustom.trim() : "";
+  const mealCustom =
+    mealType === "other" && mealCustomRaw
+      ? mealCustomRaw.slice(0, MEAL_CUSTOM_MAX_LENGTH)
+      : undefined;
+
   const createMode = parseCreateMode(trip.createMode);
 
   const currencyRaw =
@@ -660,66 +825,10 @@ export async function loadAndBuildTripPlannerAiRequest(params: {
     if (parsed) routes.push(parsed);
   }
 
-  // Saved places (planned only), grouped by cityId
-  const savedIds = Array.isArray(trip.savedPlaceIds)
-    ? trip.savedPlaceIds.filter(
-        (id): id is string => typeof id === "string" && Boolean(id.trim())
-      )
-    : [];
-  const savedByCity = new Map<string, TripPlannerAiSavedPlace[]>();
-  if (savedIds.length > 0) {
-    const refs = savedIds.map((id) =>
-      adminDb().doc(`users/${uid}/locations/${id}`)
-    );
-    for (let i = 0; i < refs.length; i += 100) {
-      const chunk = await adminDb().getAll(...refs.slice(i, i + 100));
-      for (const locSnap of chunk) {
-        if (!locSnap.exists) continue;
-        const data = locSnap.data() ?? {};
-        if (data.status && data.status !== "planned") continue;
-        const city =
-          data.city && typeof data.city === "object"
-            ? (data.city as { id?: string; name?: string })
-            : {};
-        const cityId = normalizeCityId(city.id);
-        if (!cityId) continue;
-        const title =
-          typeof data.title === "string" ? data.title.trim() : "";
-        if (!title) continue;
-        const lat =
-          typeof data.lat === "number"
-            ? data.lat
-            : typeof (data.location as { lat?: number } | undefined)?.lat ===
-                "number"
-              ? (data.location as { lat: number }).lat
-              : null;
-        const lon =
-          typeof data.lon === "number"
-            ? data.lon
-            : typeof (data.location as { lon?: number } | undefined)?.lon ===
-                "number"
-              ? (data.location as { lon: number }).lon
-              : null;
-        if (lat == null || lon == null) continue;
-        const list = savedByCity.get(cityId) ?? [];
-        list.push({
-          id: locSnap.id,
-          title,
-          description:
-            typeof data.description === "string" ? data.description : "",
-          ...(typeof data.note === "string" && data.note.trim()
-            ? { note: data.note.trim() }
-            : {}),
-          lat,
-          lon,
-          ...(typeof data.category === "string"
-            ? { category: data.category as TripPlannerAiSavedPlace["category"] }
-            : {}),
-        });
-        savedByCity.set(cityId, list);
-      }
-    }
-  }
+  // Saved places (planned only), grouped by cityId.
+  // Prefer trip.savedPlaceIds, and also load by destination city.id so places
+  // that share a cityId still appear when savedPlaceIds is empty/stale.
+  const savedByCity = await loadSavedPlacesByCity(uid, trip);
 
   const weatherByDate = await loadWeatherByDate({
     destinations,
@@ -749,6 +858,8 @@ export async function loadAndBuildTripPlannerAiRequest(params: {
       ...(leisureType ? { leisureType } : {}),
       ...(leisureCustom ? { leisureCustom } : {}),
       spendMoney,
+      mealType,
+      ...(mealCustom ? { mealCustom } : {}),
       createMode,
     },
     destinations: buildDestinations({

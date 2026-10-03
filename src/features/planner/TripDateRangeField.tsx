@@ -4,13 +4,14 @@ import { useState } from "react";
 import { CalendarDays, ChevronDown } from "lucide-react";
 import {
   DateRangePicker,
+  type BusyDateRange,
   type DateRangeValue,
 } from "@/components/ui";
 import { cx } from "@/lib/utils";
 import { Timestamp } from "firebase/firestore";
 import { tripDayCount } from "@/services/trip-planner";
 
-export type { DateRangeValue };
+export type { BusyDateRange, DateRangeValue };
 
 function formatCompactDate(date: Date): string {
   return new Intl.DateTimeFormat("en-GB", {
@@ -50,6 +51,8 @@ interface TripDateRangeFieldProps {
   minDate?: Date | null;
   /** Inclusive max days between start and end. */
   maxSpanDays?: number;
+  /** Existing trips shown on the calendar; those days can’t be selected. */
+  busyRanges?: BusyDateRange[];
 }
 
 /**
@@ -64,6 +67,7 @@ export function TripDateRangeField({
   className,
   minDate,
   maxSpanDays,
+  busyRanges,
 }: TripDateRangeFieldProps) {
   const [open, setOpen] = useState(defaultOpen);
   const daysLabel = dayCountLabel(value);
@@ -114,6 +118,7 @@ export function TripDateRangeField({
             disabled={disabled}
             minDate={minDate}
             maxSpanDays={maxSpanDays}
+            busyRanges={busyRanges}
             onCancel={() => setOpen(false)}
             onApply={(next) => {
               onChange(next);

@@ -35,13 +35,23 @@ import { useTrips } from "@/hooks/useTrips";
 import type { LocationStatus } from "@/types/location";
 import {
   centerMapOnCoords,
-  resolveEnglishPlaceIds,
+  resolveCitySelectionFromCoords,
   reverseGeocode,
   type MapInstance,
   type MapMarkerInput,
 } from "@/lib/maps";
+import { isAsciiId } from "@/lib/utils";
 
 const FAVORITE_CITY_MARKER_PREFIX = "fav-city:";
+
+type CityInfoSelection = {
+  cityName: string;
+  countryName: string;
+  lat: number;
+  lon: number;
+  cityId?: string;
+  countryId?: string;
+};
 
 interface AppShellProps {
   user: User;
@@ -91,12 +101,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const [aroundMeResolving, setAroundMeResolving] = useState(false);
   const [preview, setPreview] = useState<SavedLocation | null>(null);
   const [detail, setDetail] = useState<SavedLocation | null>(null);
-  const [cityInfo, setCityInfo] = useState<{
-    cityName: string;
-    countryName: string;
-    lat: number;
-    lon: number;
-  } | null>(null);
+  const [cityInfo, setCityInfo] = useState<CityInfoSelection | null>(null);
   const [pickMode, setPickMode] = useState(false);
   const [cityPickMode, setCityPickMode] = useState(false);
   const [cityResolving, setCityResolving] = useState(false);
@@ -224,6 +229,15 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             countryName: fav.country,
             lat: fav.lat,
             lon: fav.lon,
+            // Favorite doc id is `{countryId}_{cityId}` (e.g. tr_istanbul).
+            ...(isAsciiId(fav.cityId) && fav.cityId.includes("_")
+              ? {
+                  cityId: fav.cityId.slice(fav.cityId.indexOf("_") + 1),
+                  countryId: fav.cityId.slice(0, fav.cityId.indexOf("_")),
+                }
+              : isAsciiId(fav.cityId)
+                ? { cityId: fav.cityId }
+                : {}),
           });
         }
         return;
@@ -245,20 +259,12 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       ? "pick-city"
       : "browse";
 
-  const openCityInfo = useCallback(
-    (city: {
-      cityName: string;
-      countryName: string;
-      lat: number;
-      lon: number;
-    }) => {
-      setPreview(null);
-      setDetail(null);
-      setCityPickMode(false);
-      setCityInfo({ ...city });
-    },
-    []
-  );
+  const openCityInfo = useCallback((city: CityInfoSelection) => {
+    setPreview(null);
+    setDetail(null);
+    setCityPickMode(false);
+    setCityInfo({ ...city });
+  }, []);
 
   const handleMapClick = useCallback(
     async (coords: { lat: number; lng: number }) => {
@@ -272,29 +278,39 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       if (aroundMePickMode) {
         setAroundMeResolving(true);
         try {
-          const [place, englishIds] = await Promise.all([
-            reverseGeocode(coords.lat, coords.lng, { language: "en" }),
-            resolveEnglishPlaceIds(coords.lat, coords.lng),
-          ]);
-          const cityName =
-            englishIds?.cityNameEn || place?.city || undefined;
-          const countryName =
-            englishIds?.countryNameEn || place?.country || undefined;
-          const label =
-            [cityName, countryName].filter(Boolean).join(", ") ||
-            t("app.unknownCity");
-          setAroundMeOrigin({
-            lat: place?.lat ?? coords.lat,
-            lon: place?.lon ?? coords.lng,
-            label,
-            source: "map",
-            ...(englishIds?.cityId ? { cityId: englishIds.cityId } : {}),
-            ...(englishIds?.countryId
-              ? { countryId: englishIds.countryId }
-              : {}),
-            ...(cityName ? { cityName } : {}),
-            ...(countryName ? { countryName } : {}),
-          });
+          const selection = await resolveCitySelectionFromCoords(
+            coords.lat,
+            coords.lng
+          );
+          if (!selection) {
+            const place = await reverseGeocode(coords.lat, coords.lng, {
+              language: "en",
+            });
+            const label =
+              [place?.city, place?.country].filter(Boolean).join(", ") ||
+              t("app.unknownCity");
+            setAroundMeOrigin({
+              lat: place?.lat ?? coords.lat,
+              lon: place?.lon ?? coords.lng,
+              label,
+              source: "map",
+              ...(place?.city ? { cityName: place.city } : {}),
+              ...(place?.country ? { countryName: place.country } : {}),
+            });
+          } else {
+            setAroundMeOrigin({
+              lat: selection.lat,
+              lon: selection.lon,
+              label: [selection.cityName, selection.countryName]
+                .filter(Boolean)
+                .join(", "),
+              source: "map",
+              cityId: selection.cityId,
+              countryId: selection.countryId,
+              cityName: selection.cityName,
+              countryName: selection.countryName,
+            });
+          }
           setAroundMePickMode(false);
           setAroundMeOpen(true);
         } finally {
@@ -307,15 +323,18 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
 
       setCityResolving(true);
       try {
-        const place = await reverseGeocode(coords.lat, coords.lng);
-        if (!place?.city && !place?.country) {
-          return;
-        }
+        const selection = await resolveCitySelectionFromCoords(
+          coords.lat,
+          coords.lng
+        );
+        if (!selection) return;
         openCityInfo({
-          cityName: place.city || t("app.unknownCity"),
-          countryName: place.country || t("app.unknownCountry"),
-          lat: place.lat,
-          lon: place.lon,
+          cityName: selection.cityName || t("app.unknownCity"),
+          countryName: selection.countryName || t("app.unknownCountry"),
+          lat: selection.lat,
+          lon: selection.lon,
+          cityId: selection.cityId,
+          countryId: selection.countryId,
         });
       } finally {
         setCityResolving(false);
@@ -326,12 +345,13 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
 
   return (
     <main className="relative flex min-h-0 flex-1 flex-col bg-background">
-      {/* Map always mounted underneath for continuity */}
+      {/* Map always mounted underneath for continuity.
+          On mobile, stop above BottomNav so controls/legend stay visible. */}
       <div
         className={
           showMapSurface
-            ? "absolute inset-0"
-            : "pointer-events-none absolute inset-0 opacity-0"
+            ? "absolute inset-0 max-sm:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
+            : "pointer-events-none absolute inset-0 opacity-0 max-sm:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
         }
         aria-hidden={!showMapSurface}
       >
@@ -811,6 +831,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             ? isFavorite(cityInfo.cityName, cityInfo.countryName, {
                 lat: cityInfo.lat,
                 lon: cityInfo.lon,
+                cityId: cityInfo.cityId,
               })
             : false
         }
@@ -822,6 +843,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
                   country: cityInfo.countryName,
                   lat: cityInfo.lat,
                   lon: cityInfo.lon,
+                  ...(cityInfo.cityId ? { cityId: cityInfo.cityId } : {}),
                 });
               }
             : undefined

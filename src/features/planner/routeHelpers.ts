@@ -203,6 +203,71 @@ export function formatRouteDuration(
   return approximate ? `~${body}` : body;
 }
 
+/** Calendar Y/M/D (+ optional clock) in the route’s local wall time. */
+export function routeWallParts(
+  iso?: string,
+  timeZone?: string
+): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} | null {
+  if (!iso?.trim()) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const zone = timeZone?.trim();
+  if (zone) {
+    try {
+      return getZonedParts(date, zone);
+    } catch {
+      // Invalid IANA id — fall through.
+    }
+  }
+
+  const match = iso
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (match) {
+    return {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      hour: Number(match[4]),
+      minute: Number(match[5]),
+    };
+  }
+
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+    hour: date.getHours(),
+    minute: date.getMinutes(),
+  };
+}
+
+function wallPartsToDate(
+  parts: {
+    year: number;
+    month: number;
+    day: number;
+    hour?: number;
+    minute?: number;
+  },
+  dateOnly: boolean
+): Date {
+  return new Date(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    dateOnly ? 12 : (parts.hour ?? 12),
+    dateOnly ? 0 : (parts.minute ?? 0)
+  );
+}
+
 /**
  * Format a route instant for display.
  * Prefers the stored IANA timezone (city local wall time); otherwise keeps the
@@ -233,36 +298,60 @@ export function formatRouteWhen(
         hour12: false,
       };
 
-  const zone = timeZone?.trim();
-  if (zone) {
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        ...options,
-        timeZone: zone,
-      }).format(date);
-    } catch {
-      // Invalid IANA id — fall through.
-    }
-  }
-
-  // Keep the offset ISO wall time (e.g. 10:00 in +05:00) instead of browser TZ.
-  const match = iso
-    .trim()
-    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (match) {
-    const wall = new Date(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3]),
-      dateOnly ? 12 : Number(match[4]),
-      dateOnly ? 0 : Number(match[5])
+  const parts = routeWallParts(iso, timeZone);
+  if (parts) {
+    return new Intl.DateTimeFormat(undefined, options).format(
+      wallPartsToDate(parts, dateOnly)
     );
-    if (!Number.isNaN(wall.getTime())) {
-      return new Intl.DateTimeFormat(undefined, options).format(wall);
-    }
   }
 
   return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+/** Clock only (`19:40`). Null when time is unknown / date-only. */
+export function formatRouteClock(
+  iso?: string,
+  timeZone?: string,
+  timeKnown?: boolean
+): string | null {
+  if (!iso?.trim() || timeKnown === false) return null;
+  const parts = routeWallParts(iso, timeZone);
+  if (!parts) return null;
+  return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
+}
+
+/** Header date like `Mon, 12 Oct 2026`. */
+export function formatRouteDateLabel(
+  iso?: string,
+  timeZone?: string
+): string | null {
+  const parts = routeWallParts(iso, timeZone);
+  if (!parts) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(wallPartsToDate(parts, true));
+}
+
+/**
+ * Arrival calendar day minus departure calendar day in each leg’s local wall
+ * time (e.g. overnight flight → `1`).
+ */
+export function routeArrivalDayOffset(
+  departureIso?: string,
+  departureTz?: string,
+  arrivalIso?: string,
+  arrivalTz?: string
+): number | null {
+  const from = routeWallParts(departureIso, departureTz);
+  const to = routeWallParts(arrivalIso, arrivalTz);
+  if (!from || !to) return null;
+  const fromUtc = Date.UTC(from.year, from.month - 1, from.day);
+  const toUtc = Date.UTC(to.year, to.month - 1, to.day);
+  const days = Math.round((toUtc - fromUtc) / 86_400_000);
+  return days === 0 ? null : days;
 }
 
 export function formatRoutePointLabel(point: RoutePoint): string {

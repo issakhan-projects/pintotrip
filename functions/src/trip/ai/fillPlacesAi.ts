@@ -16,16 +16,23 @@ import type {
 const PLACE_CATEGORY_SET = new Set<string>(PLACE_CATEGORIES);
 
 const LEISURE_HINT: Record<LeisureType, string> = {
-  sightseeing: "landmarks, museums, historic districts, viewpoints",
-  food: "restaurants, cafés, markets, food halls",
-  nature: "parks, trails, beaches, outdoor scenery",
-  nightlife: "evening venues, shows, night districts (lighter daytime)",
-  shopping: "markets, malls, artisan streets",
-  relaxation: "1–2 gentle places — parks, cafés, calm viewpoints",
-  adventure: "active outdoor / signature experiences; keep days doable",
-  family: "kid-friendly, shorter blocks, rest-friendly",
-  mixed: "balanced mix of culture, food, and local highlights",
-  custom: "prioritize the user's named activities when available locally",
+  sightseeing:
+    "landmarks, museums, guided cultural tours, historic districts, viewpoints, performances",
+  food: "restaurants, cafés, markets, food halls, tasting / cooking experiences",
+  nature:
+    "parks, trails, beaches, boat/water outings, outdoor scenery and nature tours",
+  nightlife:
+    "evening venues, shows/performances, night districts (lighter daytime)",
+  shopping: "markets, malls, artisan streets, craft workshops",
+  relaxation:
+    "1–2 gentle picks — parks, cafés, spas/wellness, calm viewpoints, soft evening shows",
+  adventure:
+    "active outdoor experiences, adventure tours, signature activities; keep days doable",
+  family:
+    "kid-friendly tours/experiences, shorter blocks, rest-friendly shows or parks",
+  mixed:
+    "balanced mix of places, tours, local experiences, food, and culture",
+  custom: "prioritize the user's named activities/experiences when available locally",
   umrah: "worship first (Haram / Nabawi / ziyarat); avoid tourist filler",
 };
 
@@ -43,13 +50,24 @@ function formatLeisurePreference(
   return `Leisure preference (hint): ${leisureType} — ${LEISURE_HINT[leisureType]}`;
 }
 
-export const FILL_PLACES_SYSTEM_PROMPT = `You fill free-time windows with concrete places AND enrich non-flight routes with fare + booking link.
+export const FILL_PLACES_SYSTEM_PROMPT = `You fill free-time windows with concrete places AND bookable tourist activities/experiences, popular where-to-eat dining, AND enrich non-flight routes with fare + booking link.
 
-PART A — PLACES:
+PART A — PLACES + ACTIVITIES / EXPERIENCES:
 1. Work ONLY on the provided free-time slots (day + cityId + freeTime).
-2. PRESERVE every existing {"locationId":"..."} entry — list them first unchanged.
-3. Then ADD new places only when free time remains after saved places.
-4. New places MUST use the locations subcollection shape (no googlePhotoUrl):
+2. PRESERVE every existing {"locationId":"..."} entry in that slot — list them first unchanged.
+3. Then ADD new recommendations only when free time remains after saved places.
+   Mix static sights WITH real things a traveler can DO:
+   - tours / guided experiences (walking tours, museum tours, day trips)
+   - boat / water experiences (cruises, ferries-as-sightseeing, kayaking)
+   - cultural experiences (workshops, ceremonies, heritage visits)
+   - shows and performances (theater, concerts, light shows, dinner shows)
+   - outdoor activities (hikes, bike rides, parks with an activity angle)
+   - wellness experiences (spa, hammam, thermal baths)
+   - local experiences (cooking class, craft workshop, neighborhood walk with a host)
+   - entertainment and short paid activities that fit the remaining freeTime
+   Prefer named operators / venues / ticketed products over vague labels
+   ("Bosphorus sunset cruise" not "do a boat trip").
+4. New entries MUST use the locations subcollection shape (no googlePhotoUrl):
    {
      "id": "ascii-slug-id",
      "title": "",
@@ -57,48 +75,95 @@ PART A — PLACES:
      "note": "",
      "cityId": "",
      "status": "planned",
-     "category": "attraction|landmark|food|cafe|museum|park|viewpoint|market|nature|wellness|shopping|nightlife|beach|adventure|neighborhood|transport|other",
+     "category": "attraction|landmark|food|cafe|museum|park|viewpoint|market|nature|wellness|shopping|nightlife|beach|adventure|neighborhood|transport|tour|experience|show|other",
      "location": { "lat": 0, "lon": 0 },
      "city": { "id": "ascii-city-id", "name": "" },
      "country": { "id": "iso-alpha2-lowercase", "name": "" },
      "images": [],
      "price": { "amount": 0, "currency": "USD", "label": "Free" },
      "links": [{ "url": "https://...", "label": "Tickets" }],
+     "bestVisitTime": { "from": "10:00", "to": "13:00" },
+     "durationMinutes": 180,
      "confidence": 0.7,
      "source": { "type": "manual" },
      "ai": { "why": "", "model": "fillPlaces" }
    }
+4a. Category guidance for activities:
+    - tour → guided / ticketed tours and day trips
+    - experience → bookable tourist experiences (boat trips, workshops, tastings, local activities)
+    - show → performances, concerts, theaters, spectacle shows
+    - adventure / wellness / nightlife → keep using those when they fit better
+4b. EVERY place (saved locationId refs AND new places) MUST include:
+    - bestVisitTime: { from: "HH:mm", to: "HH:mm" } — suggested local-time window
+      that day (24h clock). Choose realistic times for the place/activity type, freeTime
+      window, weather/heat, and opening / departure patterns. Do NOT copy example times
+      (e.g. do not default everything to 09:00–12:00). from must be before to.
+    - durationMinutes: approximate minutes to plan (integer).
+      Tours/cruises/shows MUST use realistic session length (often 60–240).
+      Use a fit duration for the stop (museum vs viewpoint vs 90-min boat tour),
+      typically 45–240 for most stops; longer only when the activity truly needs it.
 5. cityId / city.id / country.id must be English ASCII (never localized script).
-6. Do NOT invent locationId values. Only echo ids from the slot's existing places.
-7. Do NOT schedule places in stopType home cities.
-8. Respect freeTime.durationMinutes (and start/end when present). Rough guide:
-   - under 90 min → 0–1 new places
-   - 90–240 → 1–2
-   - 240–480 → 2–3
-   - 480+ → 2–4
+6. locationId values must come from destinations[].savedPlaces[].id or from the slot's existing places. Never invent locationIds.
+7. NO DUPLICATES ACROSS DAYS: each locationId, each new place id, and each place title (same city) may appear on at most ONE day in the whole itinerary — across BOTH places[] and whereToEat[]. Multi-day stays MUST get different picks each day.
+8. Do NOT schedule places or whereToEat in stopType home cities.
+9. Respect freeTime.durationMinutes (and start/end when present). Rough guide for places[]:
+   - under 90 min → 0–1 new items (short paid activity / viewpoint OK if it fits)
+   - 90–240 → 1–2 (prefer at least one doable activity/experience when leisure fits)
+   - 240–480 → 2–3 (mix sights + 1 tour/experience when the city offers them)
+   - 480+ → 2–4 (include 1–2 activities/experiences, not only landmarks)
    Count saved locationIds toward the day's load — do not overfill.
+   Only recommend activities whose durationMinutes fit inside remaining freeTime
+   after saved places (leave buffer for travel between stops).
    Arrival half-days (start after landing) and departure half-days (end before
-   airport) MUST still get places when durationMinutes ≥ 90 — do not leave
-   those slots empty.
-9. leisureType is a preference hint, not a hard filter.
-10. Respect spendMoney (budget): low = free/cheap options; medium = typical tourist prices; high = premium experiences OK. Prefer matching place price when known.
-11. Prefer real named places. Include approximate lat/lon (server verifies against Google Maps).
-12. ALWAYS include price + links on every NEW place when known (do not leave them empty out of habit):
-    - price: typical adult ticket / entry / service cost. Use amount + ISO currency
-      (prefer trip currency) and label like "≈ 45 AED", "from 25 USD", or "Free".
-      Free parks/viewpoints → amount 0, label "Free". Paid museums/attractions/tours →
-      realistic entry/ticket estimate. Food/cafe → typical meal/person when useful.
-    - links: https URLs only — official site, ticket/booking page, or timetable.
-      Label each link ("Tickets", "Book", "Official site", "Reserve"). Prefer the
-      official booking/tickets URL when the place sells entry. Omit a link only when
-      no reliable https URL is known; still include price when the cost is known.
+   airport) MUST still get recommendations when durationMinutes ≥ 90 — do not leave
+   those slots empty; prefer shorter experiences that fit the half-day.
+10. leisureType WEIGHTS what you pick (preference, not a hard filter):
+    - Prefer activities/experiences that match leisureType first
+      (e.g. adventure → outdoor/active; nightlife → shows/evening;
+      relaxation → wellness/soft experiences; sightseeing → cultural tours;
+      custom → leisureCustom activities when available locally).
+    - You MAY still add a destination-defining experience outside leisureType
+      when it is characteristic of the city and fits time/budget.
+    - Never fill a day with only generic landmarks when strong bookable
+      experiences exist that match leisureType and freeTime.
+11. Respect spendMoney (budget): low = free/cheap options and low-cost activities;
+    medium = typical tourist prices; high = premium experiences OK.
+    Prefer matching place/activity price when known.
+12. Prefer real named places AND real named tours/experiences/shows.
+    Include approximate lat/lon for the venue or usual meeting point
+    (server verifies against Google Maps).
+13. ALWAYS include price + links on every NEW place / whereToEat when known:
+    - price: typical adult ticket / entry / activity / meal-per-person cost.
+      Use amount + ISO currency (prefer trip currency) and label like
+      "≈ 45 AED", "from 25 USD", or "Free".
+    - links: https URLs only — official site, tickets, booking, or operator page.
 
-PART B — NON-FLIGHT ROUTES (price + link):
-13. For each route in the input with transport NOT "flight", return fare + official booking/timetable URL when known.
-14. NEVER add priceAmount / priceCurrency / priceLabel / link for transport "flight".
-15. Use approximate one-way adult fare. Prefer trip currency when converting. priceLabel like "≈ 45 USD" or "from 12 EUR".
-16. link must be https official operator / timetable / booking page. Omit if not reliable.
-17. Identify each route by day + routeIndex (0-based index in that day's routes array).
+PART B — WHERE TO EAT (popular dining, mealType HARD FILTER):
+14. For EVERY free-time slot with durationMinutes ≥ 90, also fill whereToEat[] with popular local restaurants / cafés / food halls the traveler should try.
+15. whereToEat entries use the SAME location shape as new places, but:
+    - category MUST be food | cafe | market
+    - ai.model MUST be "fillWhereToEat"
+    - Prefer well-known / locally popular spots over obscure picks
+    - Suggest realistic meal windows (breakfast / lunch / dinner) inside freeTime
+16. whereToEat count guide (separate from places[]):
+   - under 90 min → 0
+   - 90–240 → 1
+   - 240–480 → 1–2
+   - 480+ → 2–3
+17. mealType is a HARD dietary filter for whereToEat AND any food/cafe/market in places[]:
+    - default: recommend popular local food freely
+    - halal: ONLY recommend halal / clearly halal-friendly dining. NEVER recommend pork, bacon, ham, lard, non-halal meat, or alcohol-centric bars as the meal. If a famous local dish is pork-based (e.g. bacon, char siu, jamón), recommend a popular HALAL alternative instead — popularity NEVER overrides diet.
+    - vegetarian: ONLY vegetarian-friendly venues/dishes. NEVER recommend meat or fish as the focus.
+    - kosher: ONLY kosher-friendly dining. NEVER recommend pork, shellfish, or non-kosher meat.
+    - other + mealCustom: strictly follow the stated diet; never recommend violating dishes even if very popular in the country.
+18. Do not duplicate the same venue across places[] and whereToEat[] on the same day (or other days).
+
+PART C — NON-FLIGHT ROUTES (price + link):
+19. For each route in the input with transport NOT "flight", return fare + official booking/timetable URL when known.
+20. NEVER add priceAmount / priceCurrency / priceLabel / link for transport "flight".
+21. Use approximate one-way adult fare. Prefer trip currency when converting. priceLabel like "≈ 45 USD" or "from 12 EUR".
+22. link must be https official operator / timetable / booking page. Omit if not reliable.
+23. Identify each route by day + routeIndex (0-based index in that day's routes array).
 
 OUTPUT SCHEMA:
 {
@@ -110,7 +175,11 @@ OUTPUT SCHEMA:
         {
           "cityId": "",
           "places": [
-            { "locationId": "saved-id" },
+            {
+              "locationId": "saved-id",
+              "bestVisitTime": { "from": "10:00", "to": "12:30" },
+              "durationMinutes": 150
+            },
             {
               "id": "new-slug",
               "title": "",
@@ -124,9 +193,32 @@ OUTPUT SCHEMA:
               "images": [],
               "price": { "amount": 45, "currency": "AED", "label": "≈ 45 AED" },
               "links": [{ "url": "https://example.com/tickets", "label": "Tickets" }],
+              "bestVisitTime": { "from": "14:00", "to": "17:00" },
+              "durationMinutes": 180,
               "ai": { "why": "", "model": "fillPlaces" },
               "source": { "type": "manual" },
               "confidence": 0.7
+            }
+          ],
+          "whereToEat": [
+            {
+              "id": "popular-restaurant-slug",
+              "title": "",
+              "description": "",
+              "cityId": "",
+              "status": "planned",
+              "category": "food",
+              "location": { "lat": 0, "lon": 0 },
+              "city": { "id": "", "name": "" },
+              "country": { "id": "", "name": "" },
+              "images": [],
+              "price": { "amount": 25, "currency": "USD", "label": "≈ 25 USD / person" },
+              "links": [{ "url": "https://example.com", "label": "Official site" }],
+              "bestVisitTime": { "from": "12:30", "to": "13:30" },
+              "durationMinutes": 60,
+              "ai": { "why": "Popular local spot matching mealType", "model": "fillWhereToEat" },
+              "source": { "type": "manual" },
+              "confidence": 0.75
             }
           ]
         }
@@ -145,7 +237,7 @@ OUTPUT SCHEMA:
   ]
 }
 
-Return strict JSON only. Include routes[] only for non-flight legs that need price/link. Every new place should include price and links when available.`;
+Return strict JSON only. Include routes[] only for non-flight legs that need price/link. Every new place / whereToEat should include price and links when available.`;
 
 const SPEND_MONEY_HINT: Record<"low" | "medium" | "high", string> = {
   low: "budget — prefer free/cheap places and lower-cost transport options",
@@ -153,12 +245,30 @@ const SPEND_MONEY_HINT: Record<"low" | "medium" | "high", string> = {
   high: "flexible/premium — higher-end experiences OK when they fit the day",
 };
 
+const MEAL_TYPE_HINT: Record<
+  "default" | "halal" | "vegetarian" | "kosher" | "other",
+  string
+> = {
+  default: "no dietary filter — recommend popular local food freely",
+  halal:
+    "HARD FILTER: only halal / halal-friendly dining; NEVER pork, bacon, ham, lard, non-halal meat, or alcohol-centric bars — popularity does not override",
+  vegetarian:
+    "HARD FILTER: only vegetarian-friendly dining; NEVER meat or fish as the focus",
+  kosher:
+    "HARD FILTER: only kosher-friendly dining; NEVER pork, shellfish, or non-kosher meat",
+  other: "HARD FILTER: strictly match mealCustom — never recommend violating dishes",
+};
+
+const FOOD_PLACE_CATEGORIES = new Set<PlaceCategory>(["food", "cafe", "market"]);
+
 export function buildFillPlacesUserPrompt(input: {
   language?: string;
   leisureType?: LeisureType;
   leisureCustom?: string;
   currency?: string;
   spendMoney?: "low" | "medium" | "high";
+  mealType?: "default" | "halal" | "vegetarian" | "kosher" | "other";
+  mealCustom?: string;
   destinationsJson: string;
   itineraryJson: string;
 }): string {
@@ -166,25 +276,35 @@ export function buildFillPlacesUserPrompt(input: {
   const spend = input.spendMoney
     ? `Budget (spendMoney): ${input.spendMoney} — ${SPEND_MONEY_HINT[input.spendMoney]}`
     : "Budget (spendMoney): medium — typical tourist budget";
+  const mealType = input.mealType ?? "default";
+  const meal =
+    mealType === "other" && input.mealCustom?.trim()
+      ? `Meal preference (mealType): other — ${input.mealCustom.trim()} — HARD dietary filter for whereToEat and food/cafe/market stops`
+      : `Meal preference (mealType): ${mealType} — ${MEAL_TYPE_HINT[mealType]}`;
 
   return [
     `Language for titles/descriptions: ${input.language?.trim() || "en"}`,
     leisure,
     spend,
+    meal,
     input.currency
-      ? `Currency for place and non-flight route fares when known: ${input.currency}`
+      ? `Currency for place, whereToEat, and non-flight route fares when known: ${input.currency}`
       : "Currency: use local or USD when known",
     "",
     "DESTINATIONS (context — city names, savedPlaces already reflected as locationId in slots):",
     input.destinationsJson,
     "",
     "ITINERARY TO FILL:",
-    "- places[] = free-time city slots (saved locationId first, then new places)",
-    "- For every NEW place: include price (ticket/entry/service) and links (Tickets/Book/Official site) when known",
+    "- places[] = free-time city slots (seeded locationId first when present, then new places AND bookable activities/experiences)",
+    "- Prefer a mix of sights + tours/experiences/shows that fit freeTime; weight picks toward leisureType",
+    "- whereToEat[] = popular dining for each slot (food/cafe/market), HARD-filtered by mealType",
+    "- Never repeat the same locationId / place id / title across days — vary places, activities, and dining for multi-day city stays",
+    "- For EVERY place and whereToEat entry: include bestVisitTime { from, to } as HH:mm and durationMinutes",
+    "- For every NEW place / activity / whereToEat: include price and links when known",
     "- routes[] = include non-flight legs with routeIndex; fill priceAmount/priceCurrency/priceLabel/link (never for flight)",
     input.itineraryJson,
     "",
-    "Return itinerary with places filled (price + links on new places) and non-flight route fare/link enrichment.",
+    "Return itinerary with places/activities + whereToEat filled and non-flight route fare/link enrichment.",
   ].join("\n");
 }
 
@@ -209,6 +329,74 @@ function asHttpUrl(value: unknown): string | null {
   const s = asString(value);
   if (!s || !/^https?:\/\//i.test(s)) return null;
   return s;
+}
+
+/** Parse HH:mm (24h). Accepts H:mm → normalizes to HH:mm. */
+function asHhMm(value: unknown): string | null {
+  const s = asString(value);
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = m[2]!;
+  if (!Number.isFinite(h) || h < 0 || h > 23) return null;
+  return `${String(h).padStart(2, "0")}:${min}`;
+}
+
+function minutesFromHhMm(value: string): number {
+  const [h, m] = value.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+function parseBestVisitTime(
+  row: Record<string, unknown>
+): { from: string; to: string } | undefined {
+  const nested =
+    row.bestVisitTime && typeof row.bestVisitTime === "object"
+      ? (row.bestVisitTime as Record<string, unknown>)
+      : null;
+  const from =
+    asHhMm(nested?.from) ||
+    asHhMm(row.visitFrom) ||
+    asHhMm(row.bestVisitFrom) ||
+    asHhMm(row.from);
+  const to =
+    asHhMm(nested?.to) ||
+    asHhMm(row.visitTo) ||
+    asHhMm(row.bestVisitTo) ||
+    asHhMm(row.to);
+  if (!from || !to) return undefined;
+  if (minutesFromHhMm(to) <= minutesFromHhMm(from)) return undefined;
+  return { from, to };
+}
+
+function parseVisitDurationMinutes(
+  row: Record<string, unknown>
+): number | undefined {
+  const raw =
+    asNumber(row.durationMinutes) ??
+    asNumber(row.visitDurationMinutes) ??
+    asNumber(row.approximateDurationMinutes);
+  if (raw == null) return undefined;
+  const mins = Math.round(raw);
+  if (!Number.isFinite(mins) || mins < 15 || mins > 12 * 60) return undefined;
+  return mins;
+}
+
+function withVisitTiming<T extends Record<string, unknown>>(
+  base: T,
+  row: Record<string, unknown>
+): T & {
+  bestVisitTime?: { from: string; to: string };
+  durationMinutes?: number;
+} {
+  const bestVisitTime = parseBestVisitTime(row);
+  const durationMinutes = parseVisitDurationMinutes(row);
+  return {
+    ...base,
+    ...(bestVisitTime ? { bestVisitTime } : {}),
+    ...(durationMinutes != null ? { durationMinutes } : {}),
+  };
 }
 
 function slugifyAscii(raw: string): string {
@@ -343,7 +531,8 @@ function parseLocationPlace(
     cityName: string;
     countryId: string;
     countryName: string;
-  }
+  },
+  opts?: { model?: string; forceFoodCategory?: boolean }
 ): TripPlannerAiResponseLocationPlace | null {
   const title = asString(row.title);
   if (!title) return null;
@@ -390,7 +579,11 @@ function parseLocationPlace(
 
   const description = asString(row.description) || title;
   const note = asString(row.note) ?? undefined;
-  const category = parseCategory(row.category);
+  let category = parseCategory(row.category);
+  if (opts?.forceFoodCategory) {
+    category =
+      category && FOOD_PLACE_CATEGORIES.has(category) ? category : "food";
+  }
 
   // Accept price object, flat priceAmount/*, or prices[] (first usable entry).
   const priceFromArray = (() => {
@@ -441,37 +634,44 @@ function parseLocationPlace(
   const why =
     (aiRaw ? asString(aiRaw.why) : null) || asString(row.why) || description;
   const confidence = asNumber(row.confidence) ?? 0.7;
+  const model =
+    opts?.model ||
+    (aiRaw ? asString(aiRaw.model) : null) ||
+    "fillPlaces";
 
-  return {
-    id,
-    title,
-    description,
-    ...(note ? { note } : {}),
-    cityId,
-    status: "planned",
-    ...(category ? { category } : {}),
-    location: { lat, lon },
-    city: { id: cityId, name: cityName },
-    country: { id: countryId, name: countryName },
-    images: [],
-    ...(priceAmount != null || priceCurrency || priceLabel
-      ? {
-          price: {
-            ...(priceAmount != null && priceAmount >= 0
-              ? { amount: priceAmount }
-              : {}),
-            ...(priceCurrency && /^[A-Za-z]{3}$/.test(priceCurrency)
-              ? { currency: priceCurrency.toUpperCase() }
-              : {}),
-            ...(priceLabel ? { label: priceLabel } : {}),
-          },
-        }
-      : {}),
-    ...(links.length ? { links } : {}),
-    confidence: Math.min(1, Math.max(0, confidence)),
-    source: { type: "manual" },
-    ai: { why, model: "fillPlaces" },
-  };
+  return withVisitTiming(
+    {
+      id,
+      title,
+      description,
+      ...(note ? { note } : {}),
+      cityId,
+      status: "planned" as const,
+      ...(category ? { category } : {}),
+      location: { lat, lon },
+      city: { id: cityId, name: cityName },
+      country: { id: countryId, name: countryName },
+      images: [],
+      ...(priceAmount != null || priceCurrency || priceLabel
+        ? {
+            price: {
+              ...(priceAmount != null && priceAmount >= 0
+                ? { amount: priceAmount }
+                : {}),
+              ...(priceCurrency && /^[A-Za-z]{3}$/.test(priceCurrency)
+                ? { currency: priceCurrency.toUpperCase() }
+                : {}),
+              ...(priceLabel ? { label: priceLabel } : {}),
+            },
+          }
+        : {}),
+      ...(links.length ? { links } : {}),
+      confidence: Math.min(1, Math.max(0, confidence)),
+      source: { type: "manual" },
+      ai: { why, model },
+    },
+    row
+  );
 }
 
 export function extractJsonObject(text: string): unknown {
@@ -486,10 +686,71 @@ export function extractJsonObject(text: string): unknown {
   return JSON.parse(body.slice(start, end + 1)) as unknown;
 }
 
+/** Stable key for cross-day place uniqueness. */
+function placeDedupeKey(
+  place: TripPlannerAiResponseNestedPlace,
+  cityId: string
+): string | null {
+  if ("locationId" in place && place.locationId?.trim()) {
+    return `loc:${place.locationId.trim()}`;
+  }
+  if ("id" in place && place.id?.trim()) {
+    return `id:${cityId}:${place.id.trim().toLowerCase()}`;
+  }
+  const title =
+    "title" in place && typeof place.title === "string"
+      ? place.title.trim().toLowerCase()
+      : "";
+  if (title) return `title:${cityId}:${title}`;
+  return null;
+}
+
+/**
+ * Keep the first occurrence of each place across the itinerary.
+ * Prevents regenerate/multi-day stays from repeating the same places every day.
+ * Dedupes places[] and whereToEat[] against the same key set.
+ */
+export function dedupePlacesAcrossItinerary(
+  itinerary: TripPlannerAiResponseDay[]
+): TripPlannerAiResponseDay[] {
+  const seen = new Set<string>();
+  return itinerary.map((day) => ({
+    ...day,
+    places: (day.places ?? []).map((slot) => {
+      const cityId = slot.cityId.trim().toLowerCase();
+      const places: TripPlannerAiResponseNestedPlace[] = [];
+      for (const place of slot.places ?? []) {
+        const key = placeDedupeKey(place, cityId);
+        if (key) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        places.push(place);
+      }
+      const whereToEat: TripPlannerAiResponseLocationPlace[] = [];
+      for (const place of slot.whereToEat ?? []) {
+        const key = placeDedupeKey(place, cityId);
+        if (key) {
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        whereToEat.push(place);
+      }
+      return {
+        ...slot,
+        cityId,
+        places,
+        ...(whereToEat.length ? { whereToEat } : {}),
+      };
+    }),
+  }));
+}
+
 /**
  * Merge AI place fill + non-flight route fare/link into the itinerary.
  * Saved `{ locationId }` from the original slot stay first.
  * Flights never receive price/link.
+ * Cross-day duplicates (same locationId / place id / title) are dropped.
  */
 export function mergeAiPlacesIntoItinerary(
   itinerary: TripPlannerAiResponseDay[],
@@ -500,10 +761,12 @@ export function mergeAiPlacesIntoItinerary(
   const body = aiRaw as Record<string, unknown>;
   const daysRaw = Array.isArray(body.itinerary) ? body.itinerary : [];
 
-  const aiByKey = new Map<
-    string,
-    Map<string, TripPlannerAiResponseNestedPlace[]>
-  >();
+  type AiCitySlotFill = {
+    places: TripPlannerAiResponseNestedPlace[];
+    whereToEat: TripPlannerAiResponseLocationPlace[];
+  };
+
+  const aiByKey = new Map<string, Map<string, AiCitySlotFill>>();
   const routeFareByKey = new Map<
     string,
     Map<
@@ -524,7 +787,7 @@ export function mergeAiPlacesIntoItinerary(
     const date = asString(d.date);
     if (dayNum == null || !date) continue;
     const key = `${Math.floor(dayNum)}:${date}`;
-    const cityMap = new Map<string, TripPlannerAiResponseNestedPlace[]>();
+    const cityMap = new Map<string, AiCitySlotFill>();
 
     for (const slotRow of Array.isArray(d.places) ? d.places : []) {
       if (!slotRow || typeof slotRow !== "object") continue;
@@ -555,7 +818,7 @@ export function mergeAiPlacesIntoItinerary(
           if (allowed.size > 0 && !allowed.has(locationId)) continue;
           if (seenSaved.has(locationId)) continue;
           seenSaved.add(locationId);
-          places.push({ locationId });
+          places.push(withVisitTiming({ locationId }, row));
           continue;
         }
         const loc = parseLocationPlace(row, fallback);
@@ -563,7 +826,24 @@ export function mergeAiPlacesIntoItinerary(
         seenNew.add(loc.id);
         places.push(loc);
       }
-      cityMap.set(cityId, places);
+
+      const whereToEat: TripPlannerAiResponseLocationPlace[] = [];
+      const seenEat = new Set<string>();
+      for (const p of Array.isArray(s.whereToEat) ? s.whereToEat : []) {
+        if (!p || typeof p !== "object") continue;
+        const row = p as Record<string, unknown>;
+        // whereToEat is always a concrete venue — ignore locationId-only refs.
+        if (asString(row.locationId) && !asString(row.title)) continue;
+        const loc = parseLocationPlace(row, fallback, {
+          model: "fillWhereToEat",
+          forceFoodCategory: true,
+        });
+        if (!loc || seenEat.has(loc.id) || seenNew.has(loc.id)) continue;
+        seenEat.add(loc.id);
+        whereToEat.push(loc);
+      }
+
+      cityMap.set(cityId, { places, whereToEat });
     }
     aiByKey.set(key, cityMap);
     aiByKey.set(`date:${date}`, cityMap);
@@ -616,7 +896,7 @@ export function mergeAiPlacesIntoItinerary(
     }
   }
 
-  return itinerary.map((day) => {
+  const mergedDays = itinerary.map((day) => {
     const key = `${day.day}:${day.date}`;
     const cityMap =
       aiByKey.get(key) || aiByKey.get(`date:${day.date}`) || new Map();
@@ -641,19 +921,69 @@ export function mergeAiPlacesIntoItinerary(
           if (allowed.size > 0 && !allowed.has(id)) continue;
           if (seenSaved.has(id)) continue;
           seenSaved.add(id);
-          saved.push({ locationId: id });
+          saved.push({
+            locationId: id,
+            ...(p.bestVisitTime?.from && p.bestVisitTime?.to
+              ? { bestVisitTime: p.bestVisitTime }
+              : {}),
+            ...(p.durationMinutes != null
+              ? { durationMinutes: p.durationMinutes }
+              : {}),
+          });
         }
 
-        const fromAi = cityMap.get(cityId) ?? [];
-        const merged: TripPlannerAiResponseNestedPlace[] = [...saved];
+        const fromAi = cityMap.get(cityId) ?? {
+          places: [] as TripPlannerAiResponseNestedPlace[],
+          whereToEat: [] as TripPlannerAiResponseLocationPlace[],
+        };
+        const merged: TripPlannerAiResponseNestedPlace[] = [];
         const seenNew = new Set<string>();
-        for (const p of fromAi) {
+        // Prefer AI-enriched saved refs (visit window + duration) over bare seeds.
+        const aiSavedById = new Map<
+          string,
+          Extract<TripPlannerAiResponseNestedPlace, { locationId: string }>
+        >();
+        for (const p of fromAi.places) {
+          if (!("locationId" in p) || !p.locationId?.trim()) continue;
+          aiSavedById.set(p.locationId.trim(), p);
+        }
+        for (const p of saved) {
+          if (!("locationId" in p)) continue;
+          const enriched = aiSavedById.get(p.locationId);
+          if (enriched) {
+            merged.push({
+              locationId: p.locationId,
+              ...(enriched.bestVisitTime || p.bestVisitTime
+                ? {
+                    bestVisitTime:
+                      enriched.bestVisitTime || p.bestVisitTime,
+                  }
+                : {}),
+              ...(enriched.durationMinutes != null || p.durationMinutes != null
+                ? {
+                    durationMinutes:
+                      enriched.durationMinutes ?? p.durationMinutes,
+                  }
+                : {}),
+            });
+            aiSavedById.delete(p.locationId);
+          } else {
+            merged.push(p);
+          }
+        }
+        for (const p of fromAi.places) {
           if ("locationId" in p) {
             const id = p.locationId.trim();
             if (!id || seenSaved.has(id)) continue;
             if (allowed.size > 0 && !allowed.has(id)) continue;
             seenSaved.add(id);
-            merged.push({ locationId: id });
+            merged.push({
+              locationId: id,
+              ...(p.bestVisitTime ? { bestVisitTime: p.bestVisitTime } : {}),
+              ...(p.durationMinutes != null
+                ? { durationMinutes: p.durationMinutes }
+                : {}),
+            });
             continue;
           }
           if (seenNew.has(p.id)) continue;
@@ -661,7 +991,20 @@ export function mergeAiPlacesIntoItinerary(
           merged.push(p);
         }
 
-        return { ...slot, cityId, places: merged };
+        const whereToEat: TripPlannerAiResponseLocationPlace[] = [];
+        const seenEat = new Set<string>(seenNew);
+        for (const p of fromAi.whereToEat) {
+          if (seenEat.has(p.id)) continue;
+          seenEat.add(p.id);
+          whereToEat.push(p);
+        }
+
+        return {
+          ...slot,
+          cityId,
+          places: merged,
+          ...(whereToEat.length ? { whereToEat } : {}),
+        };
       }
     );
 
@@ -696,6 +1039,8 @@ export function mergeAiPlacesIntoItinerary(
 
     return { ...day, places, routes };
   });
+
+  return dedupePlacesAcrossItinerary(mergedDays);
 }
 
 export function buildFillPlacesPayload(
@@ -714,6 +1059,8 @@ export function buildFillPlacesPayload(
       leisureCustom: request.trip.leisureCustom,
       currency: request.trip.currency,
       spendMoney: request.trip.spendMoney,
+      mealType: request.trip.mealType,
+      mealCustom: request.trip.mealCustom,
       destinationsJson: JSON.stringify(
         slimDestinationsForPrompt(request.destinations)
       ),

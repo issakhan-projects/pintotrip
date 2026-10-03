@@ -88,6 +88,51 @@ export const SPEND_MONEY_OPTIONS: Array<{
   { id: "high", label: "High" },
 ];
 
+/** Dietary / meal preference for food recommendations. */
+export const MEAL_TYPES = [
+  "default",
+  "halal",
+  "vegetarian",
+  "kosher",
+  "other",
+] as const;
+export type MealType = (typeof MEAL_TYPES)[number];
+
+/** Max length for free-text meal notes when mealType is "other". */
+export const MEAL_CUSTOM_MAX_LENGTH = 80;
+
+export const MEAL_TYPE_OPTIONS: Array<{
+  id: MealType;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "default",
+    label: "Default",
+    description: "No dietary preference",
+  },
+  {
+    id: "halal",
+    label: "Halal",
+    description: "Halal-friendly meals",
+  },
+  {
+    id: "vegetarian",
+    label: "Vegetarian",
+    description: "Vegetarian options",
+  },
+  {
+    id: "kosher",
+    label: "Kosher",
+    description: "Jewish dietary laws",
+  },
+  {
+    id: "other",
+    label: "Other",
+    description: "Describe your preference",
+  },
+];
+
 /**
  * One city on a multi-destination trip.
  * City dates are optional; trip-level startDate/endDate remain required.
@@ -187,6 +232,10 @@ export type TripAccommodation = {
   startDate?: string;
   /** Optional stay window (ISO date `YYYY-MM-DD`). */
   endDate?: string;
+  /** Local check-in time (`HH:mm`). Defaults to 14:00 in the UI. */
+  checkInTime?: string;
+  /** Local check-out time (`HH:mm`). Defaults to 12:00 in the UI. */
+  checkOutTime?: string;
 };
 
 /** Airport pin resolved for a trip city (IATA + coords when known). */
@@ -284,7 +333,15 @@ export type ItineraryPlace = {
    * Cleared when a real imageUrl is set.
    */
   noImage?: boolean;
-  /** Gap length when type is `"gap"`. */
+  /**
+   * Suggested local visit window for this place on this day (HH:mm).
+   * From planTrip AI — not opening hours.
+   */
+  bestVisitTime?: { from: string; to: string };
+  /**
+   * Approximate minutes to spend at this place (planTrip AI),
+   * or gap length when type is `"gap"`.
+   */
   durationMinutes?: number;
   /** City the gap is spent in (when known). */
   cityName?: string;
@@ -355,6 +412,13 @@ export interface TripPlanner {
   leisureCustom?: string;
   /** Spend level id: low | medium | high. */
   spendMoney?: SpendMoneyLevel;
+  /** Dietary / meal preference id from MEAL_TYPES. */
+  mealType?: MealType;
+  /**
+   * Free-text dietary note when mealType is "other"
+   * (e.g. "vegan", "no seafood", "gluten-free").
+   */
+  mealCustom?: string;
   createMode?: TripCreateMode;
   /** Legacy: previously set when create-trip credits were charged (now unused). */
   createCreditsCharged?: boolean;
@@ -367,6 +431,12 @@ export interface TripPlanner {
   savedPlaceIds: string[];
 
   itinerary: TripItinerary;
+
+  /**
+   * When the user dismissed the post-trip review prompt without submitting.
+   * Cleared if they later submit a review (optional).
+   */
+  reviewDismissedAt?: Timestamp;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

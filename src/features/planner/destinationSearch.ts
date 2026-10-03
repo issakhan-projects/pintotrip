@@ -1,3 +1,7 @@
+import {
+  cityCountryFromGeocodeResults,
+  englishPlaceIdsFromNames,
+} from "@/lib/maps/detectLocation";
 import { geocodeByAddress } from "@/lib/maps/geocode";
 import {
   PLACES_SEARCH_TTL_MS,
@@ -5,12 +9,17 @@ import {
   normalizeQuery,
 } from "@/lib/maps/requestCache";
 import { fetchPexelsCityPhoto } from "@/lib/pexels";
+import { isAsciiId } from "@/lib/utils";
 
 export type GeocodedPlace = {
   cityName: string;
   countryName: string;
   /** ISO 3166-1 alpha-2 when available from geocoder. */
   countryCode?: string;
+  /** English/ASCII city slug when resolvable from the city-level name. */
+  cityId?: string;
+  /** English/ASCII country id (ISO lowercase when known). */
+  countryId?: string;
   lat?: number;
   lon?: number;
   label: string;
@@ -18,51 +27,31 @@ export type GeocodedPlace = {
   photos?: string[];
 };
 
-function readComponent(
-  components: google.maps.GeocoderAddressComponent[],
-  type: string
-): string {
-  return (
-    components.find((c) => c.types.includes(type))?.long_name?.trim() ?? ""
-  );
-}
-
-function parseCityCountry(
-  components: google.maps.GeocoderAddressComponent[]
-): { cityName: string; countryName: string; countryCode: string } {
-  const countryName =
-    components.find((c) => c.types.includes("country"))?.long_name?.trim() ??
-    "";
-  const countryCode =
-    components
-      .find((c) => c.types.includes("country"))
-      ?.short_name?.trim()
-      .toUpperCase() ?? "";
-  const cityName =
-    readComponent(components, "locality") ||
-    readComponent(components, "postal_town") ||
-    readComponent(components, "administrative_area_level_2") ||
-    readComponent(components, "administrative_area_level_1");
-  return { cityName, countryName, countryCode };
-}
-
 function fromGeocoderResult(
   result: google.maps.GeocoderResult
 ): GeocodedPlace | null {
-  const { cityName, countryName, countryCode } = parseCityCountry(
-    result.address_components ?? []
-  );
+  // City-level (Istanbul), not district (Fatih) — shared with map pick.
+  const { city, country, countryCode } = cityCountryFromGeocodeResults([
+    result,
+  ]);
   const loc = result.geometry?.location;
-  if (!loc || (!cityName && !countryName)) return null;
+  if (!loc || (!city && !country)) return null;
   const lat = typeof loc.lat === "function" ? loc.lat() : Number(loc.lat);
   const lon = typeof loc.lng === "function" ? loc.lng() : Number(loc.lng);
+  const englishIds = englishPlaceIdsFromNames(city, country, countryCode);
   return {
-    cityName: cityName || countryName,
-    countryName: countryName || cityName,
+    cityName: city || country,
+    countryName: country || city,
     ...(countryCode && /^[A-Z]{2}$/.test(countryCode) ? { countryCode } : {}),
+    ...(englishIds?.cityId && isAsciiId(englishIds.cityId)
+      ? { cityId: englishIds.cityId }
+      : {}),
+    ...(englishIds?.countryId && isAsciiId(englishIds.countryId)
+      ? { countryId: englishIds.countryId }
+      : {}),
     lat,
     lon,
-    label: [cityName, countryName].filter(Boolean).join(", "),
+    label: [city || country, country || city].filter(Boolean).join(", "),
   };
 }
 

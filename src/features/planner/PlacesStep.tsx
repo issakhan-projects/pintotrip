@@ -5,12 +5,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
+  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { Button, ConfirmModal, TextInput } from "@/components/ui";
 import {
   Check,
   ChevronDown,
+  ChevronUp,
+  Clock,
   CloudSun,
   ExternalLink,
   GripVertical,
@@ -25,9 +29,10 @@ import {
   Sparkles,
   Trash2,
   TrainFront,
+  X,
 } from "lucide-react";
 import { TravelMap } from "@/features/map/TravelMap";
-import { PlaceDetailSheet } from "@/features/places/PlaceDetailSheet";
+import { PlacePreviewSheet } from "@/features/map/PlacePreviewSheet";
 import { Sheet } from "@/components/ui/Sheet";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type {
@@ -37,14 +42,25 @@ import type {
   TripItinerary,
   TripPlannerDoc,
   TripRoute,
+  TripRouteTransport,
 } from "@/types/trip-planner";
-import type { LocationPrice, LocationStatus } from "@/types/location";
+import type {
+  LocationAiMetadata,
+  LocationImage,
+  LocationPrice,
+  LocationStatus,
+} from "@/types/location";
 import {
   getBrowserCoords,
+  hasUsableMapCoords,
   resolveEnglishPlaceIds,
   withCityGooglePlaceId,
   type MapMarkerInput,
 } from "@/lib/maps";
+import {
+  TripPlannerItineraryMap,
+  type ItineraryMapLeg,
+} from "./TripPlannerItineraryMap";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import {
   AI_CREDIT_COSTS,
@@ -54,6 +70,7 @@ import {
   planTripRegenerateCost,
 } from "@/types/credits";
 import { formatAvailableDuration } from "./timelineHelpers";
+import { lockBodyScroll } from "@/lib/bodyScrollLock";
 import { countryIdFromParts, cx, isAsciiId, slugifyId } from "@/lib/utils";
 import { distanceKm } from "./clusterPlaces";
 import {
@@ -67,6 +84,7 @@ import { listTripAccommodations } from "./essentialsHelpers";
 import { isWeatherFresh, weatherForTrip } from "./tripWeather";
 import { subscribeTripRoutes } from "@/services/trip-routes";
 import {
+  formatRouteClock,
   formatRouteDuration,
 } from "./routeHelpers";
 import {
@@ -80,7 +98,7 @@ import {
   type SearchedPlace,
 } from "@/features/add-place/placeSearch";
 import { purchasePlaceSearchPack } from "@/services/functions";
-import { createUserLocation } from "@/services/locations";
+import { createUserLocation, deleteUserLocation } from "@/services/locations";
 import { Timestamp } from "firebase/firestore";
 import { resolveCountryCode } from "@/lib/countries";
 
@@ -130,7 +148,123 @@ function formatPlacePrice(price: LocationPrice): string | null {
   return `${price.amount}${price.currency ? ` ${price.currency}` : ""}`;
 }
 
-type PlacesView = "map" | "itinerary";
+type DayMapPoint = {
+  id: string;
+  lat: number;
+  lon: number;
+  title: string;
+  order: number;
+  kind: "place" | "city" | "airport";
+  status?: LocationStatus;
+  googlePlaceId?: string;
+};
+
+/** Build numbered markers + route overlays for one itinerary day (existing data only). */
+function buildDayMapData(
+  day: ItineraryDay | undefined,
+  byId: Map<string, SavedLocation>,
+  routesById: Map<string, TripRoute>
+): { markers: DayMapPoint[]; legs: ItineraryMapLeg[]; placeCount: number } {
+  if (!day) return { markers: [], legs: [], placeCount: 0 };
+
+  const activePlaces = [...day.places]
+    .filter((slot) => isActiveItinerarySlot(slot, byId))
+    .sort((a, b) => a.order - b.order);
+
+  const markers: DayMapPoint[] = [];
+  const legs: ItineraryMapLeg[] = [];
+  const placePoints: { id: string; lat: number; lon: number }[] = [];
+  let placeCount = 0;
+
+  activePlaces.forEach((slot, slotIndex) => {
+    const displayOrder = slotIndex + 1;
+
+    if (slot.type === "gap") return;
+
+    if (slot.type === "route") {
+      const route =
+        (slot.routeId ? routesById.get(slot.routeId) : undefined) ??
+        (slot.locationId.startsWith("route:")
+          ? routesById.get(slot.locationId.slice(6))
+          : undefined);
+      if (!route) return;
+
+      const from = route.from.location;
+      const to = route.to.location;
+      const fromOk =
+        from && hasUsableMapCoords(from.lat, from.lon) ? from : null;
+      const toOk = to && hasUsableMapCoords(to.lat, to.lon) ? to : null;
+      const kind: DayMapPoint["kind"] =
+        route.transport === "flight" ? "airport" : "city";
+
+      if (fromOk) {
+        markers.push({
+          id: `${slot.locationId}:from`,
+          lat: fromOk.lat,
+          lon: fromOk.lon,
+          title: route.from.name || route.from.city || "From",
+          order: displayOrder,
+          kind,
+        });
+      }
+      if (toOk) {
+        markers.push({
+          id: `${slot.locationId}:to`,
+          lat: toOk.lat,
+          lon: toOk.lon,
+          title: route.to.name || route.to.city || "To",
+          order: displayOrder,
+          kind,
+        });
+      }
+      if (fromOk && toOk) {
+        legs.push({
+          id: route.id,
+          transport: route.transport,
+          from: { lat: fromOk.lat, lon: fromOk.lon },
+          to: { lat: toOk.lat, lon: toOk.lon },
+        });
+      }
+      return;
+    }
+
+    placeCount += 1;
+    const place = byId.get(slot.locationId);
+    if (!place || !hasUsableMapCoords(place.lat, place.lon)) return;
+
+    markers.push({
+      id: slot.locationId,
+      lat: place.lat,
+      lon: place.lon,
+      title: slot.title?.trim() || place.title,
+      order: displayOrder,
+      kind: "place",
+      status: slot.status === "visited" ? "visited" : place.status,
+      googlePlaceId: place.city.googlePlaceId,
+    });
+    placePoints.push({
+      id: slot.locationId,
+      lat: place.lat,
+      lon: place.lon,
+    });
+  });
+
+  // Connect consecutive mappable places in itinerary order (visual path only).
+  for (let i = 0; i < placePoints.length - 1; i += 1) {
+    const a = placePoints[i];
+    const b = placePoints[i + 1];
+    if (!a || !b) continue;
+    legs.push({
+      id: `connect:${a.id}:${b.id}`,
+      transport: "other" as TripRouteTransport,
+      from: { lat: a.lat, lon: a.lon },
+      to: { lat: b.lat, lon: b.lon },
+    });
+  }
+
+  return { markers, legs, placeCount };
+}
+
 type AddPlaceTab = "list" | "map" | "search";
 
 interface PlacesStepProps {
@@ -152,6 +286,20 @@ interface PlacesStepProps {
     status: LocationStatus
   ) => Promise<void>;
   onSavePlaceNote: (locationId: string, note: string) => Promise<void>;
+  onSavePlaceTravelInfo?: (
+    locationId: string,
+    patch: {
+      description: string;
+      note: string;
+      ai: LocationAiMetadata;
+    }
+  ) => Promise<void>;
+  onSavePlaceImages?: (
+    locationId: string,
+    images: LocationImage[]
+  ) => Promise<void>;
+  /** Pro: allow Google Place Photos in the preview sheet. */
+  allowGooglePlacePhotos?: boolean;
 }
 
 export function PlacesStep({
@@ -166,8 +314,10 @@ export function PlacesStep({
   onSavePlan,
   onMarkPlaceStatus,
   onSavePlaceNote,
+  onSavePlaceTravelInfo,
+  onSavePlaceImages,
+  allowGooglePlacePhotos = false,
 }: PlacesStepProps) {
-  const [view, setView] = useState<PlacesView>("itinerary");
   const [addOpen, setAddOpen] = useState(false);
   const [addTab, setAddTab] = useState<AddPlaceTab>("list");
   const [addDayIndex, setAddDayIndex] = useState<number | null>(null);
@@ -180,6 +330,9 @@ export function PlacesStep({
     null
   );
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [deleteAvailablePlace, setDeleteAvailablePlace] =
+    useState<SavedLocation | null>(null);
+  const [deletingAvailablePlace, setDeletingAvailablePlace] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [planIntent, setPlanIntent] = useState<"generate" | "regenerate">(
     "generate"
@@ -188,21 +341,14 @@ export function PlacesStep({
   const [pendingPlanIntent, setPendingPlanIntent] = useState<
     "generate" | "regenerate"
   >("generate");
-  const [detail, setDetail] = useState<SavedLocation | null>(null);
+  const [preview, setPreview] = useState<SavedLocation | null>(null);
+  /** Active itinerary day for the shared map (one map instance for all days). */
+  const [activeDayIndex, setActiveDayIndex] = useState(0);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [mobileMapOpen, setMobileMapOpen] = useState(false);
+  const [mapFitToken, setMapFitToken] = useState(0);
+  const placeRowRefs = useRef<Map<string, HTMLElement>>(new Map());
   const recreateCost = planTripRegenerateCost(trip.createMode);
-
-  const tripPlaces = useMemo(() => {
-    const ids = new Set(trip.savedPlaceIds);
-    for (const day of trip.itinerary.days) {
-      for (const place of day.places) {
-        if (place.type === "gap" || place.type === "route") continue;
-        ids.add(place.locationId);
-      }
-    }
-    return locations.filter(
-      (l) => ids.has(l.id) && l.status !== "cancelled"
-    );
-  }, [locations, trip.savedPlaceIds, trip.itinerary.days]);
 
   const [tripRoutes, setTripRoutes] = useState<TripRoute[]>([]);
   useEffect(() => {
@@ -218,129 +364,6 @@ export function PlacesStep({
     [locations]
   );
 
-  const markers: MapMarkerInput[] = useMemo(() => {
-    const placeMarkers: MapMarkerInput[] = tripPlaces.map((place) => ({
-      id: place.id,
-      lat: place.lat,
-      lon: place.lon,
-      title: place.title,
-      status: place.status,
-      kind: "place" as const,
-      googlePlaceId: place.city.googlePlaceId,
-    }));
-
-    const stayMarkers: MapMarkerInput[] = listTripAccommodations(trip)
-      .filter(
-        (stay) =>
-          typeof stay.lat === "number" &&
-          Number.isFinite(stay.lat) &&
-          typeof stay.lon === "number" &&
-          Number.isFinite(stay.lon)
-      )
-      .map((stay, index) => ({
-        id: `__stay__${stay.id ?? index}`,
-        lat: stay.lat as number,
-        lon: stay.lon as number,
-        title: stay.name?.trim() || stay.address?.trim() || "Accommodation",
-        kind: "stay" as const,
-      }));
-
-    const seenArrival = new Set<string>();
-    const airportMarkers: MapMarkerInput[] = [];
-
-    const pushArrival = (
-      arrival: {
-        code?: string | null;
-        name?: string;
-        cityName?: string;
-        lat?: number;
-        lon?: number;
-      },
-      idSuffix: string
-    ) => {
-      if (
-        typeof arrival.lat !== "number" ||
-        !Number.isFinite(arrival.lat) ||
-        typeof arrival.lon !== "number" ||
-        !Number.isFinite(arrival.lon)
-      ) {
-        return;
-      }
-      const code = arrival.code?.trim().toUpperCase() || "";
-      const dedupeKey =
-        code || `${arrival.lat.toFixed(4)},${arrival.lon.toFixed(4)}`;
-      if (seenArrival.has(dedupeKey)) return;
-      seenArrival.add(dedupeKey);
-
-      const label = [code, arrival.name?.trim() || arrival.cityName?.trim()]
-        .filter(Boolean)
-        .join(" · ");
-      airportMarkers.push({
-        id: `__airport__${idSuffix}`,
-        lat: arrival.lat,
-        lon: arrival.lon,
-        title: label || "Destination airport",
-        kind: "airport" as const,
-      });
-    };
-
-    const destinationAirports = listTripDestinations(trip).flatMap(
-      (dest, destIndex) =>
-        (dest.transport?.airports ?? []).map((airport, airportIndex) => ({
-          code: airport.iataCode,
-          name: airport.name,
-          cityName: dest.cityName,
-          lat: airport.location?.lat,
-          lon: airport.location?.lon,
-          id: `${dest.cityId || destIndex}-${airport.placeId || airportIndex}`,
-        }))
-    );
-
-    for (const airport of destinationAirports) {
-      pushArrival(airport, airport.id);
-    }
-
-    const combined = [...placeMarkers, ...stayMarkers, ...airportMarkers];
-    if (combined.length > 0) return combined;
-
-    return listTripDestinations(trip)
-      .filter(
-        (dest) =>
-          typeof dest.lat === "number" &&
-          Number.isFinite(dest.lat) &&
-          typeof dest.lon === "number" &&
-          Number.isFinite(dest.lon)
-      )
-      .map((dest, index) => ({
-        id: `__destination__${dest.cityId || dest.cityName || index}`,
-        lat: dest.lat as number,
-        lon: dest.lon as number,
-        title: dest.cityName,
-        kind: "city" as const,
-      }));
-  }, [tripPlaces, trip, trip.destinations]);
-
-  const hasStayPins = useMemo(() => {
-    return listTripAccommodations(trip).some(
-      (stay) =>
-        typeof stay.lat === "number" &&
-        Number.isFinite(stay.lat) &&
-        typeof stay.lon === "number" &&
-        Number.isFinite(stay.lon)
-    );
-  }, [trip.destinations, trip]);
-
-  const hasAirportPins = useMemo(() => {
-    return listTripDestinations(trip).some((dest) =>
-      (dest.transport?.airports ?? []).some(
-        (airport) =>
-          typeof airport.location?.lat === "number" &&
-          Number.isFinite(airport.location.lat) &&
-          typeof airport.location?.lon === "number" &&
-          Number.isFinite(airport.location.lon)
-      )
-    );
-  }, [trip]);
   const availableToAdd = useMemo(() => {
     const taken = new Set(trip.savedPlaceIds);
     for (const day of trip.itinerary.days) {
@@ -375,21 +398,48 @@ export function PlacesStep({
     locationId: string,
     next: LocationStatus
   ) {
-    const days: ItineraryDay[] = trip.itinerary.days.map((day, i) => {
-      if (i !== dayIndex) return day;
-      return {
-        ...day,
-        places: day.places.map((p) =>
-          p.locationId === locationId ? { ...p, status: next } : p
-        ),
-      };
-    });
+    const slot = trip.itinerary.days[dayIndex]?.places.find(
+      (p) => p.locationId === locationId
+    );
+
+    // Route / gap slots are itinerary-only (no saved location doc).
+    if (slot?.type === "route" || slot?.type === "gap") {
+      const days: ItineraryDay[] = trip.itinerary.days.map((day, i) => {
+        if (i !== dayIndex) return day;
+        return {
+          ...day,
+          places: day.places.map((p) =>
+            p.locationId === locationId ? { ...p, status: next } : p
+          ),
+        };
+      });
+      await onUpdateItinerary({
+        status:
+          trip.itinerary.status === "empty" ? "edited" : trip.itinerary.status,
+        days,
+      });
+      return;
+    }
+
+    // Real places with a saved location: update location status (visited/planned)
+    // and sync every itinerary slot that points at it.
+    if (byId.has(locationId)) {
+      await onMarkPlaceStatus(locationId, next);
+      return;
+    }
+
+    // Orphan itinerary slot (no location doc) — update itinerary only.
+    const days: ItineraryDay[] = trip.itinerary.days.map((day) => ({
+      ...day,
+      places: day.places.map((p) =>
+        p.locationId === locationId ? { ...p, status: next } : p
+      ),
+    }));
     await onUpdateItinerary({
       status:
         trip.itinerary.status === "empty" ? "edited" : trip.itinerary.status,
       days,
     });
-    await onMarkPlaceStatus(locationId, next);
   }
 
   async function removeFromTrip(locationId: string) {
@@ -407,6 +457,20 @@ export function PlacesStep({
         status: "edited",
         days,
       });
+    }
+  }
+
+  async function deleteAvailableSavedPlace(place: SavedLocation) {
+    setDeletingAvailablePlace(true);
+    try {
+      await deleteUserLocation(userId, place.id);
+      // Keep trip docs clean if this id was referenced somehow.
+      if (trip.savedPlaceIds.includes(place.id)) {
+        await removeFromTrip(place.id);
+      }
+      setDeleteAvailablePlace(null);
+    } finally {
+      setDeletingAvailablePlace(false);
     }
   }
 
@@ -652,6 +716,117 @@ export function PlacesStep({
   const hasItinerary =
     trip.itinerary.status !== "empty" && trip.itinerary.days.length > 0;
 
+  // Keep active day in range when the itinerary shrinks/grows.
+  useEffect(() => {
+    const dayCount = trip.itinerary.days.length;
+    if (dayCount === 0) {
+      setActiveDayIndex(0);
+      return;
+    }
+    if (activeDayIndex >= dayCount) {
+      setActiveDayIndex(dayCount - 1);
+    }
+  }, [trip.itinerary.days.length, activeDayIndex]);
+
+  const activeDay = trip.itinerary.days[activeDayIndex];
+  const dayMapData = useMemo(
+    () => buildDayMapData(activeDay, byId, routesById),
+    [activeDay, byId, routesById]
+  );
+
+  const dayMapMarkers: MapMarkerInput[] = useMemo(
+    () =>
+      dayMapData.markers.map((m) => ({
+        id: m.id,
+        lat: m.lat,
+        lon: m.lon,
+        title: m.title,
+        kind: m.kind,
+        order: m.kind === "place" ? m.order : undefined,
+        ...(m.status ? { status: m.status } : {}),
+        ...(m.googlePlaceId ? { googlePlaceId: m.googlePlaceId } : {}),
+      })),
+    [dayMapData.markers]
+  );
+
+  const mappablePlaceCount = useMemo(
+    () => dayMapData.markers.filter((m) => m.kind === "place").length,
+    [dayMapData.markers]
+  );
+
+  const dayMapContentKey = useMemo(
+    () =>
+      [
+        activeDayIndex,
+        ...dayMapData.markers.map(
+          (m) => `${m.id}:${m.lat}:${m.lon}:${m.order}`
+        ),
+        ...dayMapData.legs.map((l) => l.id),
+      ].join("|"),
+    [activeDayIndex, dayMapData.markers, dayMapData.legs]
+  );
+
+  // Refit when the active day's mappable content arrives/changes (same map instance).
+  useEffect(() => {
+    if (!hasItinerary) return;
+    setMapFitToken((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by dayMapContentKey
+  }, [dayMapContentKey, hasItinerary]);
+
+  useEffect(() => {
+    if (!mobileMapOpen) return;
+    return lockBodyScroll();
+  }, [mobileMapOpen]);
+
+  function selectActiveDay(dayIndex: number, opts?: { fit?: boolean }) {
+    setActiveDayIndex(dayIndex);
+    setSelectedPlaceId(null);
+    if (opts?.fit !== false) {
+      setMapFitToken((n) => n + 1);
+    }
+  }
+
+  function focusPlaceFromMap(markerId: string) {
+    // Route endpoint markers use `${slotId}:from|to` — highlight the slot id.
+    const placeId = markerId.includes(":")
+      ? markerId.replace(/:(from|to)$/, "")
+      : markerId;
+    setSelectedPlaceId(placeId);
+
+    // Ensure the day containing this place is expanded/active.
+    const dayIdx = trip.itinerary.days.findIndex((day) =>
+      day.places.some((slot) => slot.locationId === placeId)
+    );
+    if (dayIdx >= 0 && dayIdx !== activeDayIndex) {
+      selectActiveDay(dayIdx, { fit: false });
+    }
+
+    window.requestAnimationFrame(() => {
+      placeRowRefs.current.get(placeId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+  }
+
+  function focusPlaceFromItinerary(placeId: string, dayIndex: number) {
+    if (dayIndex !== activeDayIndex) {
+      selectActiveDay(dayIndex, { fit: false });
+    }
+    setSelectedPlaceId(placeId);
+  }
+
+  const itineraryMap = (
+    <TripPlannerItineraryMap
+      markers={dayMapMarkers}
+      legs={dayMapData.legs}
+      selectedMarkerId={selectedPlaceId}
+      onMarkerSelect={focusPlaceFromMap}
+      fitToken={mapFitToken}
+      className="h-full w-full"
+    />
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -676,56 +851,96 @@ export function PlacesStep({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 rounded-xl bg-surface p-1">
-        <ViewTab
-          active={view === "itinerary"}
-          onClick={() => setView("itinerary")}
-          icon={<ListOrdered className="h-4 w-4" />}
-          label="Itinerary"
-        />
-        <ViewTab
-          active={view === "map"}
-          onClick={() => setView("map")}
-          icon={<MapIcon className="h-4 w-4" />}
-          label="Map"
-        />
-      </div>
+      {hasItinerary ? (
+        <div className="relative lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)] lg:items-start lg:gap-5">
+          <div className="min-w-0">
+            <ItineraryList
+              trip={trip}
+              byId={byId}
+              routesById={routesById}
+              activeDayIndex={activeDayIndex}
+              selectedPlaceId={selectedPlaceId}
+              placeRowRefs={placeRowRefs}
+              onSelectDay={(dayIndex) => selectActiveDay(dayIndex)}
+              onSelectPlace={(placeId, dayIndex) =>
+                focusPlaceFromItinerary(placeId, dayIndex)
+              }
+              onToggleStatus={(dayIndex, locationId, status) =>
+                void toggleItineraryPlace(dayIndex, locationId, status)
+              }
+              onOpen={(place) => setPreview(place)}
+              onRemove={(id) => void removeFromTrip(id)}
+              onPlan={() => requestPlanSheet("generate")}
+              onAddPlace={(dayIndex) => openAddSheet(dayIndex)}
+              onAddPlaces={() => openAddSheet()}
+              onUpdateItinerary={onUpdateItinerary}
+            />
+          </div>
 
-      {view === "map" ? (
-        <div className="relative h-[min(70vh,520px)] min-h-[320px] overflow-hidden rounded-2xl border border-border bg-surface">
-          <TravelMap
-            className="absolute inset-0 h-full w-full"
-            markers={markers}
-            fitToMarkers
-            centerOnCurrentLocation={false}
-            onMarkerSelect={(id) => {
-              if (
-                id.startsWith("__destination__") ||
-                id.startsWith("__stay__") ||
-                id.startsWith("__airport__")
-              )
-                return;
-              const place = byId.get(id) ?? null;
-              setDetail(place);
-            }}
-          />
-          {tripPlaces.length === 0 && !hasStayPins && !hasAirportPins ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/55 to-transparent px-4 pb-4 pt-10">
-              <div className="pointer-events-auto rounded-xl bg-surface-elevated/95 px-3 py-3 shadow-sm ring-1 ring-border backdrop-blur-sm">
-                <p className="text-sm font-medium text-text">No places yet</p>
-                <p className="mt-0.5 text-xs text-text-secondary">
-                  Add saved locations to see them on the map.
-                </p>
-                <Button
-                  icon={Plus}
-                  variant="secondary"
-                  onClick={() => openAddSheet()}
-                  className="mt-2 h-11 !border-border !bg-surface !text-xs !text-text"
+          {/*
+            ONE shared map shell:
+            - Desktop (lg+): sticky right column
+            - Mobile/tablet: same instance, fullscreen when open (never remounted)
+          */}
+          <div
+            className={cx(
+              "overflow-hidden bg-surface-elevated",
+              mobileMapOpen
+                ? "fixed inset-0 z-50 flex flex-col"
+                : "max-lg:pointer-events-none max-lg:fixed max-lg:inset-0 max-lg:z-50 max-lg:invisible",
+              "lg:sticky lg:top-20 lg:z-auto lg:flex lg:h-[calc(100vh-6.5rem)] lg:flex-col lg:rounded-2xl lg:border lg:border-border lg:shadow-sm"
+            )}
+          >
+            {mobileMapOpen ? (
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-text">
+                    Day {activeDay?.day ?? activeDayIndex + 1}
+                    {activeDay?.title ? ` · ${activeDay.title}` : ""}
+                  </p>
+                  <p className="text-xs text-text-secondary">
+                    {mappablePlaceCount}{" "}
+                    {mappablePlaceCount === 1 ? "place" : "places"} on map
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileMapOpen(false)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-text hover:bg-divider"
+                  aria-label="Close map"
                 >
-                  Add places
-                </Button>
+                  <X className="h-4 w-4" />
+                </button>
               </div>
+            ) : (
+              <div className="hidden shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2.5 lg:flex">
+                <p className="truncate text-xs font-medium text-text-secondary">
+                  Day {activeDay?.day ?? activeDayIndex + 1} map
+                </p>
+                <p className="shrink-0 text-[11px] text-text-muted">
+                  {mappablePlaceCount}{" "}
+                  {mappablePlaceCount === 1 ? "place" : "places"}
+                </p>
+              </div>
+            )}
+            <div className="relative min-h-0 flex-1">
+              {itineraryMap}
             </div>
+          </div>
+
+          {!mobileMapOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setMapFitToken((n) => n + 1);
+                setMobileMapOpen(true);
+              }}
+              className="fixed bottom-5 left-1/2 z-40 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-3 text-sm font-semibold text-text shadow-md ring-1 ring-black/5 lg:hidden"
+            >
+              <MapIcon className="h-4 w-4 text-primary" />
+              Map · {mappablePlaceCount}{" "}
+              {mappablePlaceCount === 1 ? "place" : "places"}
+            </button>
           ) : null}
         </div>
       ) : (
@@ -733,10 +948,15 @@ export function PlacesStep({
           trip={trip}
           byId={byId}
           routesById={routesById}
+          activeDayIndex={0}
+          selectedPlaceId={null}
+          placeRowRefs={placeRowRefs}
+          onSelectDay={() => undefined}
+          onSelectPlace={() => undefined}
           onToggleStatus={(dayIndex, locationId, status) =>
             void toggleItineraryPlace(dayIndex, locationId, status)
           }
-          onOpen={(place) => setDetail(place)}
+          onOpen={(place) => setPreview(place)}
           onRemove={(id) => void removeFromTrip(id)}
           onPlan={() => requestPlanSheet("generate")}
           onAddPlace={(dayIndex) => openAddSheet(dayIndex)}
@@ -815,30 +1035,43 @@ export function PlacesStep({
                     available
                   </p>
                   {availableToAdd.map((place) => (
-                    <button
+                    <div
                       key={place.id}
-                      type="button"
-                      onClick={() => {
-                        void addPlaceToTrip(place.id);
-                      }}
-                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-border px-3 py-3 text-left hover:border-primary/30"
+                      className="flex w-full items-center gap-2 rounded-xl border border-border px-3 py-3"
                     >
-                      <span className="flex min-w-0 items-center gap-3">
-                        <PlaceThumb
-                          place={place}
-                          className="!h-14 !w-14 rounded-xl"
-                        />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-text">
-                            {place.title}
-                          </span>
-                          <span className="text-xs text-text-secondary">
-                            {place.city.name}, {place.country.name}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void addPlaceToTrip(place.id);
+                        }}
+                        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left hover:opacity-90"
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <PlaceThumb
+                            place={place}
+                            className="!h-14 !w-14 rounded-xl"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-text">
+                              {place.title}
+                            </span>
+                            <span className="text-xs text-text-secondary">
+                              {place.city.name}, {place.country.name}
+                            </span>
                           </span>
                         </span>
-                      </span>
-                      <Plus className="h-4 w-4 shrink-0 text-primary" />
-                    </button>
+                        <Plus className="h-4 w-4 shrink-0 text-primary" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${place.title}`}
+                        title="Delete saved place"
+                        onClick={() => setDeleteAvailablePlace(place)}
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-error-background hover:text-error"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   ))}
                 </>
               )}
@@ -977,7 +1210,6 @@ export function PlacesStep({
         intent={planIntent}
         onSaved={async (payload) => {
           await onSavePlan(payload);
-          setView("itinerary");
         }}
       />
 
@@ -994,25 +1226,70 @@ export function PlacesStep({
         }}
       />
 
-      <PlaceDetailSheet
-        place={detail}
-        open={Boolean(detail)}
-        onClose={() => setDetail(null)}
-        onUpdateStatus={async (status) => {
-          if (!detail) return;
-          await onMarkPlaceStatus(detail.id, status);
-          setDetail({ ...detail, status });
+      <ConfirmModal
+        open={Boolean(deleteAvailablePlace)}
+        title="Delete saved place?"
+        description={
+          deleteAvailablePlace
+            ? `“${deleteAvailablePlace.title}” will be removed from your saved places.`
+            : undefined
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        tone="danger"
+        loading={deletingAvailablePlace}
+        onCancel={() => {
+          if (!deletingAvailablePlace) setDeleteAvailablePlace(null);
         }}
-        onSaveNote={async (note) => {
-          if (!detail) return;
-          await onSavePlaceNote(detail.id, note);
-          setDetail({ ...detail, note });
+        onConfirm={() => {
+          if (deleteAvailablePlace) {
+            void deleteAvailableSavedPlace(deleteAvailablePlace);
+          }
         }}
       />
 
-      {view === "itinerary" ? (
-        <TripSetupChecklist trip={trip} userId={userId} />
-      ) : null}
+      <PlacePreviewSheet
+        place={preview}
+        open={Boolean(preview)}
+        userId={userId}
+        allowGooglePlacePhotos={allowGooglePlacePhotos}
+        onClose={() => setPreview(null)}
+        onUpdateStatus={async (status) => {
+          if (!preview) return;
+          await onMarkPlaceStatus(preview.id, status);
+          setPreview({ ...preview, status });
+        }}
+        onSaveNote={async (note) => {
+          if (!preview) return;
+          await onSavePlaceNote(preview.id, note);
+          setPreview({ ...preview, note });
+        }}
+        onSaveTravelInfo={
+          onSavePlaceTravelInfo
+            ? async (patch) => {
+                if (!preview) return;
+                await onSavePlaceTravelInfo(preview.id, patch);
+                setPreview({ ...preview, ...patch });
+              }
+            : undefined
+        }
+        onSaveImages={
+          onSavePlaceImages
+            ? async (images) => {
+                if (!preview) return;
+                await onSavePlaceImages(preview.id, images);
+                setPreview({ ...preview, images });
+              }
+            : undefined
+        }
+        onDelete={async () => {
+          if (!preview) return;
+          await deleteAvailableSavedPlace(preview);
+          setPreview(null);
+        }}
+      />
+
+      <TripSetupChecklist trip={trip} userId={userId} />
     </div>
   );
 }
@@ -1049,6 +1326,11 @@ function ItineraryList({
   trip,
   byId,
   routesById,
+  activeDayIndex,
+  selectedPlaceId,
+  placeRowRefs,
+  onSelectDay,
+  onSelectPlace,
   onToggleStatus,
   onOpen,
   onRemove,
@@ -1060,6 +1342,11 @@ function ItineraryList({
   trip: TripPlannerDoc;
   byId: Map<string, SavedLocation>;
   routesById: Map<string, TripRoute>;
+  activeDayIndex: number;
+  selectedPlaceId: string | null;
+  placeRowRefs: MutableRefObject<Map<string, HTMLElement>>;
+  onSelectDay: (dayIndex: number) => void;
+  onSelectPlace: (placeId: string, dayIndex: number) => void;
   onToggleStatus: (
     dayIndex: number,
     locationId: string,
@@ -1079,6 +1366,54 @@ function ItineraryList({
   const [weatherByDay, setWeatherByDay] = useState<
     Map<number, ItineraryDayWeather>
   >(() => new Map());
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+
+  async function reorderDaySlots(
+    dayIndex: number,
+    fromKey: string,
+    toKey: string
+  ) {
+    if (fromKey === toKey) return;
+    const day = trip.itinerary.days[dayIndex];
+    if (!day) return;
+
+    const ordered = [...day.places].sort((a, b) => a.order - b.order);
+    const fromIndex = ordered.findIndex((slot) => slot.locationId === fromKey);
+    const toIndex = ordered.findIndex((slot) => slot.locationId === toKey);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+
+    const next = [...ordered];
+    const [moved] = next.splice(fromIndex, 1);
+    if (!moved) return;
+    next.splice(toIndex, 0, moved);
+
+    const days = trip.itinerary.days.map((d, i) => {
+      if (i !== dayIndex) return d;
+      return {
+        ...d,
+        places: next.map((slot, order) => ({ ...slot, order })),
+      };
+    });
+
+    await onUpdateItinerary({
+      status: "edited",
+      days,
+    });
+  }
+
+  async function moveDaySlot(dayIndex: number, locationId: string, delta: -1 | 1) {
+    const day = trip.itinerary.days[dayIndex];
+    if (!day) return;
+    const ordered = [...day.places].sort((a, b) => a.order - b.order);
+    const index = ordered.findIndex((slot) => slot.locationId === locationId);
+    if (index < 0) return;
+    const target = index + delta;
+    if (target < 0 || target >= ordered.length) return;
+    const targetSlot = ordered[target];
+    if (!targetSlot) return;
+    await reorderDaySlots(dayIndex, locationId, targetSlot.locationId);
+  }
 
   const destinations = listTripDestinations(trip);
   const hasCoords = destinations.some(
@@ -1353,9 +1688,10 @@ function ItineraryList({
     <div className="space-y-4">
       {trip.itinerary.days.map((day, dayIndex) => {
         const isCollapsed = collapsed[day.day] ?? false;
-        const activePlaces = day.places.filter((slot) =>
-          isActiveItinerarySlot(slot, byId)
-        );
+        const isActiveDay = dayIndex === activeDayIndex;
+        const activePlaces = [...day.places]
+          .filter((slot) => isActiveItinerarySlot(slot, byId))
+          .sort((a, b) => a.order - b.order);
         const placeCount = activePlaces.filter(
           (slot) => slot.type !== "gap" && slot.type !== "route"
         ).length;
@@ -1369,18 +1705,31 @@ function ItineraryList({
         return (
           <section
             key={`day-${day.day}`}
-            className="rounded-2xl border border-border bg-surface-elevated p-4 sm:p-5"
+            className={cx(
+              "rounded-2xl border bg-surface-elevated p-4 sm:p-5",
+              isActiveDay
+                ? "border-primary/40 ring-1 ring-primary/20"
+                : "border-border"
+            )}
           >
             <header>
               <button
                 type="button"
                 className="flex w-full items-start gap-3 text-left"
-                onClick={() =>
+                onClick={() => {
+                  if (dayIndex !== activeDayIndex) {
+                    onSelectDay(dayIndex);
+                    setCollapsed((prev) => ({
+                      ...prev,
+                      [day.day]: false,
+                    }));
+                    return;
+                  }
                   setCollapsed((prev) => ({
                     ...prev,
                     [day.day]: !isCollapsed,
-                  }))
-                }
+                  }));
+                }}
                 aria-expanded={!isCollapsed}
               >
                 <div className="min-w-0 flex-1">
@@ -1419,7 +1768,109 @@ function ItineraryList({
             {!isCollapsed ? (
               <>
                 <ul className="mt-4 space-y-1">
-                  {activePlaces.map((slot) => {
+                  {activePlaces.map((slot, slotIndex) => {
+                    const displayOrder = slotIndex + 1;
+                    const isDragging = draggingKey === slot.locationId;
+                    const isSelected = selectedPlaceId === slot.locationId;
+                    const isDragOver =
+                      dragOverKey === slot.locationId &&
+                      draggingKey !== slot.locationId;
+                    const reorderProps = {
+                      draggable: true,
+                      onDragStart: (e: DragEvent<HTMLLIElement>) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", slot.locationId);
+                        setDraggingKey(slot.locationId);
+                      },
+                      onDragEnd: () => {
+                        setDraggingKey(null);
+                        setDragOverKey(null);
+                      },
+                      onDragOver: (e: DragEvent<HTMLLIElement>) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                        if (dragOverKey !== slot.locationId) {
+                          setDragOverKey(slot.locationId);
+                        }
+                      },
+                      onDragLeave: () => {
+                        if (dragOverKey === slot.locationId) {
+                          setDragOverKey(null);
+                        }
+                      },
+                      onDrop: (e: DragEvent<HTMLLIElement>) => {
+                        e.preventDefault();
+                        const fromKey =
+                          e.dataTransfer.getData("text/plain") || draggingKey;
+                        setDraggingKey(null);
+                        setDragOverKey(null);
+                        if (fromKey) {
+                          void reorderDaySlots(
+                            dayIndex,
+                            fromKey,
+                            slot.locationId
+                          );
+                        }
+                      },
+                    };
+                    const reorderControls = (
+                      <div className="mt-1.5 flex shrink-0 flex-col items-center gap-0.5">
+                        <button
+                          type="button"
+                          aria-label="Move up"
+                          disabled={slotIndex === 0}
+                          onClick={() =>
+                            void moveDaySlot(dayIndex, slot.locationId, -1)
+                          }
+                          className="rounded-md p-0.5 text-text-muted hover:bg-surface hover:text-text disabled:opacity-30"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <span
+                          className="cursor-grab text-text-muted active:cursor-grabbing"
+                          title="Drag to reorder"
+                          aria-hidden
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Move down"
+                          disabled={slotIndex >= activePlaces.length - 1}
+                          onClick={() =>
+                            void moveDaySlot(dayIndex, slot.locationId, 1)
+                          }
+                          className="rounded-md p-0.5 text-text-muted hover:bg-surface hover:text-text disabled:opacity-30"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                    const orderBadge = (
+                      <span
+                        className={cx(
+                          "mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ring-1",
+                          isSelected
+                            ? "bg-primary text-white ring-primary"
+                            : "bg-surface text-text-secondary ring-border"
+                        )}
+                      >
+                        {displayOrder}
+                      </span>
+                    );
+                    const rowClass = cx(
+                      "flex items-start gap-2 rounded-xl px-1 py-2 transition-colors",
+                      isDragging && "opacity-50",
+                      isDragOver && "bg-primary-tint/50 ring-1 ring-primary/30",
+                      isSelected &&
+                        !isDragOver &&
+                        "bg-primary-tint/40 ring-1 ring-primary/25"
+                    );
+                    const rowRef = (el: HTMLLIElement | null) => {
+                      if (el) placeRowRefs.current.set(slot.locationId, el);
+                      else placeRowRefs.current.delete(slot.locationId);
+                    };
+
                     if (slot.type === "gap") {
                       const gapTitle =
                         slot.title?.trim() ||
@@ -1434,8 +1885,11 @@ function ItineraryList({
                       return (
                         <li
                           key={slot.locationId}
-                          className="flex items-start gap-3 rounded-xl px-1 py-2"
+                          ref={rowRef}
+                          className={rowClass}
+                          {...reorderProps}
                         >
+                          {orderBadge}
                           <span className="mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-tint text-primary">
                             <Sparkles className="h-3 w-3" aria-hidden />
                           </span>
@@ -1449,6 +1903,7 @@ function ItineraryList({
                               </p>
                             ) : null}
                           </div>
+                          {reorderControls}
                         </li>
                       );
                     }
@@ -1480,6 +1935,28 @@ function ItineraryList({
                         : slot.durationMinutes != null
                           ? formatAvailableDuration(slot.durationMinutes)
                           : null;
+                      const depClock = route
+                        ? formatRouteClock(
+                            route.departure?.datetime,
+                            route.departure?.timezone,
+                            route.departure?.timeKnown
+                          )
+                        : null;
+                      const arrClock = route
+                        ? formatRouteClock(
+                            route.arrival?.datetime,
+                            route.arrival?.timezone,
+                            route.arrival?.timeKnown
+                          )
+                        : null;
+                      const routeTimeLabel =
+                        depClock && arrClock
+                          ? `${depClock} – ${arrClock}`
+                          : depClock
+                            ? `Dep ${depClock}`
+                            : arrClock
+                              ? `Arr ${arrClock}`
+                              : null;
                       const routeNote = route?.note?.trim() || null;
                       const price =
                         route?.priceLabel?.trim() ||
@@ -1492,26 +1969,80 @@ function ItineraryList({
                                   : ""
                               }`
                           : null);
+                      const visited = slot.status === "visited";
                       return (
                         <li
                           key={slot.locationId}
-                          className="flex items-start gap-3 rounded-xl px-1 py-2"
+                          ref={rowRef}
+                          className={rowClass}
+                          {...reorderProps}
                         >
-                          <span className="mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-tint text-primary">
-                            <TransportIcon className="h-3 w-3" aria-hidden />
-                          </span>
-                          <div className="min-w-0 flex-1 py-1.5">
-                            <p className="text-sm font-semibold text-text">
-                              {title}
+                          {orderBadge}
+                          <button
+                            type="button"
+                            aria-label={
+                              visited ? "Mark planned" : "Mark visited"
+                            }
+                            onClick={() =>
+                              onToggleStatus(
+                                dayIndex,
+                                slot.locationId,
+                                visited ? "planned" : "visited"
+                              )
+                            }
+                            className={cx(
+                              "mt-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                              visited
+                                ? "border-primary bg-primary text-white"
+                                : "border-border bg-white hover:border-primary/40"
+                            )}
+                          >
+                            {visited ? <Check className="h-3 w-3" /> : null}
+                          </button>
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer py-1.5 text-left"
+                            onClick={() =>
+                              onSelectPlace(slot.locationId, dayIndex)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                onSelectPlace(slot.locationId, dayIndex);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <p className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-semibold text-text">
+                              <span className="truncate">{title}</span>
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary-tint px-2 py-0.5 text-[10px] font-medium text-primary">
+                                <TransportIcon
+                                  className="h-3 w-3"
+                                  aria-hidden
+                                />
+                                {transportLabel}
+                              </span>
                             </p>
-                            <p className="mt-0.5 text-xs text-text-secondary">
-                              {[transportLabel, duration]
-                                .filter(Boolean)
-                                .join(" · ")}
-                              {routeNote
-                                ? `${duration || transportLabel ? " · " : ""}${routeNote}`
-                                : ""}
-                            </p>
+                            {routeTimeLabel ? (
+                              <p className="mt-0.5 flex items-center gap-1 text-xs text-text-secondary">
+                                <Clock className="h-3 w-3 shrink-0" />
+                                <span>
+                                  {routeTimeLabel}
+                                  {duration ? ` · ${duration}` : ""}
+                                </span>
+                              </p>
+                            ) : duration || routeNote ? (
+                              <p className="mt-0.5 text-xs text-text-secondary">
+                                {[duration, routeNote]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            ) : null}
+                            {routeTimeLabel && routeNote ? (
+                              <p className="mt-0.5 text-xs text-text-secondary">
+                                {routeNote}
+                              </p>
+                            ) : null}
                             {(price || route?.link) && (
                               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                                 {price ? (
@@ -1525,6 +2056,7 @@ function ItineraryList({
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
                                   >
                                     <ExternalLink className="h-3 w-3" />
                                     Book / info
@@ -1533,6 +2065,7 @@ function ItineraryList({
                               </div>
                             )}
                           </div>
+                          {reorderControls}
                         </li>
                       );
                     }
@@ -1571,8 +2104,11 @@ function ItineraryList({
                     return (
                       <li
                         key={slot.locationId}
-                        className="flex items-start gap-3 rounded-xl px-1 py-2"
+                        ref={rowRef}
+                        className={rowClass}
+                        {...reorderProps}
                       >
+                        {orderBadge}
                         <button
                           type="button"
                           aria-label={
@@ -1599,7 +2135,10 @@ function ItineraryList({
                           <button
                             type="button"
                             className="shrink-0 text-left"
-                            onClick={() => place && onOpen(place)}
+                            onClick={() => {
+                              onSelectPlace(slot.locationId, dayIndex);
+                              if (place) onOpen(place);
+                            }}
                           >
                             <PlaceThumb
                               place={place}
@@ -1611,7 +2150,10 @@ function ItineraryList({
                             <button
                               type="button"
                               className="w-full min-w-0 text-left"
-                              onClick={() => place && onOpen(place)}
+                              onClick={() => {
+                                onSelectPlace(slot.locationId, dayIndex);
+                                if (place) onOpen(place);
+                              }}
                             >
                               <span className="flex min-w-0 flex-wrap items-center gap-2">
                                 <span className="truncate text-sm font-semibold text-text">
@@ -1637,6 +2179,29 @@ function ItineraryList({
                             {displayDescription ? (
                               <p className="mt-1 text-xs text-text-secondary">
                                 {displayDescription}
+                              </p>
+                            ) : null}
+                            {slot.bestVisitTime?.from &&
+                            slot.bestVisitTime?.to ? (
+                              <p className="mt-1 flex items-center gap-1 text-xs font-medium text-text">
+                                <Clock className="h-3 w-3 shrink-0 text-primary" />
+                                <span>
+                                  {slot.bestVisitTime.from} –{" "}
+                                  {slot.bestVisitTime.to}
+                                  {slot.durationMinutes != null &&
+                                  Number.isFinite(slot.durationMinutes)
+                                    ? ` · ~${formatAvailableDuration(slot.durationMinutes)}`
+                                    : ""}
+                                </span>
+                              </p>
+                            ) : slot.durationMinutes != null &&
+                              Number.isFinite(slot.durationMinutes) ? (
+                              <p className="mt-1 flex items-center gap-1 text-xs text-text-secondary">
+                                <Clock className="h-3 w-3 shrink-0" />
+                                <span>
+                                  ~{formatAvailableDuration(slot.durationMinutes)}{" "}
+                                  visit
+                                </span>
                               </p>
                             ) : null}
                             {displayNote ? (
@@ -1688,12 +2253,7 @@ function ItineraryList({
                           </a>
                         ) : null}
 
-                        <span
-                          className="mt-3 hidden text-text-muted sm:inline-flex"
-                          aria-hidden
-                        >
-                          <GripVertical className="h-4 w-4" />
-                        </span>
+                        {reorderControls}
 
                         <div className="mt-1.5">
                           <PlaceMenu

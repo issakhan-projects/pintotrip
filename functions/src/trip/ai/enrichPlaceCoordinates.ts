@@ -306,7 +306,11 @@ export async function enrichItineraryPlaceCoordinates(
   for (const day of itinerary) {
     for (const slot of day.places ?? []) {
       const dest = destinations[slot.cityId];
-      for (const nested of slot.places ?? []) {
+      const candidates = [
+        ...(slot.places ?? []),
+        ...(slot.whereToEat ?? []),
+      ];
+      for (const nested of candidates) {
         if (!isLocationPlace(nested)) continue;
         const title = nested.title?.trim();
         if (!title) continue;
@@ -449,35 +453,48 @@ export async function enrichItineraryPlaceCoordinates(
 
   if (resolved.size === 0) return itinerary;
 
+  function applyResolved(
+    nested: TripPlannerAiResponseNestedPlace,
+    slotCityId: string
+  ): TripPlannerAiResponseNestedPlace {
+    if (!isLocationPlace(nested)) return nested;
+    const placeDocId = resolvePlaceDocId({
+      placeSlug: nested.id,
+      title: nested.title,
+    });
+    if (!placeDocId) return nested;
+    const dest = destinations[slotCityId];
+    const ids = resolvePlacesLocationIds({
+      cityName: nested.city.name || dest?.cityName || "",
+      countryName: nested.country.name || dest?.countryName || "",
+      cityId: nested.city.id || nested.cityId || dest?.cityId || "",
+      countryId: nested.country.id || dest?.countryId || "",
+    });
+    const key = ids
+      ? jobKey(ids.countryId, ids.locationId, placeDocId)
+      : `noid|${placeDocId}|${nested.title.trim().toLowerCase()}`;
+    const hit = resolved.get(key);
+    if (!hit) return nested;
+    return {
+      ...nested,
+      location: { lat: hit.lat, lon: hit.lon },
+    };
+  }
+
   return itinerary.map((day) => ({
     ...day,
     places: (day.places ?? []).map((slot) => ({
       ...slot,
-      places: (slot.places ?? []).map((nested) => {
-        if (!isLocationPlace(nested)) return nested;
-        const placeDocId = resolvePlaceDocId({
-          placeSlug: nested.id,
-          title: nested.title,
-        });
-        if (!placeDocId) return nested;
-        const dest = destinations[slot.cityId];
-        const ids = resolvePlacesLocationIds({
-          cityName: nested.city.name || dest?.cityName || "",
-          countryName: nested.country.name || dest?.countryName || "",
-          cityId:
-            nested.city.id || nested.cityId || dest?.cityId || "",
-          countryId: nested.country.id || dest?.countryId || "",
-        });
-        const key = ids
-          ? jobKey(ids.countryId, ids.locationId, placeDocId)
-          : `noid|${placeDocId}|${nested.title.trim().toLowerCase()}`;
-        const hit = resolved.get(key);
-        if (!hit) return nested;
-        return {
-          ...nested,
-          location: { lat: hit.lat, lon: hit.lon },
-        };
-      }),
+      places: (slot.places ?? []).map((nested) =>
+        applyResolved(nested, slot.cityId)
+      ),
+      ...(slot.whereToEat?.length
+        ? {
+            whereToEat: slot.whereToEat.map((nested) =>
+              applyResolved(nested, slot.cityId)
+            ) as TripPlannerAiResponseLocationPlace[],
+          }
+        : {}),
     })),
   }));
 }

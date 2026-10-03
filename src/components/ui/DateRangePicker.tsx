@@ -10,6 +10,14 @@ export type DateRangeValue = {
   to?: Date;
 };
 
+/** Existing trip (or other booking) already occupying calendar days. */
+export type BusyDateRange = {
+  id: string;
+  label: string;
+  from: Date;
+  to: Date;
+};
+
 interface DateRangePickerProps {
   value?: DateRangeValue;
   onValueChange?: (value: DateRangeValue) => void;
@@ -27,6 +35,11 @@ interface DateRangePickerProps {
    * 13 days apart). Applied while choosing the end date.
    */
   maxSpanDays?: number;
+  /**
+   * Existing trips to paint on the calendar. Days in these ranges (and
+   * selections that would span them) are disabled so new trips can’t overlap.
+   */
+  busyRanges?: BusyDateRange[];
   /** Kept for API compatibility. */
   enableSelect?: boolean;
   enableYearNavigation?: boolean;
@@ -96,6 +109,65 @@ function formatRangeDay(date: Date): string {
   }).format(date);
 }
 
+function formatCompactDay(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function dayKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/** Inclusive overlap of two day ranges. */
+function rangesOverlap(aFrom: Date, aTo: Date, bFrom: Date, bTo: Date): boolean {
+  const aStart = startOfDay(aFrom).getTime();
+  const aEnd = startOfDay(aTo).getTime();
+  const bStart = startOfDay(bFrom).getTime();
+  const bEnd = startOfDay(bTo).getTime();
+  return aStart <= bEnd && bStart <= aEnd;
+}
+
+function dayInBusyRanges(
+  date: Date,
+  busyRanges: BusyDateRange[]
+): BusyDateRange[] {
+  return busyRanges.filter((range) =>
+    rangesOverlap(date, date, range.from, range.to)
+  );
+}
+
+function selectionOverlapsBusy(
+  from: Date,
+  to: Date,
+  busyRanges: BusyDateRange[]
+): boolean {
+  return busyRanges.some((range) =>
+    rangesOverlap(from, to, range.from, range.to)
+  );
+}
+
+function normalizeBusyRanges(ranges: BusyDateRange[] | undefined): BusyDateRange[] {
+  if (!ranges?.length) return [];
+  return ranges.map((range) => ({
+    ...range,
+    from: startOfDay(range.from),
+    to: startOfDay(range.to),
+  }));
+}
+
+function rangesVisibleInMonth(
+  month: Date,
+  busyRanges: BusyDateRange[]
+): BusyDateRange[] {
+  const monthStart = startOfMonth(month);
+  const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  return busyRanges.filter((range) =>
+    rangesOverlap(range.from, range.to, monthStart, monthEnd)
+  );
+}
+
 type DayCell = {
   date: Date;
   inMonth: boolean;
@@ -143,12 +215,17 @@ export function DateRangePicker({
   disabled,
   minDate,
   maxSpanDays,
+  busyRanges: busyRangesProp,
 }: DateRangePickerProps) {
   const today = useMemo(() => startOfDay(new Date()), []);
   const earliest =
     minDate === null
       ? null
       : startOfDay(minDate ?? today);
+  const busyRanges = useMemo(
+    () => normalizeBusyRanges(busyRangesProp),
+    [busyRangesProp]
+  );
 
   const [draft, setDraft] = useState<DateRangeValue>(() => ({
     from: value?.from ? startOfDay(value.from) : undefined,
@@ -202,6 +279,7 @@ export function DateRangePicker({
     if (disabled) return;
     const picked = startOfDay(day);
     if (earliest && isBeforeDay(picked, earliest)) return;
+    if (dayInBusyRanges(picked, busyRanges).length > 0) return;
 
     // Start a new range, or set the end date.
     if (!draft.from || (draft.from && draft.to)) {
@@ -210,6 +288,7 @@ export function DateRangePicker({
     }
 
     if (sameDay(draft.from, picked)) {
+      if (selectionOverlapsBusy(picked, picked, busyRanges)) return;
       commitDraft({ from: picked, to: picked });
       return;
     }
@@ -217,10 +296,12 @@ export function DateRangePicker({
     if (exceedsMaxSpan(draft.from, picked)) return;
 
     if (isBeforeDay(picked, draft.from)) {
+      if (selectionOverlapsBusy(picked, draft.from, busyRanges)) return;
       commitDraft({ from: picked, to: draft.from });
       return;
     }
 
+    if (selectionOverlapsBusy(draft.from, picked, busyRanges)) return;
     commitDraft({ from: draft.from, to: picked });
   }
 
@@ -244,9 +325,15 @@ export function DateRangePicker({
     });
   }
 
+  const draftOverlapsBusy = Boolean(
+    draft.from &&
+      draft.to &&
+      selectionOverlapsBusy(draft.from, draft.to, busyRanges)
+  );
   const canApply =
     Boolean(draft.from && draft.to) &&
     !disabled &&
+    !draftOverlapsBusy &&
     !(draft.from && draft.to && exceedsMaxSpan(draft.from, draft.to));
   const rangeLabel =
     draft.from && draft.to
@@ -254,6 +341,19 @@ export function DateRangePicker({
       : draft.from
         ? `Range: ${formatRangeDay(draft.from)} - …`
         : "Select a start and end date";
+
+  const visibleBusyTrips = useMemo(() => {
+    const byId = new Map<string, BusyDateRange>();
+    for (const range of [
+      ...rangesVisibleInMonth(leftMonth, busyRanges),
+      ...rangesVisibleInMonth(rightMonth, busyRanges),
+    ]) {
+      byId.set(range.id, range);
+    }
+    return [...byId.values()].sort(
+      (a, b) => a.from.getTime() - b.from.getTime()
+    );
+  }, [busyRanges, leftMonth, rightMonth]);
 
   return (
     <div
@@ -269,6 +369,7 @@ export function DateRangePicker({
           today={today}
           earliest={earliest}
           maxSpanDays={maxSpanDays}
+          busyRanges={busyRanges}
           disabled={disabled}
           onPrev={() => shiftLeft(-1)}
           onNext={() => shiftLeft(1)}
@@ -280,6 +381,7 @@ export function DateRangePicker({
           today={today}
           earliest={earliest}
           maxSpanDays={maxSpanDays}
+          busyRanges={busyRanges}
           disabled={disabled}
           onPrev={() => shiftRight(-1)}
           onNext={() => shiftRight(1)}
@@ -288,9 +390,38 @@ export function DateRangePicker({
         />
       </div>
 
+      {visibleBusyTrips.length > 0 ? (
+        <div className="border-t border-border px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+            Your trips
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {visibleBusyTrips.map((trip) => (
+              <li
+                key={trip.id}
+                className="flex items-center gap-2 text-sm text-text"
+              >
+                <span className="h-2 w-2 shrink-0 rounded-full bg-warning" />
+                <span className="min-w-0 flex-1 truncate font-medium">
+                  {trip.label}
+                </span>
+                <span className="shrink-0 text-xs tabular-nums text-text-muted">
+                  {formatCompactDay(trip.from)}–{formatCompactDay(trip.to)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-text-muted">
+            Occupied days can’t be selected so trips don’t overlap.
+          </p>
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="min-w-0 truncate text-sm text-text-secondary">
-          {rangeLabel}
+          {draftOverlapsBusy
+            ? "Selected range overlaps an existing trip."
+            : rangeLabel}
         </p>
         <div className="flex shrink-0 justify-end gap-2">
           <Button
@@ -306,6 +437,9 @@ export function DateRangePicker({
             onClick={() => {
               if (!draft.from || !draft.to) return;
               if (exceedsMaxSpan(draft.from, draft.to)) return;
+              if (selectionOverlapsBusy(draft.from, draft.to, busyRanges)) {
+                return;
+              }
               onApply?.(draft);
             }}
             className="!h-9 !px-4"
@@ -324,6 +458,7 @@ function MonthPanel({
   today,
   earliest,
   maxSpanDays,
+  busyRanges,
   disabled,
   onPrev,
   onNext,
@@ -335,6 +470,7 @@ function MonthPanel({
   today: Date;
   earliest: Date | null;
   maxSpanDays?: number;
+  busyRanges: BusyDateRange[];
   disabled?: boolean;
   onPrev: () => void;
   onNext: () => void;
@@ -343,6 +479,21 @@ function MonthPanel({
 }) {
   const cells = useMemo(() => buildMonthGrid(month), [month]);
   const selectingEnd = Boolean(draft.from && !draft.to);
+
+  const busyByDay = useMemo(() => {
+    const map = new Map<string, BusyDateRange[]>();
+    for (const range of busyRanges) {
+      const cursor = new Date(range.from);
+      while (!isAfterDay(cursor, range.to)) {
+        const key = dayKey(cursor);
+        const list = map.get(key) ?? [];
+        list.push(range);
+        map.set(key, list);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+    return map;
+  }, [busyRanges]);
 
   return (
     <div className={cx("p-3 sm:p-4", className)}>
@@ -392,18 +543,40 @@ function MonthPanel({
             !isBeforeDay(date, draft.from!) &&
             !isAfterDay(date, draft.to!);
           const isToday = sameDay(date, today);
+          const dayBusy = inMonth ? (busyByDay.get(dayKey(date)) ?? []) : [];
+          const isBusy = dayBusy.length > 0;
+          const busyStart = dayBusy.some((trip) => sameDay(date, trip.from));
+          const busyEnd = dayBusy.some((trip) => sameDay(date, trip.to));
+          const busySingle = dayBusy.some((trip) =>
+            sameDay(trip.from, trip.to)
+          );
           const outsideSpan =
             selectingEnd &&
             typeof maxSpanDays === "number" &&
             maxSpanDays > 0 &&
             inclusiveDayCount(draft.from!, date) > maxSpanDays;
+          const crossesBusy =
+            selectingEnd &&
+            selectionOverlapsBusy(
+              isBeforeDay(date, draft.from!) ? date : draft.from!,
+              isBeforeDay(date, draft.from!) ? draft.from! : date,
+              busyRanges
+            );
           const isDisabled =
             Boolean(disabled) ||
             (earliest ? isBeforeDay(date, earliest) : false) ||
-            outsideSpan;
+            outsideSpan ||
+            isBusy ||
+            crossesBusy;
 
           const rangeBar =
             inRange && draft.from && draft.to && !sameDay(draft.from, draft.to);
+          const busyBar =
+            isBusy &&
+            inMonth &&
+            !rangeBar &&
+            !isEndpoint &&
+            !(busyStart && busyEnd);
 
           return (
             <div
@@ -412,19 +585,48 @@ function MonthPanel({
                 "relative flex items-center justify-center py-0.5",
                 rangeBar && inMonth && "bg-primary-tint",
                 rangeBar && inMonth && isStart && "rounded-l-lg",
-                rangeBar && inMonth && isEnd && "rounded-r-lg"
+                rangeBar && inMonth && isEnd && "rounded-r-lg",
+                busyBar && "bg-warning-background",
+                busyBar && busyStart && !busyEnd && "rounded-l-lg",
+                busyBar && busyEnd && !busyStart && "rounded-r-lg"
               )}
+              title={
+                isBusy
+                  ? dayBusy.map((trip) => trip.label).join(", ")
+                  : undefined
+              }
             >
               <button
                 type="button"
                 disabled={isDisabled || !inMonth}
                 onClick={() => onSelect(date)}
+                aria-label={
+                  isBusy
+                    ? `${date.getDate()}, occupied by ${dayBusy.map((t) => t.label).join(", ")}`
+                    : `${date.getDate()}`
+                }
                 className={cx(
                   "relative z-[1] flex h-9 w-9 flex-col items-center justify-center rounded-lg text-sm transition-colors",
                   !inMonth && "text-text-muted/50",
-                  inMonth && !isEndpoint && "text-text hover:bg-primary-tint",
+                  inMonth &&
+                    !isEndpoint &&
+                    !isBusy &&
+                    "text-text hover:bg-primary-tint",
+                  inMonth &&
+                    isBusy &&
+                    !isEndpoint &&
+                    "font-medium text-warning",
+                  inMonth &&
+                    isBusy &&
+                    (busyStart || busyEnd || busySingle) &&
+                    !isEndpoint &&
+                    "bg-warning text-white",
                   isEndpoint && "bg-primary font-semibold text-white",
-                  isDisabled && inMonth && "cursor-not-allowed opacity-40",
+                  isDisabled &&
+                    inMonth &&
+                    !isBusy &&
+                    "cursor-not-allowed opacity-40",
+                  isBusy && inMonth && "cursor-not-allowed",
                   !inMonth && "pointer-events-none"
                 )}
               >
@@ -433,9 +635,27 @@ function MonthPanel({
                   <span
                     className={cx(
                       "absolute bottom-1 h-1 w-1 rounded-full",
-                      isEndpoint ? "bg-white" : "bg-primary"
+                      isEndpoint ||
+                        (isBusy && (busyStart || busyEnd || busySingle))
+                        ? "bg-white"
+                        : "bg-primary"
                     )}
                   />
+                ) : null}
+                {isBusy && inMonth && dayBusy.length > 1 ? (
+                  <span className="absolute -bottom-0.5 flex gap-0.5">
+                    {dayBusy.slice(0, 3).map((trip) => (
+                      <span
+                        key={trip.id}
+                        className={cx(
+                          "h-1 w-1 rounded-full",
+                          busyStart || busyEnd || busySingle
+                            ? "bg-white/90"
+                            : "bg-warning"
+                        )}
+                      />
+                    ))}
+                  </span>
                 ) : null}
               </button>
             </div>

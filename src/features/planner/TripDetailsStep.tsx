@@ -21,12 +21,17 @@ import {
   Plane,
   Stamp,
   Tag,
+  Utensils,
   Wallet,
 } from "lucide-react";
 import { getFlagEmoji } from "country-flag-select";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type { TripDestinationStop, TripPlannerDoc, TripRoute } from "@/types/trip-planner";
-import { SPEND_MONEY_OPTIONS } from "@/types/trip-planner";
+import {
+  MEAL_TYPE_OPTIONS,
+  MEAL_TYPES,
+  SPEND_MONEY_OPTIONS,
+} from "@/types/trip-planner";
 import { LEISURE_TYPE_OPTIONS } from "@/types/trip-plan";
 import { tripDayCount } from "@/services/trip-planner";
 import { subscribeTripRoutes } from "@/services/trip-routes";
@@ -71,6 +76,38 @@ function useTripRoutes(userId: string, tripId: string): TripRoute[] {
   return routes;
 }
 
+function leisureLabelForTrip(trip: TripPlannerDoc): string | null {
+  if (!trip.leisureType) return null;
+  if (trip.leisureType === "custom" && trip.leisureCustom?.trim()) {
+    return `Custom — ${trip.leisureCustom.trim()}`;
+  }
+  return (
+    LEISURE_TYPE_OPTIONS.find((o) => o.value === trip.leisureType)?.label ??
+    trip.leisureType
+  );
+}
+
+function mealLabelForTrip(trip: TripPlannerDoc): string {
+  const mealType =
+    trip.mealType && (MEAL_TYPES as readonly string[]).includes(trip.mealType)
+      ? trip.mealType
+      : "default";
+  if (mealType === "other" && trip.mealCustom?.trim()) {
+    return `Other — ${trip.mealCustom.trim()}`;
+  }
+  return (
+    MEAL_TYPE_OPTIONS.find((o) => o.id === mealType)?.label ?? mealType
+  );
+}
+
+function spendLabelForTrip(trip: TripPlannerDoc): string | null {
+  if (!trip.spendMoney) return null;
+  return (
+    SPEND_MONEY_OPTIONS.find((o) => o.id === trip.spendMoney)?.label ??
+    trip.spendMoney
+  );
+}
+
 export function TripDetailsStep(props: TripDetailsStepProps) {
   const routes = useTripRoutes(props.userId, props.trip.id);
   const cities = listTripDestinations(props.trip);
@@ -98,6 +135,9 @@ function SingleCityTripDetails({
     .join(", ");
   const days = tripDayCount(trip.startDate, trip.endDate);
   const readiness = computeTripReadiness(trip, routes, locations);
+  const leisureLabel = leisureLabelForTrip(trip);
+  const mealLabel = mealLabelForTrip(trip);
+  const spendLabel = spendLabelForTrip(trip);
 
   return (
     <div className="space-y-6">
@@ -157,8 +197,18 @@ function SingleCityTripDetails({
               label="Home Currency"
               value={`${trip.currency.name} (${trip.currency.code})`}
               chevron
-              last
             />
+            {leisureLabel ? (
+              <InfoRow
+                icon={Compass}
+                label="Type of leisure"
+                value={leisureLabel}
+              />
+            ) : null}
+            <InfoRow icon={Utensils} label="Meal type" value={mealLabel} />
+            {spendLabel ? (
+              <InfoRow icon={Wallet} label="Spend money" value={spendLabel} last />
+            ) : null}
           </div>
         </section>
 
@@ -232,16 +282,9 @@ function MultiCityTripDetails({
   const days = tripDayCount(trip.startDate, trip.endDate);
   const groups = groupTripDestinationsByCountry(cities);
   const readiness = computeTripReadiness(trip, routes, locations);
-  const leisureLabel = trip.leisureType
-    ? trip.leisureType === "custom" && trip.leisureCustom?.trim()
-      ? `Custom — ${trip.leisureCustom.trim()}`
-      : LEISURE_TYPE_OPTIONS.find((o) => o.value === trip.leisureType)?.label ??
-        trip.leisureType
-    : null;
-  const spendLabel = trip.spendMoney
-    ? SPEND_MONEY_OPTIONS.find((o) => o.id === trip.spendMoney)?.label ??
-      trip.spendMoney
-    : null;
+  const leisureLabel = leisureLabelForTrip(trip);
+  const mealLabel = mealLabelForTrip(trip);
+  const spendLabel = spendLabelForTrip(trip);
 
   return (
     <div className="space-y-6">
@@ -295,11 +338,15 @@ function MultiCityTripDetails({
               label="Currency"
               value={`${trip.currency.name} (${trip.currency.code})`}
               chevron
-              last={!leisureLabel && !spendLabel}
             />
             {leisureLabel ? (
-              <InfoRow icon={Compass} label="Type of leisure" value={leisureLabel} />
+              <InfoRow
+                icon={Compass}
+                label="Type of leisure"
+                value={leisureLabel}
+              />
             ) : null}
+            <InfoRow icon={Utensils} label="Meal type" value={mealLabel} />
             {spendLabel ? (
               <InfoRow icon={Wallet} label="Spend money" value={spendLabel} last />
             ) : null}

@@ -19,18 +19,24 @@ import {
   Route,
   Sparkles,
   Tag,
+  Utensils,
   Wallet,
   X,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import type { SavedLocation } from "@/hooks/useLocations";
+import { useTrips } from "@/hooks/useTrips";
 import type { UserProfile } from "@/types/user";
+import type { BusyDateRange } from "@/components/ui";
 import {
   MAX_TRIP_DAYS,
   MAX_TRIP_DESTINATIONS,
+  MEAL_CUSTOM_MAX_LENGTH,
+  MEAL_TYPE_OPTIONS,
   SPEND_MONEY_OPTIONS,
   TRIP_STOP_TYPE_OPTIONS,
+  type MealType,
   type SpendMoneyLevel,
   type TripCreateMode,
   type TripDestination,
@@ -77,7 +83,7 @@ import {
   type CityGroupOption,
   type DestinationMode,
 } from "./CreateTripDestinationPicker";
-import { isSaudiArabiaCountry } from "./tripDestinations";
+import { isSaudiArabiaCountry, primaryTripDestination } from "./tripDestinations";
 
 interface CreateTripSheetProps {
   open: boolean;
@@ -228,6 +234,15 @@ export function CreateTripSheet({
   );
 }
 
+function rangesOverlapDays(
+  aFrom: Date,
+  aTo: Date,
+  bFrom: Date,
+  bTo: Date
+): boolean {
+  return aFrom.getTime() <= bTo.getTime() && bFrom.getTime() <= aTo.getTime();
+}
+
 function CreateTripForm({
   userId,
   profile,
@@ -242,6 +257,26 @@ function CreateTripForm({
   onCreated?: (tripId: string) => void;
 }) {
   const router = useRouter();
+  const { trips } = useTrips(userId);
+  const busyRanges = useMemo<BusyDateRange[]>(
+    () =>
+      trips
+        .filter((trip) => trip.status !== "cancelled")
+        .map((trip) => {
+          const primary = primaryTripDestination(trip);
+          return {
+            id: trip.id,
+            label:
+              trip.name?.trim() ||
+              primary.cityName ||
+              primary.countryName ||
+              "Trip",
+            from: startOfLocalDay(trip.startDate.toDate()),
+            to: startOfLocalDay(trip.endDate.toDate()),
+          };
+        }),
+    [trips]
+  );
   const cityGroups = useMemo<CityGroupOption[]>(() => {
     const countries = groupLocationsByCountryCity(locations);
     return countries.flatMap((country) =>
@@ -290,6 +325,8 @@ function CreateTripForm({
   );
   const [leisureType, setLeisureType] = useState<LeisureType>("mixed");
   const [leisureCustom, setLeisureCustom] = useState("");
+  const [mealType, setMealType] = useState<MealType>("default");
+  const [mealCustom, setMealCustom] = useState("");
   const [spendMoney, setSpendMoney] = useState<SpendMoneyLevel>("medium");
   const [tripName, setTripName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -619,6 +656,21 @@ function CreateTripForm({
       };
     }
 
+    if (isAsciiId(place.cityId) && isAsciiId(place.countryId)) {
+      return {
+        cityId: place.cityId!.trim().toLowerCase(),
+        countryId: place.countryId!.trim().toLowerCase(),
+        countryCode:
+          place.countryCode ||
+          resolveCountryCode(place.countryName) ||
+          (place.countryId!.length === 2
+            ? place.countryId!.toUpperCase()
+            : ""),
+        cityNameEn: place.cityName,
+        countryNameEn: place.countryName,
+      };
+    }
+
     const fromNames = englishPlaceIdsFromNames(
       place.cityName,
       place.countryName,
@@ -736,16 +788,21 @@ function CreateTripForm({
     };
   }
 
-  function matchingPlaceIdsForCity(savedKey: string | null): string[] {
-    if (savedKey == null) return [];
-    const city = cityGroups.find((c) => c.key === savedKey);
-    if (!city) return [];
+  function matchingPlaceIdsForCityIds(
+    cityId: string | undefined,
+    countryId: string | undefined
+  ): string[] {
+    const city = cityId?.trim().toLowerCase() ?? "";
+    if (!isAsciiId(city)) return [];
+    const country = countryId?.trim().toLowerCase() ?? "";
     return locations
-      .filter(
-        (l) =>
-          (l.city.id || l.city.name) === city.cityId &&
-          (l.country.id || l.country.name) === city.countryId
-      )
+      .filter((l) => {
+        const locCity = (l.city.id || "").trim().toLowerCase();
+        if (locCity !== city) return false;
+        if (!country) return true;
+        const locCountry = (l.country.id || "").trim().toLowerCase();
+        return !locCountry || locCountry === country;
+      })
       .map((l) => l.id);
   }
 
@@ -806,12 +863,29 @@ function CreateTripForm({
       setError(`Trip can be at most ${MAX_TRIP_DAYS} days.`);
       return;
     }
+    {
+      const tripStart = startOfLocalDay(dateRange.from);
+      const tripEnd = startOfLocalDay(dateRange.to);
+      const overlap = busyRanges.find((range) =>
+        rangesOverlapDays(tripStart, tripEnd, range.from, range.to)
+      );
+      if (overlap) {
+        setError(
+          `Dates overlap with “${overlap.label}”. Choose dates that don’t conflict.`
+        );
+        return;
+      }
+    }
     if (!currencyCode) {
       setError("Select a currency.");
       return;
     }
     if (leisureType === "custom" && !leisureCustom.trim()) {
       setError("Describe the activities you want for Custom leisure.");
+      return;
+    }
+    if (mealType === "other" && !mealCustom.trim()) {
+      setError("Describe your meal preference for Other.");
       return;
     }
 
@@ -973,10 +1047,12 @@ function CreateTripForm({
         startDate: dateRange.from,
       });
 
+      // Link planned places whose city.id matches each destination (not only
+      // when the user picked from the saved-city picker).
       const matchingPlaceIds = [
         ...new Set(
-          selectedPlaces.flatMap((item) =>
-            matchingPlaceIdsForCity(item.savedKey)
+          destinationStops.flatMap((stop) =>
+            matchingPlaceIdsForCityIds(stop.cityId, stop.countryId)
           )
         ),
       ];
@@ -1009,6 +1085,12 @@ function CreateTripForm({
               leisureCustom: leisureCustom
                 .trim()
                 .slice(0, LEISURE_CUSTOM_MAX_LENGTH),
+            }
+          : {}),
+        mealType,
+        ...(mealType === "other" && mealCustom.trim()
+          ? {
+              mealCustom: mealCustom.trim().slice(0, MEAL_CUSTOM_MAX_LENGTH),
             }
           : {}),
         spendMoney,
@@ -1541,6 +1623,7 @@ function CreateTripForm({
           value={dateRange}
           onChange={setDateRange}
           maxSpanDays={MAX_TRIP_DAYS}
+          busyRanges={busyRanges}
           disabled={saving}
         />
 
@@ -1580,6 +1663,58 @@ function CreateTripForm({
                 />
                 <p className="mt-1.5 text-xs text-text-muted">
                   Tell us what you want to do — we’ll prioritize those activities.
+                </p>
+              </div>
+            ) : null}
+          </section>
+
+          <section>
+            <FieldLabel icon={Utensils}>Meal type</FieldLabel>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {MEAL_TYPE_OPTIONS.map((option) => {
+                const selected = mealType === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setMealType(option.id)}
+                    className={cx(
+                      "rounded-xl border px-2.5 py-2.5 text-left transition-all",
+                      selected
+                        ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/15"
+                        : "border-border bg-surface-elevated text-text-secondary hover:border-primary/30 hover:text-text"
+                    )}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {option.label}
+                    </span>
+                    <span
+                      className={cx(
+                        "mt-0.5 block text-[10px] leading-snug",
+                        selected ? "text-primary/75" : "text-text-muted"
+                      )}
+                    >
+                      {option.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {mealType === "other" ? (
+              <div className="mt-2">
+                <TextInput
+                  value={mealCustom}
+                  onChange={(e) =>
+                    setMealCustom(
+                      e.target.value.slice(0, MEAL_CUSTOM_MAX_LENGTH)
+                    )
+                  }
+                  placeholder="e.g. vegan, gluten-free, no seafood"
+                  maxLength={MEAL_CUSTOM_MAX_LENGTH}
+                  disabled={saving}
+                />
+                <p className="mt-1.5 text-xs text-text-muted">
+                  We’ll prefer restaurants and food spots that match this.
                 </p>
               </div>
             ) : null}

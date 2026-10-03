@@ -4,18 +4,27 @@ import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { Lock, Plus } from "lucide-react";
+import { History, Lock, PlaneTakeoff, Plus, type LucideIcon } from "lucide-react";
+import { Timestamp } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { useTrips } from "@/hooks/useTrips";
 import { useLocations } from "@/hooks/useLocations";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { isProEntitled } from "@/features/profile/plans";
 import { deleteTrip, updateTrip } from "@/services/trip-planner";
+import { getTripReview } from "@/services/trip-reviews";
 import type { TripPlannerDoc } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
 import { TripCard } from "./TripCard";
 import { TripCalendar } from "./TripCalendar";
 import { CreateTripSheet } from "./CreateTripSheet";
+import { TripReviewModal } from "./TripReviewModal";
+import {
+  isPastTrip,
+  needsCompletedStatus,
+  needsTripReviewPrompt,
+  startOfToday,
+} from "./tripLifecycle";
 
 interface TripPlannerPanelProps {
   user: User;
@@ -23,63 +32,34 @@ interface TripPlannerPanelProps {
   resyncOnMount?: boolean;
 }
 
-type TripFilterTab = "all" | "active" | "past";
+type TripFilterTab = "active" | "past";
 
-const TRIP_TABS: Array<{ id: TripFilterTab; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "active", label: "Active" },
-  { id: "past", label: "Past" },
-];
-
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-/** Past = completed/cancelled, or end date before today. */
-function isPastTrip(trip: TripPlannerDoc, today = startOfToday()): boolean {
-  if (trip.status === "completed" || trip.status === "cancelled") return true;
-  return trip.endDate.toDate() < today;
-}
-
-/** Trips whose calendar window ended but Firestore status was never flipped. */
-function needsCompletedStatus(
-  trip: TripPlannerDoc,
-  today = startOfToday()
-): boolean {
-  if (trip.status === "completed" || trip.status === "cancelled") return false;
-  return trip.endDate.toDate() < today;
-}
+const TRIP_TABS: Array<{ id: TripFilterTab; label: string; icon: LucideIcon }> =
+  [
+    { id: "active", label: "Active", icon: PlaneTakeoff },
+    { id: "past", label: "Past", icon: History },
+  ];
 
 function filterTrips(
   trips: TripPlannerDoc[],
   tab: TripFilterTab
 ): TripPlannerDoc[] {
-  if (tab === "all") return trips;
   const today = startOfToday();
   if (tab === "past") return trips.filter((t) => isPastTrip(t, today));
   return trips.filter((t) => !isPastTrip(t, today));
 }
 
 function emptyCopy(tab: TripFilterTab): { title: string; body: string } {
-  switch (tab) {
-    case "active":
-      return {
-        title: "Where to next?",
-        body: "No active trips yet. Create one and it will show up here.",
-      };
-    case "past":
-      return {
-        title: "No past trips",
-        body: "Completed and past trips will appear here after you travel.",
-      };
-    default:
-      return {
-        title: "Where to next?",
-        body: "You don't have any trips yet. When you create one, it will appear here.",
-      };
+  if (tab === "past") {
+    return {
+      title: "No past trips",
+      body: "Completed and past trips will appear here after you travel.",
+    };
   }
+  return {
+    title: "Where to next?",
+    body: "No active trips yet. Create one and it will show up here.",
+  };
 }
 
 /**
@@ -97,15 +77,17 @@ export function TripPlannerPanel({
   const isPro = isProEntitled(profile?.subscription);
   const [createOpen, setCreateOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [tab, setTab] = useState<TripFilterTab>("all");
+  const [tab, setTab] = useState<TripFilterTab>("active");
+  const [reviewTrip, setReviewTrip] = useState<TripPlannerDoc | null>(null);
   const completingIdsRef = useRef<Set<string>>(new Set());
+  const reviewCheckedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!resyncOnMount) return;
     void refresh({ hard: true, silent: true });
   }, [resyncOnMount, refresh]);
 
-  // Persist status=completed when a trip's end date has passed.
+  // Persist status=completed when a trip's end date has passed, then offer review.
   useEffect(() => {
     if (loading || !isPro || trips.length === 0) return;
 
@@ -125,12 +107,55 @@ export function TripPlannerPanel({
       stale.map(async (trip) => {
         try {
           await updateTrip(user.uid, trip.id, { status: "completed" });
+          return trip;
         } catch {
           completingIdsRef.current.delete(trip.id);
+          return null;
         }
       })
-    );
+    ).then((completed) => {
+      const first = completed.find((trip): trip is TripPlannerDoc =>
+        Boolean(trip)
+      );
+      if (first) {
+        setReviewTrip((current) =>
+          current ? current : { ...first, status: "completed" }
+        );
+      }
+    });
   }, [loading, isPro, trips, user.uid]);
+
+  // Also prompt for already-completed trips that still need a review.
+  useEffect(() => {
+    if (loading || !isPro || reviewTrip || trips.length === 0) return;
+
+    const candidates = trips.filter(
+      (trip) =>
+        needsTripReviewPrompt(trip) && !reviewCheckedRef.current.has(trip.id)
+    );
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      for (const trip of candidates) {
+        reviewCheckedRef.current.add(trip.id);
+        try {
+          const existing = await getTripReview(user.uid, trip.id);
+          if (cancelled) return;
+          if (!existing) {
+            setReviewTrip(trip);
+            return;
+          }
+        } catch {
+          // Ignore read errors; try next trip.
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, isPro, trips, user.uid, reviewTrip]);
 
   const filteredTrips = filterTrips(trips, tab);
 
@@ -141,6 +166,19 @@ export function TripPlannerPanel({
       await deleteTrip(user.uid, tripId);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function dismissReviewPrompt() {
+    const trip = reviewTrip;
+    setReviewTrip(null);
+    if (!trip) return;
+    try {
+      await updateTrip(user.uid, trip.id, {
+        reviewDismissedAt: Timestamp.now(),
+      });
+    } catch {
+      // Keep UI closed even if dismiss write fails.
     }
   }
 
@@ -201,6 +239,7 @@ export function TripPlannerPanel({
         >
           {TRIP_TABS.map((item) => {
             const selected = tab === item.id;
+            const Icon = item.icon;
             return (
               <button
                 key={item.id}
@@ -209,12 +248,13 @@ export function TripPlannerPanel({
                 aria-selected={selected}
                 onClick={() => setTab(item.id)}
                 className={cx(
-                  "flex-1 rounded-full px-3 py-2 text-sm font-medium transition-colors",
+                  "inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium transition-colors",
                   selected
                     ? "bg-surface-elevated text-text shadow-sm"
                     : "text-text-secondary hover:text-text"
                 )}
               >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden />
                 {item.label}
               </button>
             );
@@ -312,6 +352,15 @@ export function TripPlannerPanel({
         userId={user.uid}
         profile={profile}
         locations={locations}
+      />
+
+      <TripReviewModal
+        open={Boolean(reviewTrip)}
+        userId={user.uid}
+        tripId={reviewTrip?.id ?? ""}
+        tripName={reviewTrip?.name ?? ""}
+        onClose={() => void dismissReviewPrompt()}
+        onSubmitted={() => setReviewTrip(null)}
       />
     </div>
   );

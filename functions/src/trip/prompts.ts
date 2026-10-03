@@ -84,7 +84,8 @@ Priority (highest first):
 5. Saved places / preferences
 
 For EVERY empty day and EVERY leisureType:
-- Suggest at least one real place or concrete activity tied to the selected city/destination.
+- Suggest at least one real place OR concrete tourist activity/experience tied to the selected city/destination.
+- Consider bookable things travelers actually do: tours, boat/water experiences, cultural experiences, shows/performances, outdoor activities, wellness, local experiences, entertainment, and short paid activities that fit free time — weighted by leisureType.
 - Base recommendations on the destination, available time, season, location, saved places, city intelligence, and trip context.
 - You MAY recommend activities outside the selected leisureType when they are particularly relevant to the destination (e.g. diving in a diving capital, a famous night show, a sunset viewpoint with a nearby restaurant).
 - Do NOT hardcode generic templates — discover appropriate places/activities dynamically for each destination.
@@ -214,7 +215,7 @@ Do treat every day as needing at least one concrete, destination-specific place 
 Never sacrifice a genuinely interesting destination experience just because it does not perfectly match leisureType.
 
 You receive a TripPlanningContext JSON with:
-- trip (name, from, destinations with stopType, dates, leisureType, spendMoney, createMode, planMode, currency)
+- trip (name, from, destinations with stopType, dates, leisureType, spendMoney, mealType, createMode, planMode, currency)
 - journey (citySequence, legs with source user|ai_required, summary) — SOURCE OF TRUTH for sequence
 - cityIntelligence (visa, safety, best time, apps, practical tips when available)
 - routes (existing user TripRoute legs — fixed; echo with existingRouteId)
@@ -307,6 +308,11 @@ export function buildPlanTripUserPrompt(input: {
     leisureType === "custom" && leisureCustom
       ? `leisureCustom: ${leisureCustom}`
       : "",
+    context.trip.mealType && context.trip.mealType !== "default"
+      ? context.trip.mealType === "other" && context.trip.mealCustom?.trim()
+        ? `Meal preference (HARD FILTER): other (${context.trip.mealCustom.trim()}) — never recommend violating food even if popular`
+        : `Meal preference (HARD FILTER): ${context.trip.mealType} — only matching dining; never recommend violating food (e.g. no pork/bacon for halal) even if popular`
+      : "Meal preference: default — no dietary filter",
     `Categories: ${PLACE_CATEGORIES.join(", ")}`,
     "cityId/countryId/countryCode stay English/ASCII.",
     "",

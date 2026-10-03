@@ -1176,6 +1176,8 @@ function pushCityFreeTime(
   opts?: {
     softFullDay?: boolean;
     leisureType?: TripPlannerAiRequestDestination["leisureType"];
+    /** Mutable per-city queues — each saved id used at most once trip-wide. */
+    savedPools?: Map<string, string[]>;
   }
 ): void {
   if (!isUsableCityId(cityId)) return;
@@ -1193,29 +1195,62 @@ function pushCityFreeTime(
   }
 
   const leisureType = dest?.leisureType ?? opts?.leisureType;
+  const durationMinutes =
+    freeTime.durationMinutes ??
+    durationMinutesBetween(freeTime.start, freeTime.end);
 
   places.push({
     cityId: cityId.trim().toLowerCase(),
     freeTime,
     ...(leisureType ? { leisureType } : {}),
-    places: nestedPlacesFromDestination(dest),
+    // Distribute each saved place to at most one slot (not every day).
+    places: takeSavedPlacesForSlot(cityId, opts?.savedPools, durationMinutes),
   });
 }
 
+/** How many saved places to seed into one free-time window. */
+function savedPlaceBudget(durationMinutes?: number): number {
+  if (durationMinutes == null) return 1;
+  if (durationMinutes < 90) return 1;
+  if (durationMinutes < 240) return 1;
+  if (durationMinutes < 480) return 2;
+  return 2;
+}
+
 /**
- * Attach places for a free-time city slot:
- * - savedPlaces (when non-empty) → `{ locationId }` only
- * - new/suggested places would use the full location payload (not invented here)
+ * Per-city queues of saved locationIds. Each id is taken at most once across
+ * the trip so multi-day stays / regenerate do not repeat the same places daily.
  */
-function nestedPlacesFromDestination(
-  dest: TripPlannerAiRequestDestination | undefined
+function buildSavedPlacePools(
+  destinations: TripPlannerAiRequestDestination[]
+): Map<string, string[]> {
+  const pools = new Map<string, string[]>();
+  for (const dest of destinations) {
+    const cityId = dest.cityId?.trim().toLowerCase();
+    if (!cityId) continue;
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const place of dest.savedPlaces ?? []) {
+      const id = place.id?.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    pools.set(cityId, ids);
+  }
+  return pools;
+}
+
+function takeSavedPlacesForSlot(
+  cityId: string,
+  pools: Map<string, string[]> | undefined,
+  durationMinutes?: number
 ): TripPlannerAiResponseNestedPlace[] {
-  const saved = dest?.savedPlaces;
-  if (!saved?.length) return [];
-  return saved
-    .map((p) => p.id?.trim())
-    .filter((id): id is string => Boolean(id))
-    .map((locationId) => ({ locationId }));
+  if (!pools) return [];
+  const pool = pools.get(cityId.trim().toLowerCase());
+  if (!pool?.length) return [];
+  const n = Math.min(savedPlaceBudget(durationMinutes), pool.length);
+  return pool.splice(0, n).map((locationId) => ({ locationId }));
 }
 
 /**
@@ -1223,7 +1258,7 @@ function nestedPlacesFromDestination(
  * One entry per city visit window on that day (a day may have multiple cities).
  * Free-time start/end come from arrival→departure anchors when known,
  * shrunk by hub buffers (e.g. flight boarding / disembark).
- * Nested places come from destinations.savedPlaces as `{ locationId }` when present.
+ * Nested savedPlaces are distributed uniquely across slots (never copied to every day).
  * Skips stopType === "home".
  */
 function fillPlacesFromRoutes(
@@ -1233,7 +1268,11 @@ function fillPlacesFromRoutes(
 ): void {
   type Presence = { cityId: string; since?: string };
   let presence: Presence | null = null;
-  const leisureFallback = { leisureType: tripLeisureType };
+  const savedPools = buildSavedPlacePools(destinations);
+  const leisureFallback = {
+    leisureType: tripLeisureType,
+    savedPools,
+  };
 
   for (const day of days) {
     const places: TripPlannerAiResponsePlace[] = [];

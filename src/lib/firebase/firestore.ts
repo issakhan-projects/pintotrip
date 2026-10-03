@@ -113,6 +113,10 @@ export const FirestorePaths = {
     `users/${userId}/tripPlanner/${tripId}/routes`,
   tripRoute: (userId: string, tripId: string, routeId: string) =>
     `users/${userId}/tripPlanner/${tripId}/routes/${routeId}`,
+  /** Post-trip planning feedback: users/{userId}/tripReviews/{tripId} */
+  tripReviews: (userId: string) => `users/${userId}/tripReviews`,
+  tripReview: (userId: string, tripId: string) =>
+    `users/${userId}/tripReviews/${tripId}`,
   /** Global promo codes: promoCodes/{CODE} */
   promoCodes: "promoCodes",
   promoCode: (code: string) => `promoCodes/${code}`,

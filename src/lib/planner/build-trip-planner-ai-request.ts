@@ -132,6 +132,10 @@ function buildTripHeader(trip: TripPlannerDoc): TripPlannerAiRequestTrip {
       ? { leisureCustom: trip.leisureCustom.trim() }
       : {}),
     spendMoney: trip.spendMoney ?? "medium",
+    mealType: trip.mealType ?? "default",
+    ...(trip.mealType === "other" && trip.mealCustom?.trim()
+      ? { mealCustom: trip.mealCustom.trim() }
+      : {}),
     createMode: trip.createMode ?? "ordinary",
   };
 }

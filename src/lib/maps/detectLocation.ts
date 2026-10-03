@@ -1,4 +1,5 @@
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
+import { countryHasLocalityCoverage } from "./ddsCoverage";
 import {
   geocodeByAddress,
   geocodeByLocation,
@@ -24,28 +25,236 @@ export interface EnglishPlaceIds {
   countryNameEn: string;
 }
 
+/** Geocoder + Places address components (legacy long_name or new longText). */
+export type AddressComponentLike = {
+  types: string[];
+  long_name?: string;
+  short_name?: string;
+  longText?: string;
+  shortText?: string;
+};
+
+export type CityCountryParts = {
+  city: string;
+  country: string;
+  countryCode: string;
+};
+
 function readComponent(
-  components: google.maps.GeocoderAddressComponent[],
+  components: AddressComponentLike[],
   type: string,
   short = false
 ): string {
   const match = components.find((c) => c.types.includes(type));
   if (!match) return "";
-  return (short ? match.short_name : match.long_name)?.trim() ?? "";
+  if (short) {
+    return (match.short_name || match.shortText || "").trim();
+  }
+  return (match.long_name || match.longText || "").trim();
 }
 
-function parseCityCountry(
-  components: google.maps.GeocoderAddressComponent[]
-): { city: string; country: string; countryCode: string } {
-  const country = readComponent(components, "country");
-  const countryCode = readComponent(components, "country", true).toUpperCase();
-  const city =
-    readComponent(components, "locality") ||
-    readComponent(components, "postal_town") ||
-    readComponent(components, "administrative_area_level_2") ||
-    readComponent(components, "administrative_area_level_1");
+/** Admin2 / labels that are districts, not the parent city. */
+function isDistrictLikeName(name: string): boolean {
+  return /\b(district|raion|rayon|municipality|borough|arrondissement|county|parish|okrug|округ|район|ilçe|ilce|adalar)\b/i.test(
+    name.trim()
+  );
+}
 
-  return { city, country, countryCode };
+/** Turkish island localities (Prince Islands: Kınalıada, Burgazada, …). */
+function isTurkishIslandLocality(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  // Ada / Adası suffix — do not use English "island" (would mis-handle US place names).
+  return /(ada|adası|adasi)$/i.test(n) || /^adalar$/i.test(n);
+}
+
+function samePlaceName(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Pick the parent **city** (not district / island) for every country.
+ * - No Google locality coverage (TR, KZ, RU, …): admin1 is the city we store.
+ * - Locality coverage (US, JP, …): locality / postal_town, unless clearly a district.
+ */
+function pickCityName(parts: {
+  locality: string;
+  postalTown: string;
+  admin2: string;
+  admin1: string;
+  countryCode: string;
+  country: string;
+}): string {
+  const { locality, postalTown, admin2, admin1, countryCode, country } = parts;
+  const usesLocality = countryHasLocalityCoverage(countryCode, country);
+
+  // City-province / no-locality countries: admin1 is the stable city id/name.
+  if (!usesLocality && admin1) return admin1;
+
+  if (postalTown) return postalTown;
+
+  if (locality) {
+    const promoteToParent =
+      Boolean(admin1) &&
+      !samePlaceName(locality, admin1) &&
+      (isDistrictLikeName(locality) ||
+        isDistrictLikeName(admin2) ||
+        isTurkishIslandLocality(locality) ||
+        // District reused as locality (Fatih/Fatih) — promote to metro city.
+        (Boolean(admin2) && samePlaceName(locality, admin2) && !usesLocality));
+    if (promoteToParent) return admin1;
+    return locality;
+  }
+
+  if (admin2 && !isDistrictLikeName(admin2)) return admin2;
+  if (admin1) return admin1;
+  if (admin2) return admin2;
+  return "";
+}
+
+function collectCityCountryParts(
+  results: Array<{
+    types?: string[];
+    address_components?: AddressComponentLike[];
+  }>
+): {
+  locality: string;
+  postalTown: string;
+  admin2: string;
+  admin1: string;
+  country: string;
+  countryCode: string;
+} {
+  let country = "";
+  let countryCode = "";
+  let locality = "";
+  let postalTown = "";
+  let admin2 = "";
+  let admin1 = "";
+
+  for (const result of results) {
+    const components = result.address_components ?? [];
+    if (!country) country = readComponent(components, "country");
+    if (!countryCode) {
+      countryCode = readComponent(components, "country", true).toUpperCase();
+    }
+    if (!locality) locality = readComponent(components, "locality");
+    if (!postalTown) postalTown = readComponent(components, "postal_town");
+    if (!admin2) {
+      admin2 = readComponent(components, "administrative_area_level_2");
+    }
+    if (!admin1) {
+      admin1 = readComponent(components, "administrative_area_level_1");
+    }
+  }
+
+  for (const type of ["locality", "postal_town"] as const) {
+    const match = results.find((result) => result.types?.includes(type));
+    if (!match) continue;
+    const components = match.address_components ?? [];
+    locality =
+      readComponent(components, "locality") ||
+      readComponent(components, type) ||
+      locality;
+    postalTown = readComponent(components, "postal_town") || postalTown;
+    admin2 =
+      readComponent(components, "administrative_area_level_2") || admin2;
+    admin1 =
+      readComponent(components, "administrative_area_level_1") || admin1;
+    break;
+  }
+
+  return { locality, postalTown, admin2, admin1, country, countryCode };
+}
+
+/**
+ * City-level name from geocode/Places results (Istanbul, not Fatih / Kınalıada).
+ */
+export function cityCountryFromGeocodeResults(
+  results: Array<{
+    types?: string[];
+    address_components?: AddressComponentLike[];
+  }>
+): CityCountryParts {
+  if (!results.length) return { city: "", country: "", countryCode: "" };
+  const parts = collectCityCountryParts(results);
+  return {
+    city: pickCityName(parts),
+    country: parts.country,
+    countryCode: parts.countryCode,
+  };
+}
+
+/** City-level name from a single address_components list. */
+export function cityCountryFromAddressComponents(
+  components: AddressComponentLike[] | undefined
+): CityCountryParts {
+  if (!components?.length) return { city: "", country: "", countryCode: "" };
+  return cityCountryFromGeocodeResults([{ address_components: components }]);
+}
+
+/** City selection with English/ASCII machine ids for Firestore. */
+export type ResolvedCitySelection = {
+  cityName: string;
+  countryName: string;
+  countryCode: string;
+  cityId: string;
+  countryId: string;
+  lat: number;
+  lon: number;
+};
+
+/**
+ * Reverse-geocode a map pick to city-level name + English cityId/countryId.
+ * Use for city intelligence, favorites, and any “select city” flow.
+ */
+export async function resolveCitySelectionFromCoords(
+  lat: number,
+  lon: number,
+  options?: { language?: string }
+): Promise<ResolvedCitySelection | null> {
+  if (!hasUsableMapCoords(lat, lon)) return null;
+
+  const place = await reverseGeocode(lat, lon, {
+    language: options?.language ?? "en",
+  });
+  if (!place?.city && !place?.country) return null;
+
+  const englishIds =
+    englishPlaceIdsFromNames(
+      place.city,
+      place.country,
+      place.countryCode
+    ) ?? (await resolveEnglishPlaceIds(lat, lon));
+
+  const countryName = englishIds?.countryNameEn || place.country || "";
+  const cityName = englishIds?.cityNameEn || place.city || countryName;
+  const countryCode =
+    englishIds?.countryCode || place.countryCode?.toUpperCase() || "";
+  const countryId = countryIdFromParts(
+    englishIds?.countryNameEn || countryName,
+    countryCode || null
+  );
+  const cityId =
+    (englishIds?.cityId && isAsciiId(englishIds.cityId)
+      ? englishIds.cityId
+      : null) ||
+    (isAsciiId(slugifyId(englishIds?.cityNameEn || ""))
+      ? slugifyId(englishIds!.cityNameEn)
+      : null) ||
+    (isAsciiId(slugifyId(cityName)) ? slugifyId(cityName) : null);
+
+  if (!isAsciiId(countryId) || !cityId) return null;
+
+  return {
+    cityName,
+    countryName: countryName || cityName,
+    countryCode: /^[A-Z]{2}$/.test(countryCode) ? countryCode : "",
+    cityId,
+    countryId,
+    lat: place.lat,
+    lon: place.lon,
+  };
 }
 
 function toEnglishPlaceIds(
@@ -90,8 +299,7 @@ function englishIdsFromGeocodeResults(
   results: google.maps.GeocoderResult[] | undefined
 ): EnglishPlaceIds | null {
   if (!results?.length) return null;
-  const components = results[0]?.address_components ?? [];
-  const { city, country, countryCode } = parseCityCountry(components);
+  const { city, country, countryCode } = cityCountryFromGeocodeResults(results);
   if (!city && !country) return null;
   return toEnglishPlaceIds(city, country, countryCode);
 }
@@ -144,8 +352,7 @@ export async function reverseGeocode(
 ): Promise<DetectedUserLocation | null> {
   try {
     const results = await geocodeByLocation(lat, lon, options);
-    const components = results[0]?.address_components ?? [];
-    const { city, country, countryCode } = parseCityCountry(components);
+    const { city, country, countryCode } = cityCountryFromGeocodeResults(results);
     if (!city && !country) return null;
 
     return {

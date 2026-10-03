@@ -61,6 +61,8 @@ type TripDocRaw = {
   leisureType?: string;
   leisureCustom?: string;
   spendMoney?: string;
+  mealType?: string;
+  mealCustom?: string;
   createMode?: string;
   currency?: { code?: string };
   cityIntelligence?: {
@@ -632,27 +634,58 @@ async function loadSavedLocations(
   );
 
   const locationTitleById = new Map<string, string>();
-  if (ids.length === 0) {
-    return { savedLocations: [], locationTitleById };
-  }
+  const byId = new Map<string, TripPlanningSavedLocation>();
 
-  // Firestore getAll supports up to 100 refs per call.
-  const refs = ids.map((id) => adminDb().doc(`users/${uid}/locations/${id}`));
-  const snaps: DocumentSnapshot[] = [];
-  for (let i = 0; i < refs.length; i += 100) {
-    const chunk = await adminDb().getAll(...refs.slice(i, i + 100));
-    snaps.push(...chunk);
-  }
-
-  const all: TripPlanningSavedLocation[] = [];
-  for (const snap of snaps) {
-    if (!snap.exists) continue;
+  const ingestSnap = (snap: DocumentSnapshot) => {
+    if (!snap.exists) return;
     const parsed = parseSavedLocation(snap.id, snap.data() ?? {});
-    if (!parsed) continue;
+    if (!parsed) return;
     locationTitleById.set(parsed.id, parsed.title);
-    if (parsed.status === "cancelled") continue;
-    all.push(parsed);
+    if (parsed.status === "cancelled") return;
+    byId.set(parsed.id, parsed);
+  };
+
+  // 1) Explicit trip.savedPlaceIds
+  if (ids.length > 0) {
+    const refs = ids.map((id) => adminDb().doc(`users/${uid}/locations/${id}`));
+    for (let i = 0; i < refs.length; i += 100) {
+      const chunk = await adminDb().getAll(...refs.slice(i, i + 100));
+      for (const snap of chunk) ingestSnap(snap);
+    }
   }
+
+  // 2) Locations whose city.id matches a destination — covers empty/stale
+  // savedPlaceIds when city ids already align.
+  const destCityIds = [
+    ...new Set(
+      destinations
+        .map((d) => d.cityId?.trim().toLowerCase() ?? "")
+        .filter(
+          (id) =>
+            Boolean(id) &&
+            id !== "unknown" &&
+            /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)
+        )
+    ),
+  ];
+  if (destCityIds.length > 0) {
+    const col = adminDb().collection(`users/${uid}/locations`);
+    for (let i = 0; i < destCityIds.length; i += 30) {
+      const chunkIds = destCityIds.slice(i, i + 30);
+      try {
+        const snap = await col.where("city.id", "in", chunkIds).get();
+        for (const doc of snap.docs) ingestSnap(doc);
+      } catch (err) {
+        logger.warn("loadSavedLocations city.id query failed", {
+          uid,
+          chunkIds,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  const all = [...byId.values()];
 
   const matched = all.filter((place) =>
     destinations.some(
@@ -882,6 +915,21 @@ export async function loadTripPlanningContext(params: {
       ? trip.spendMoney
       : undefined;
 
+  const mealType =
+    trip.mealType === "default" ||
+    trip.mealType === "halal" ||
+    trip.mealType === "vegetarian" ||
+    trip.mealType === "kosher" ||
+    trip.mealType === "other"
+      ? trip.mealType
+      : undefined;
+  const mealCustomRaw =
+    typeof trip.mealCustom === "string" ? trip.mealCustom.trim() : "";
+  const mealCustom =
+    mealType === "other" && mealCustomRaw
+      ? mealCustomRaw.slice(0, 80)
+      : undefined;
+
   const currencyRaw =
     typeof trip.currency?.code === "string"
       ? trip.currency.code.trim().toUpperCase()
@@ -942,6 +990,8 @@ export async function loadTripPlanningContext(params: {
       planMode: mode,
       ...(currency ? { currency } : {}),
       ...(spendMoney ? { spendMoney } : {}),
+      ...(mealType ? { mealType } : {}),
+      ...(mealCustom ? { mealCustom } : {}),
       createMode,
     },
     journey,

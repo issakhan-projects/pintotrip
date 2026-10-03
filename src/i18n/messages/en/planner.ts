@@ -27,9 +27,11 @@ export const planner = {
     datesOptionalTrigger: "Add stay dates (optional)",
     hintPin: "Drop a pin or search to save the stay location on your trip map.",
     hintDates: "Stay dates are optional — add them when you know check-in and check-out.",
-    notesPlaceholder: "Check-in time, confirmation code, host notes…",
+    notesPlaceholder: "Confirmation code, host notes…",
     checkIn: "Check-in",
     checkOut: "Check-out",
+    checkInTime: "Check-in time",
+    checkOutTime: "Check-out time",
     group: {
       current: "Current stay",
       upcoming: "Upcoming",
@@ -524,6 +526,13 @@ export const planner = {
     deleteDesc: "This removes the trip and its itinerary. This can’t be undone.",
     coordsMissing: "Destination coordinates are missing.",
     cityInfoFailed: "Failed to load city information.",
+    summary: {
+      whereLabel: "Where to?",
+      datesLabel: "Select dates",
+      styleLabel: "Trip style",
+      styleFallback: "Trip details",
+      edit: "Edit",
+    },
   },
   panel: {
     title: "Trip Planner",
