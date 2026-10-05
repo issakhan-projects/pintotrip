@@ -530,6 +530,10 @@ export type RoutePoint = {
   country?: string;
   /** Google Place id or city id when known (ASCII). */
   placeId?: string;
+  /** Destination city slug when known (ASCII). */
+  cityId?: string;
+  /** ISO 3166-1 alpha-2 lowercase when known. */
+  countryId?: string;
   /** IATA / station code when known (e.g. "ALA"). */
   code?: string;
   location?: {
