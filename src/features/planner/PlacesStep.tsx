@@ -81,7 +81,11 @@ import {
 } from "./matchTripPlaces";
 import { PlanTripSheet } from "./PlanTripSheet";
 import { TripSetupChecklist } from "./TripSetupChecklist";
-import { listTripDestinations, toIsoDate } from "./tripDestinations";
+import {
+  listTripDestinations,
+  owningDestinationForDate,
+  toIsoDate,
+} from "./tripDestinations";
 import { listTripAccommodations } from "./essentialsHelpers";
 import { isWeatherFresh, weatherForTrip } from "./tripWeather";
 import { subscribeTripRoutes } from "@/services/trip-routes";
@@ -100,11 +104,35 @@ import {
   type SearchedPlace,
 } from "@/features/add-place/placeSearch";
 import { purchasePlaceSearchPack } from "@/services/functions";
-import { createUserLocation, deleteUserLocation } from "@/services/locations";
+import {
+  createUserLocation,
+  deleteUserLocation,
+  getUserLocation,
+} from "@/services/locations";
 import { Timestamp } from "firebase/firestore";
 import { resolveCountryCode } from "@/lib/countries";
 
 type Coords = { lat: number; lon: number };
+
+/** City/country line under an itinerary place title. */
+function placeLocalityLabel(
+  place: SavedLocation | undefined,
+  fallback?: { cityName?: string; countryName?: string } | null
+): string {
+  const city =
+    place?.city?.name?.trim() ||
+    fallback?.cityName?.trim() ||
+    "";
+  const country =
+    place?.country?.name?.trim() ||
+    fallback?.countryName?.trim() ||
+    "";
+  return [city, country].filter(Boolean).join(", ");
+}
+
+function isGenericDayTitle(title: string | undefined): boolean {
+  return !title?.trim() || /^day\s*\d+$/i.test(title.trim());
+}
 
 function itinerarySlotHasImage(
   slot: ItineraryPlace,
@@ -428,6 +456,50 @@ export function PlacesStep({
     () => new Map(locations.map((l) => [l.id, l])),
     [locations]
   );
+
+  // iOS Safari/PWA can serve a partial locations cache (first page / stale
+  // IndexedDB). Hydrate itinerary slots that are missing or lack city names.
+  const hydratedLocationIdsRef = useRef(new Set<string>());
+  useEffect(() => {
+    hydratedLocationIdsRef.current = new Set();
+  }, [trip.id]);
+
+  useEffect(() => {
+    const missing: string[] = [];
+    for (const day of trip.itinerary.days) {
+      for (const slot of day.places) {
+        if (slot.type === "gap" || slot.type === "route") continue;
+        const id = slot.locationId?.trim();
+        if (!id || hydratedLocationIdsRef.current.has(id)) continue;
+        const place = byId.get(id);
+        if (
+          !place ||
+          !place.city?.name?.trim() ||
+          !place.country?.name?.trim()
+        ) {
+          missing.push(id);
+        }
+      }
+    }
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      for (const id of missing) {
+        if (cancelled) return;
+        hydratedLocationIdsRef.current.add(id);
+        try {
+          await getUserLocation(userId, id, { hard: true });
+        } catch {
+          // Keep fallback locality from the day destination.
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [trip.itinerary.days, byId, userId]);
 
   const availableToAdd = useMemo(() => {
     const taken = new Set(trip.savedPlaceIds);
@@ -1131,7 +1203,7 @@ export function PlacesStep({
                               {place.title}
                             </span>
                             <span className="text-xs text-text-secondary">
-                              {place.city.name}, {place.country.name}
+                              {placeLocalityLabel(place) || "Unknown area"}
                             </span>
                           </span>
                         </span>
@@ -1794,6 +1866,8 @@ function ItineraryList({
     );
   }
 
+  const tripDestinations = listTripDestinations(trip);
+
   return (
     <div className="space-y-4">
       {trip.itinerary.days.map((day, dayIndex) => {
@@ -1811,6 +1885,17 @@ function ItineraryList({
           month: "short",
         });
         const weather = weatherByDay.get(day.day) ?? day.weather;
+        const dayOwner = owningDestinationForDate(
+          tripDestinations,
+          day.date.toDate()
+        );
+        const dayLocalityFallback = {
+          cityName:
+            dayOwner?.cityName?.trim() ||
+            (!isGenericDayTitle(day.title) ? day.title.trim() : "") ||
+            undefined,
+          countryName: dayOwner?.countryName?.trim() || undefined,
+        };
 
         return (
           <section
@@ -2204,12 +2289,11 @@ function ItineraryList({
                       : null;
                     const links =
                       place?.links?.filter((l) => l.url?.trim()) ?? [];
-                    const locality = [
-                      place?.city.name,
-                      place?.country.name,
-                    ]
-                      .filter(Boolean)
-                      .join(", ");
+                    const locality = placeLocalityLabel(place, {
+                      cityName:
+                        slot.cityName?.trim() || dayLocalityFallback.cityName,
+                      countryName: dayLocalityFallback.countryName,
+                    });
                     const hasMeta = Boolean(priceLabel) || links.length > 0;
                     return (
                       <li
