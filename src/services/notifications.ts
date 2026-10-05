@@ -3,6 +3,7 @@ import {
   doc,
   limit,
   onSnapshot,
+  orderBy,
   query,
   updateDoc,
   where,
@@ -19,6 +20,17 @@ function createdAtMs(value: AppNotification["createdAt"]): number {
     return (value as { toMillis: () => number }).toMillis();
   }
   return 0;
+}
+
+function mapNotificationSnap(
+  snap: { docs: Array<{ id: string; data: () => unknown }> }
+): SavedNotification[] {
+  const items: SavedNotification[] = snap.docs.map((d) => {
+    const data = d.data() as AppNotification;
+    return { id: d.id, ...data };
+  });
+  items.sort((a, b) => createdAtMs(b.createdAt) - createdAtMs(a.createdAt));
+  return items;
 }
 
 /**
@@ -38,14 +50,32 @@ export function subscribeUnreadNotifications(
   return onSnapshot(
     q,
     (snap) => {
-      const items: SavedNotification[] = snap.docs.map((d) => {
-        const data = d.data() as AppNotification;
-        return { id: d.id, ...data };
-      });
-      items.sort(
-        (a, b) => createdAtMs(b.createdAt) - createdAtMs(a.createdAt)
-      );
-      onData(items.slice(0, 10));
+      onData(mapNotificationSnap(snap).slice(0, 10));
+    },
+    (err) => {
+      onError?.(err);
+    }
+  );
+}
+
+/**
+ * Live inbox (read + unread), newest first.
+ */
+export function subscribeNotifications(
+  userId: string,
+  onData: (items: SavedNotification[]) => void,
+  onError?: (error: unknown) => void
+): Unsubscribe {
+  const q = query(
+    collection(getFirestoreDb(), FirestorePaths.notifications(userId)),
+    orderBy("createdAt", "desc"),
+    limit(30)
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(mapNotificationSnap(snap));
     },
     (err) => {
       onError?.(err);

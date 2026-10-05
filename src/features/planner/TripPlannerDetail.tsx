@@ -57,6 +57,7 @@ import {
   tripDetailKey,
   tripDetailStore,
 } from "@/lib/firebase/data-cache";
+import { fetchWikimediaCityPhoto } from "@/lib/wikimedia";
 import { cx } from "@/lib/utils";
 import { isBrowserOffline } from "@/lib/planner/offline-store";
 import {
@@ -220,7 +221,16 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
         const existing = await getTripReview(user.uid, current.id);
         if (cancelled) return;
         reviewHandledRef.current = true;
-        if (existing) return;
+        if (existing) {
+          if (!current.tripReviewed) {
+            try {
+              await patchTrip({ tripReviewed: true });
+            } catch {
+              // Ignore backfill failures.
+            }
+          }
+          return;
+        }
         setReviewOpen(true);
       } catch {
         // Ignore review lookup failures; allow a later retry.
@@ -429,6 +439,37 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
       (url) => !url.includes("maps.googleapis.com")
     );
   }, [coverCandidates]);
+
+  // Backfill trip cover from Wikimedia when no stored photo exists.
+  useEffect(() => {
+    if (!trip) return;
+    if (trip.photoUrl?.trim()) return;
+    const primary = primaryTripDestination(trip);
+    if (primary.photos?.some((url) => Boolean(url?.trim()))) return;
+    const cityName = primary.cityName?.trim() || primary.countryName?.trim();
+    if (!cityName) return;
+
+    let cancelled = false;
+    void fetchWikimediaCityPhoto({
+      cityName,
+      countryName: primary.countryName,
+      lat: primary.lat,
+      lon: primary.lon,
+    }).then(async (photo) => {
+      if (cancelled || !photo?.url) return;
+      try {
+        await patchTrip({ photoUrl: photo.url });
+      } catch {
+        // Cover stays on static map / empty until the next visit.
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the trip identity or existing cover changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [trip?.id, trip?.photoUrl]);
 
   useEffect(() => {
     setCoverIndex(0);

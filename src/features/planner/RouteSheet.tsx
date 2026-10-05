@@ -21,6 +21,7 @@ import {
   TrainFront,
   ArrowLeftRight,
   ArrowRight,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -72,10 +73,20 @@ import {
   type RouteCityOption,
 } from "./routeHelpers";
 import { resolveTimezoneFromCoords } from "@/lib/maps";
+import { currencySymbolForCode } from "./tripUtils";
 
 const FerryIcon = Ship;
 const MAX_ROUTE_ATTACHMENTS = 5;
 const ROUTE_FILE_ACCEPT = `${IMAGE_FILE_ACCEPT},application/pdf,.pdf`;
+
+/** Parse a user-entered price; empty → undefined. */
+function parsePriceAmount(raw: string): number | undefined {
+  const trimmed = raw.trim().replace(",", ".");
+  if (!trimmed) return undefined;
+  const amount = Number(trimmed);
+  if (!Number.isFinite(amount) || amount < 0) return undefined;
+  return Math.round(amount * 100) / 100;
+}
 
 function browserTimezone(): string {
   try {
@@ -281,6 +292,7 @@ type RouteSheetNavId =
   | "transport"
   | "leg"
   | "flight"
+  | "price"
   | "note"
   | "attachments";
 
@@ -296,7 +308,7 @@ function RouteSheetSectionNav({
   return (
     <nav
       aria-label="Route form sections"
-      className="grid w-full shrink-0 grid-cols-5 gap-1.5 sm:flex sm:w-auto sm:flex-col sm:pb-0"
+      className="grid w-full shrink-0 grid-cols-3 gap-1.5 sm:flex sm:w-auto sm:flex-col sm:pb-0"
     >
       {items.map((item) => {
         const active = item.id === activeId;
@@ -368,6 +380,12 @@ export type RouteSheetLegPayload = {
   durationMinutes?: number;
   durationApproximate?: boolean;
   note?: string;
+  /** Approximate one-way adult fare in the trip / user currency. */
+  priceAmount?: number;
+  /** ISO 4217 for priceAmount (trip currency by default). */
+  priceCurrency?: string;
+  /** Display label e.g. "≈ 120 USD", "Free". */
+  priceLabel?: string;
   /** Flight only — airline name. */
   airline?: string;
   /** Flight only — e.g. "TK 123". */
@@ -382,6 +400,22 @@ export type RouteSheetSavePayload = RouteSheetLegPayload & {
   /** Second leg when user chose Return (go + back). */
   returnLeg?: RouteSheetLegPayload;
 };
+
+function priceFieldsFromAmount(
+  amount: number | undefined,
+  currencyCode: string
+): Pick<
+  RouteSheetLegPayload,
+  "priceAmount" | "priceCurrency" | "priceLabel"
+> {
+  if (amount == null) return {};
+  const code = currencyCode.trim().toUpperCase() || "USD";
+  return {
+    priceAmount: amount,
+    priceCurrency: code,
+    priceLabel: amount === 0 ? "Free" : `≈ ${amount} ${code}`,
+  };
+}
 
 type ExactStep =
   | "departure"
@@ -416,6 +450,7 @@ export function RouteSheet({
   const [arrivalLocal, setArrivalLocal] = useState("");
   const [approxMinutes, setApproxMinutes] = useState(60);
   const [note, setNote] = useState("");
+  const [priceAmount, setPriceAmount] = useState("");
   const [airline, setAirline] = useState("");
   const [flightNumber, setFlightNumber] = useState("");
   const [saving, setSaving] = useState(false);
@@ -433,6 +468,7 @@ export function RouteSheet({
   const [returnAirline, setReturnAirline] = useState("");
   const [returnFlightNumber, setReturnFlightNumber] = useState("");
   const [returnNote, setReturnNote] = useState("");
+  const [returnPriceAmount, setReturnPriceAmount] = useState("");
   const [returnAttachments, setReturnAttachments] = useState<
     TripRouteAttachment[]
   >([]);
@@ -448,9 +484,17 @@ export function RouteSheet({
   const returnArrivalId = useId();
   const noteId = useId();
   const returnNoteId = useId();
+  const priceAmountId = useId();
+  const returnPriceAmountId = useId();
   const durationId = useId();
   const flightNumberId = useId();
   const returnFlightNumberId = useId();
+
+  const tripCurrencyCode =
+    trip.currency?.code?.trim().toUpperCase() || "USD";
+  const tripCurrencySymbol =
+    trip.currency?.symbol?.trim() ||
+    currencySymbolForCode(tripCurrencyCode);
 
   const airlineOptions = useMemo(() => {
     const trimmed = airline.trim();
@@ -515,6 +559,7 @@ export function RouteSheet({
       items.push({ id: "flight", label: "Flight details", Icon: Plane });
     }
     if (showOutboundLeg || showReturnLeg) {
+      items.push({ id: "price", label: "Price", Icon: Wallet });
       items.push({ id: "note", label: "Note", Icon: StickyNote });
       items.push({ id: "attachments", label: "Attachments", Icon: Paperclip });
     }
@@ -655,6 +700,7 @@ export function RouteSheet({
     setReturnAirline("");
     setReturnFlightNumber("");
     setReturnNote("");
+    setReturnPriceAmount("");
     setReturnAttachments([]);
     if (editing) {
       setTripKind("one_way");
@@ -684,6 +730,11 @@ export function RouteSheet({
       setArrivalLocal(offsetIsoToDatetimeLocal(editing.arrival?.datetime));
       setApproxMinutes(editing.durationMinutes ?? 60);
       setNote(editing.note ?? "");
+      setPriceAmount(
+        editing.priceAmount != null && Number.isFinite(editing.priceAmount)
+          ? String(editing.priceAmount)
+          : ""
+      );
       setAirline(editing.airline ?? "");
       setFlightNumber(editing.flightNumber ?? "");
       setAttachments(editing.attachments ?? []);
@@ -700,6 +751,7 @@ export function RouteSheet({
     setArrivalLocal("");
     setApproxMinutes(60);
     setNote("");
+    setPriceAmount("");
     setAirline("");
     setFlightNumber("");
     setAttachments([]);
@@ -1015,6 +1067,7 @@ export function RouteSheet({
     fromTimezone: string;
     toTimezone: string;
     noteValue: string;
+    priceAmountValue: string;
     airlineValue: string;
     flightNumberValue: string;
     attachmentList: TripRouteAttachment[];
@@ -1051,6 +1104,10 @@ export function RouteSheet({
       attachments: args.attachmentList,
       routeId: args.routeId,
       ...(args.noteValue.trim() ? { note: args.noteValue.trim() } : {}),
+      ...priceFieldsFromAmount(
+        parsePriceAmount(args.priceAmountValue),
+        tripCurrencyCode
+      ),
       ...(transport === "flight" && args.airlineValue.trim()
         ? { airline: args.airlineValue.trim() }
         : {}),
@@ -1118,6 +1175,7 @@ export function RouteSheet({
           fromTimezone,
           toTimezone,
           noteValue: note,
+          priceAmountValue: priceAmount,
           airlineValue: airline,
           flightNumberValue: flightNumber,
           attachmentList: attachments,
@@ -1162,6 +1220,7 @@ export function RouteSheet({
             fromTimezone: toTimezone,
             toTimezone: fromTimezone,
             noteValue: returnNote,
+            priceAmountValue: returnPriceAmount,
             airlineValue: returnAirline,
             flightNumberValue: returnFlightNumber,
             attachmentList: returnAttachments,
@@ -1208,6 +1267,10 @@ export function RouteSheet({
         durationMinutes: approxMinutes,
         durationApproximate: true,
         ...(note.trim() ? { note: note.trim() } : {}),
+        ...priceFieldsFromAmount(
+          parsePriceAmount(priceAmount),
+          tripCurrencyCode
+        ),
       };
 
       await onSave(payload);
@@ -1903,6 +1966,92 @@ export function RouteSheet({
           </section>
         ) : null}
         </>
+        ) : null}
+
+        {visibleSection === "price" ? (
+          <>
+            {showOutboundDetails ? (
+              <section data-route-section="price" className="space-y-3">
+                <header className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-primary">
+                    <Wallet className="h-3.5 w-3.5" aria-hidden />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text">
+                      {isReturn ? "Outbound price" : "Price"}
+                    </h3>
+                    <p className="text-xs text-text-muted">
+                      Approximate one-way fare in {tripCurrencyCode}
+                    </p>
+                  </div>
+                </header>
+                <EssentialsField
+                  label={`Amount (${tripCurrencyCode})`}
+                  htmlFor={priceAmountId}
+                  hint={
+                    <p className="text-xs text-text-muted">
+                      Uses your trip currency · optional
+                    </p>
+                  }
+                >
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-text-muted">
+                      {tripCurrencySymbol}
+                    </span>
+                    <TextInput
+                      id={priceAmountId}
+                      inputMode="decimal"
+                      value={priceAmount}
+                      onChange={(e) => setPriceAmount(e.target.value)}
+                      placeholder="0"
+                      className="!shadow-none !min-h-11 !h-11 !pl-9"
+                    />
+                  </div>
+                </EssentialsField>
+              </section>
+            ) : null}
+
+            {showReturnArrival ? (
+              <section data-route-section="price" className="space-y-3">
+                <header className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-tint text-primary">
+                    <Wallet className="h-3.5 w-3.5" aria-hidden />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text">
+                      Return price
+                    </h3>
+                    <p className="text-xs text-text-muted">
+                      Approximate one-way fare in {tripCurrencyCode}
+                    </p>
+                  </div>
+                </header>
+                <EssentialsField
+                  label={`Amount (${tripCurrencyCode})`}
+                  htmlFor={returnPriceAmountId}
+                  hint={
+                    <p className="text-xs text-text-muted">
+                      Uses your trip currency · optional
+                    </p>
+                  }
+                >
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-text-muted">
+                      {tripCurrencySymbol}
+                    </span>
+                    <TextInput
+                      id={returnPriceAmountId}
+                      inputMode="decimal"
+                      value={returnPriceAmount}
+                      onChange={(e) => setReturnPriceAmount(e.target.value)}
+                      placeholder="0"
+                      className="!shadow-none !min-h-11 !h-11 !pl-9"
+                    />
+                  </div>
+                </EssentialsField>
+              </section>
+            ) : null}
+          </>
         ) : null}
 
         {visibleSection === "note" ? (

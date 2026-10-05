@@ -49,6 +49,7 @@ import {
   mergeAiPlacesIntoItinerary,
 } from "./ai/fillPlacesAi";
 import { enrichItineraryPlaceCoordinates } from "./ai/enrichPlaceCoordinates";
+import { enrichItineraryPlacePrices } from "./ai/enrichPlacePrices";
 import { assignSharedItineraryOrders } from "./ai/assignSharedOrders";
 import { assignPlaceVisitTimes } from "./ai/assignPlaceVisitTimes";
 import type {
@@ -129,7 +130,8 @@ export type PlanTripResponse =
  * 6. Deterministic freeTime + saved locationId refs
  * 7. AI fill places + whereToEat (mealType-aware) + non-flight fares (soft-fail → return routes)
  * 8. Resolve place/dining coords: placesLocation cache → Google Places → save cache
- * 9. Deduct credits on success; return itinerary
+ * 9. Resolve ticket prices: placesLocation cache → one cheap GPT web_search → save cache
+ * 10. Deduct credits on success; return itinerary
  */
 export const planTrip = onCall(
   {
@@ -291,6 +293,35 @@ export const planTrip = onCall(
               enrichErr instanceof Error
                 ? enrichErr.message
                 : String(enrichErr),
+          });
+        }
+
+        // Cache → one cheap GPT web_search → save (AI ticket prices are approximate).
+        try {
+          const priced = await enrichItineraryPlacePrices(
+            itinerary,
+            aiRequest.destinations,
+            aiRequest.trip.currency
+          );
+          itinerary = priced.itinerary;
+          if (priced.metrics) {
+            totalCost += priced.metrics.cost;
+            model = priced.metrics.model;
+          }
+          if (
+            priced.stats.cacheHits > 0 ||
+            priced.stats.webLookups > 0
+          ) {
+            stages.push("placePrices");
+          }
+        } catch (priceErr) {
+          logger.warn("planTrip place price enrichment skipped", {
+            uid,
+            tripId: input.tripId,
+            error:
+              priceErr instanceof Error
+                ? priceErr.message
+                : String(priceErr),
           });
         }
       } catch (err) {

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
-import { Coins, LocateFixed, Plus, Search, Sparkles } from "lucide-react";
+import { Bell, Coins, LocateFixed, Plus, Search, Sparkles } from "lucide-react";
 import type { User } from "firebase/auth";
 import { useI18n } from "@/i18n";
 import { BottomNav, type AppTab } from "@/features/app/BottomNav";
 import { MapListToggle, type MapListMode } from "@/features/app/MapListToggle";
+import { NotificationsModal } from "@/features/app/NotificationsModal";
 import { TravelMap, type MapInteractionMode } from "@/features/map/TravelMap";
 import { PlacePreviewSheet } from "@/features/map/PlacePreviewSheet";
 import { MapCityLegend } from "@/features/map/MapCityLegend";
@@ -33,6 +34,8 @@ import { useReviewPrompt } from "@/hooks/useReviewPrompt";
 import { useReferralCompletion } from "@/hooks/useReferralCompletion";
 import { useTrips } from "@/hooks/useTrips";
 import type { LocationStatus } from "@/types/location";
+import { subscribeUnreadNotifications } from "@/services/notifications";
+import { devLog } from "@/lib/devLog";
 import {
   centerMapOnCoords,
   resolveCitySelectionFromCoords,
@@ -114,7 +117,20 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const [placesMountKey, setPlacesMountKey] = useState(0);
   const [plannerOpened, setPlannerOpened] = useState(initialTab === "planner");
   const [profileMountKey, setProfileMountKey] = useState(0);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const mapRef = useRef<MapInstance | null>(null);
+
+  useEffect(() => {
+    return subscribeUnreadNotifications(
+      user.uid,
+      (items) => setUnreadNotificationCount(items.length),
+      (err) => {
+        devLog.error("[AppShell] notifications", err);
+        setUnreadNotificationCount(0);
+      }
+    );
+  }, [user.uid]);
 
   const clearTransientUi = useCallback(() => {
     setPreview(null);
@@ -491,6 +507,27 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
               <span className="sr-only">{t("app.credits.srOpenPricing")}</span>
             </button>
           ) : null}
+
+          <button
+            type="button"
+            onClick={() => setNotificationsOpen(true)}
+            aria-label={
+              unreadNotificationCount > 0
+                ? `${t("app.notifications.openAria")}. ${t(
+                    "app.notifications.unreadAria",
+                    { count: unreadNotificationCount }
+                  )}`
+                : t("app.notifications.openAria")
+            }
+            className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-surface-elevated/95 text-text shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11 sm:w-11"
+          >
+            <Bell className="h-4 w-4" aria-hidden />
+            {unreadNotificationCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold leading-none text-white">
+                {unreadNotificationCount > 9 ? "9+" : unreadNotificationCount}
+              </span>
+            ) : null}
+          </button>
         </div>
 
         {tab === "map" ? (
@@ -865,6 +902,17 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         alreadyReviewed={Boolean(profile?.hasLeftReview)}
         onSubmitted={() => {
           markReviewSubmitted();
+        }}
+      />
+
+      <NotificationsModal
+        open={notificationsOpen}
+        userId={user.uid}
+        onClose={() => setNotificationsOpen(false)}
+        onOpenLink={(link, type) => {
+          if (link?.includes("profile") || type === "referral_reward") {
+            goToTab("profile");
+          }
         }}
       />
 

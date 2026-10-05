@@ -27,6 +27,7 @@ export function needsCompletedStatus(
 /** Eligible for the post-trip planning review prompt. */
 export function needsTripReviewPrompt(trip: TripPlannerDoc): boolean {
   if (trip.status === "cancelled") return false;
+  if (trip.tripReviewed) return false;
   if (trip.reviewDismissedAt) return false;
   if (trip.status === "completed") return true;
   return trip.endDate.toDate() < startOfToday();

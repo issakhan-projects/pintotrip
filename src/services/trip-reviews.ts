@@ -6,6 +6,7 @@ import {
   type DocumentReference,
 } from "firebase/firestore";
 import { getFirestoreDb, FirestorePaths } from "@/lib/firebase/firestore";
+import { updateTrip } from "@/services/trip-planner";
 import type {
   TripReview,
   TripReviewCreateInput,
@@ -55,5 +56,11 @@ export async function createTripReview(
     updatedAt: serverTimestamp(),
   });
   await setDoc(ref, payload);
+  // Persist on the trip so Rate CTA stays hidden after reload.
+  try {
+    await updateTrip(userId, input.tripId, { tripReviewed: true });
+  } catch {
+    // Review already saved; trip flag can be retried on next submit.
+  }
   return input.tripId;
 }

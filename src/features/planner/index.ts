@@ -3,6 +3,7 @@ export { TripPlannerDetail } from "./TripPlannerDetail";
 export { CreateTripSheet } from "./CreateTripSheet";
 export { EditTripSheet } from "./EditTripSheet";
 export { TripCard } from "./TripCard";
+export { ShareTripModal } from "./ShareTripModal";
 export { TripCalendar } from "./TripCalendar";
 export { PlanTripSheet } from "./PlanTripSheet";
 export { PlacesStep } from "./PlacesStep";

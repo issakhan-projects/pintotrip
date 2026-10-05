@@ -494,7 +494,7 @@ export function AroundMeSheet({
               Search near
             </p>
             <div
-              className="grid grid-cols-2 gap-2"
+              className="flex flex-wrap gap-1.5"
               role="radiogroup"
               aria-label="Search location"
             >
@@ -505,43 +505,24 @@ export function AroundMeSheet({
                 disabled={locating}
                 onClick={() => void handleUseCurrentLocation()}
                 className={cx(
-                  "flex flex-col items-start gap-2 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                  "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-all",
                   origin?.source === "gps"
-                    ? "border-primary bg-primary-tint shadow-sm ring-1 ring-primary/25"
-                    : "border-border bg-surface-elevated/70 hover:border-primary/30 hover:bg-surface-elevated",
+                    ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/25"
+                    : "border-border bg-surface-elevated/70 text-text hover:border-primary/30 hover:bg-surface-elevated",
                   locating && "cursor-wait opacity-80"
                 )}
               >
-                <span
-                  className={cx(
-                    "flex h-9 w-9 items-center justify-center rounded-xl",
-                    origin?.source === "gps"
-                      ? "bg-surface-elevated text-primary shadow-sm"
-                      : "bg-surface text-text-secondary"
-                  )}
-                >
-                  {locating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <LocateFixed className="h-4 w-4" aria-hidden />
-                  )}
-                </span>
-                <span className="min-w-0">
-                  <span
-                    className={cx(
-                      "block text-sm font-medium",
-                      origin?.source === "gps" ? "text-primary" : "text-text"
-                    )}
-                  >
-                    Current location
-                  </span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-text-secondary">
-                    {locating
-                      ? "Getting GPS…"
-                      : origin?.source === "gps"
-                        ? origin.label
-                        : "Use your device GPS"}
-                  </span>
+                {locating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <LocateFixed className="h-3.5 w-3.5" aria-hidden />
+                )}
+                <span>
+                  {locating
+                    ? "Getting GPS…"
+                    : origin?.source === "gps"
+                      ? origin.label
+                      : "Current location"}
                 </span>
               </button>
 
@@ -552,46 +533,19 @@ export function AroundMeSheet({
                 disabled={locating || !onPickFromMap}
                 onClick={handlePickOnMap}
                 className={cx(
-                  "flex flex-col items-start gap-2 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                  "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-all",
                   origin?.source === "map"
-                    ? "border-primary bg-primary-tint shadow-sm ring-1 ring-primary/25"
-                    : "border-border bg-surface-elevated/70 hover:border-primary/30 hover:bg-surface-elevated",
+                    ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/25"
+                    : "border-border bg-surface-elevated/70 text-text hover:border-primary/30 hover:bg-surface-elevated",
                   (!onPickFromMap || locating) && "opacity-60"
                 )}
               >
-                <span
-                  className={cx(
-                    "flex h-9 w-9 items-center justify-center rounded-xl",
-                    origin?.source === "map"
-                      ? "bg-surface-elevated text-primary shadow-sm"
-                      : "bg-surface text-text-secondary"
-                  )}
-                >
-                  <MapPin className="h-4 w-4" aria-hidden />
-                </span>
-                <span className="min-w-0">
-                  <span
-                    className={cx(
-                      "block text-sm font-medium",
-                      origin?.source === "map" ? "text-primary" : "text-text"
-                    )}
-                  >
-                    Pick on map
-                  </span>
-                  <span className="mt-0.5 block text-[11px] leading-snug text-text-secondary">
-                    {origin?.source === "map"
-                      ? origin.label
-                      : "Tap anywhere on the map"}
-                  </span>
+                <MapPin className="h-3.5 w-3.5" aria-hidden />
+                <span>
+                  {origin?.source === "map" ? origin.label : "Pick on map"}
                 </span>
               </button>
             </div>
-            {origin ? (
-              <p className="mt-2 text-xs text-text-secondary">
-                Searching near{" "}
-                <span className="font-medium text-text">{origin.label}</span>
-              </p>
-            ) : null}
           </div>
 
           <div>
@@ -637,7 +591,7 @@ export function AroundMeSheet({
             aria-label="Search place types"
           />
 
-          <ul className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+          <ul className="flex flex-wrap gap-1.5">
             {filteredTypes.map((type) => {
               const selected = selectedType === type.id;
               return (
@@ -647,31 +601,16 @@ export function AroundMeSheet({
                     onClick={() => setSelectedType(type.id)}
                     aria-pressed={selected}
                     className={cx(
-                      "group flex w-full flex-col items-start gap-2 rounded-2xl border px-3.5 py-3 text-left transition-all",
+                      "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-xs font-medium transition-all",
                       selected
-                        ? "border-primary bg-primary-tint shadow-sm ring-1 ring-primary/25"
-                        : "border-border bg-surface-elevated/70 hover:border-primary/30 hover:bg-surface-elevated hover:shadow-sm"
+                        ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/25"
+                        : "border-border bg-surface-elevated/70 text-text hover:border-primary/30 hover:bg-surface-elevated"
                     )}
                   >
-                    <span
-                      className={cx(
-                        "flex h-9 w-9 items-center justify-center rounded-xl text-lg transition-colors",
-                        selected
-                          ? "bg-surface-elevated shadow-sm"
-                          : "bg-surface group-hover:bg-primary-tint/60"
-                      )}
-                      aria-hidden
-                    >
+                    <span className="text-sm leading-none" aria-hidden>
                       {type.icon}
                     </span>
-                    <span
-                      className={cx(
-                        "w-full truncate text-sm font-medium",
-                        selected ? "text-primary" : "text-text"
-                      )}
-                    >
-                      {type.label}
-                    </span>
+                    <span className="truncate">{type.label}</span>
                   </button>
                 </li>
               );

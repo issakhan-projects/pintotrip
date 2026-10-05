@@ -291,6 +291,30 @@ export async function fetchWikimediaPhoto(input: {
 }
 
 /**
+ * City/country hero image (trip covers, destination chips).
+ * Resolves English search terms so Commons matches reliably.
+ */
+export async function fetchWikimediaCityPhoto(input: {
+  cityName: string;
+  countryName?: string;
+  lat?: number;
+  lon?: number;
+}): Promise<WikimediaPhoto | null> {
+  const english = await resolveEnglishSearchTerms({
+    title: input.cityName,
+    cityName: input.cityName,
+    countryName: input.countryName,
+    lat: input.lat,
+    lon: input.lon,
+  });
+  const city = english.cityName || english.title;
+  if (!city) return null;
+  const query = buildPhotoQuery([city, english.countryName]);
+  if (!query) return null;
+  return fetchWikimediaPhoto({ query });
+}
+
+/**
  * Resolve a Commons photo for a named place (title-first, then city context).
  * Always searches with English terms — ignores UI / profile language.
  * Skips URLs already on the place when `excludePlaceIds` is provided.

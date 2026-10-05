@@ -8,6 +8,8 @@ import {
   MapPin,
   MoreHorizontal,
   Plane,
+  Share2,
+  Star,
   Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -16,11 +18,13 @@ import { DeleteConfirmModal } from "@/components/ui";
 import type { TripPlannerDoc, TripStatus } from "@/types/trip-planner";
 import type { SavedLocation } from "@/hooks/useLocations";
 import { tripDayCount } from "@/services/trip-planner";
+import { fetchWikimediaCityPhoto } from "@/lib/wikimedia";
 import { placesProgress, tripStatusLabel } from "./tripUtils";
 import {
   listTripDestinations,
   primaryTripDestination,
 } from "./tripDestinations";
+import { isPastTrip } from "./tripLifecycle";
 import { cx } from "@/lib/utils";
 
 interface TripCardProps {
@@ -28,6 +32,20 @@ interface TripCardProps {
   locations: SavedLocation[];
   onOpen: () => void;
   onDelete?: () => void | Promise<void>;
+  /** Opens the trip review modal (past / completed trips). */
+  onRateTrip?: () => void;
+  /**
+   * When set, overrides the default eligibility check.
+   * Defaults to past (non-cancelled) trips when `onRateTrip` is provided.
+   */
+  showRateTrip?: boolean;
+  /** Opens the Instagram Story share modal (completed / past trips). */
+  onShareTrip?: () => void;
+  /**
+   * When set, overrides the default share eligibility check.
+   * Defaults to past (non-cancelled) trips when `onShareTrip` is provided.
+   */
+  showShareTrip?: boolean;
 }
 
 function tripCoverUrl(
@@ -92,10 +110,15 @@ export function TripCard({
   locations,
   onOpen,
   onDelete,
+  onRateTrip,
+  showRateTrip,
+  onShareTrip,
+  showShareTrip,
 }: TripCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [wikimediaCover, setWikimediaCover] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const progress = placesProgress(trip, locations);
   const days = tripDayCount(trip.startDate, trip.endDate);
@@ -106,12 +129,54 @@ export function TripCard({
       .map((dest) => dest.cityName)
       .filter(Boolean)
       .join(" · ") || primary.countryName;
-  const coverUrl = tripCoverUrl(trip, locations);
+  const storedCoverUrl = tripCoverUrl(trip, locations);
+  const coverUrl = storedCoverUrl ?? wikimediaCover;
   const coverCity = primary.cityName || destinations[0]?.cityName || "";
   const placesLabel =
     progress.total === 0
       ? "No places added yet"
       : `${progress.visited}/${progress.total} visited`;
+  const canRateTrip =
+    Boolean(onRateTrip) &&
+    (showRateTrip ??
+      (!trip.tripReviewed &&
+        isPastTrip(trip) &&
+        trip.status !== "cancelled"));
+  const canShareTrip =
+    Boolean(onShareTrip) &&
+    (showShareTrip ??
+      (isPastTrip(trip) && trip.status !== "cancelled"));
+
+  useEffect(() => {
+    if (storedCoverUrl) {
+      setWikimediaCover(null);
+      return;
+    }
+    const cityName = primary.cityName?.trim() || primary.countryName?.trim();
+    if (!cityName) {
+      setWikimediaCover(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchWikimediaCityPhoto({
+      cityName,
+      countryName: primary.countryName,
+      lat: primary.lat,
+      lon: primary.lon,
+    }).then((photo) => {
+      if (!cancelled && photo?.url) setWikimediaCover(photo.url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    storedCoverUrl,
+    trip.id,
+    primary.cityName,
+    primary.countryName,
+    primary.lat,
+    primary.lon,
+  ]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -160,7 +225,12 @@ export function TripCard({
         </div>
 
         <div className="relative flex min-w-0 flex-1 flex-col justify-between gap-2.5 overflow-hidden p-3 sm:gap-3 sm:p-4">
-          <div className="relative min-w-0 pr-8">
+          <div
+            className={cx(
+              "relative min-w-0",
+              canShareTrip ? "pr-16 sm:pr-[4.5rem]" : "pr-8"
+            )}
+          >
             <span
               className={cx(
                 "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
@@ -269,8 +339,40 @@ export function TripCard({
         </div>
       </button>
 
+      {canRateTrip ? (
+        <div className="border-t border-border/70 px-3 py-2 sm:px-4">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRateTrip?.();
+            }}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-warning-background px-3 py-2 text-sm font-medium text-warning ring-1 ring-warning/20 transition-colors hover:bg-warning/15"
+          >
+            <Star className="h-4 w-4 fill-warning" aria-hidden />
+            Rate your trip
+          </button>
+        </div>
+      ) : null}
+
       {/* Sibling of open button — nested <button> is invalid HTML. */}
-      <div className="absolute right-2.5 top-2.5 z-10 sm:right-3.5 sm:top-3.5" ref={menuRef}>
+      <div
+        className="absolute right-2.5 top-2.5 z-10 flex items-center gap-1 sm:right-3.5 sm:top-3.5"
+        ref={menuRef}
+      >
+        {/* {canShareTrip ? (
+          <button
+            type="button"
+            aria-label="Share trip"
+            onClick={(e) => {
+              e.stopPropagation();
+              onShareTrip?.();
+            }}
+            className="rounded-full bg-surface/90 p-1.5 text-primary shadow-sm ring-1 ring-border/80 backdrop-blur-sm hover:bg-surface hover:text-primary"
+          >
+            <Share2 className="h-4 w-4" />
+          </button>
+        ) : null} */}
         <button
           type="button"
           aria-label="Trip options"
@@ -282,20 +384,36 @@ export function TripCard({
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>
-        {menuOpen && onDelete ? (
-          <div className="absolute right-0 mt-1 min-w-[9rem] rounded-xl border border-border bg-surface-elevated py-1 shadow-lg">
-            <button
-              type="button"
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error-background"
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen(false);
-                setDeleteOpen(true);
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete trip
-            </button>
+        {menuOpen && (canRateTrip || onDelete) ? (
+          <div className="absolute right-0 top-full mt-1 min-w-[10.5rem] rounded-xl border border-border bg-surface-elevated py-1 shadow-lg">
+            {canRateTrip ? (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onRateTrip?.();
+                }}
+              >
+                <Star className="h-3.5 w-3.5 text-warning" />
+                Rate your trip
+              </button>
+            ) : null}
+            {onDelete ? (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error-background"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  setDeleteOpen(true);
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete trip
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>

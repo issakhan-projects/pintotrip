@@ -42,6 +42,10 @@ import type {
   ResolveCityAirportsRequest,
   ResolveCityAirportsResult,
 } from "@/types/airports";
+import type {
+  ShareTripStoryRequest,
+  ShareTripStorySuccess,
+} from "@/types/trip-share";
 
 let functions: Functions | undefined;
 
@@ -70,6 +74,10 @@ export type PlanTripResponse = PlanTripAiResult | InsufficientAICreditsError;
 
 export type ResolveCityAirportsResponse =
   | ResolveCityAirportsResult
+  | InsufficientAICreditsError;
+
+export type ShareTripStoryResponse =
+  | ShareTripStorySuccess
   | InsufficientAICreditsError;
 
 function normalizeFindPlaceResult(
@@ -301,6 +309,27 @@ export async function resolveCityAirports(
   const result = await callable(request);
   if (isInsufficientAICreditsError(result.data)) {
     throw Object.assign(new Error(result.data.message), result.data);
+  }
+  return result.data;
+}
+
+/**
+ * Generate (or return cached) Instagram Story image for a completed trip.
+ * Costs shareTripStory credits on generate; cache hits are free.
+ */
+export async function shareTripStory(
+  request: ShareTripStoryRequest
+): Promise<ShareTripStorySuccess> {
+  const callable = httpsCallable<ShareTripStoryRequest, ShareTripStoryResponse>(
+    getCloudFunctions(),
+    "shareTripStory"
+  );
+  const result = await callable(request);
+  if (isInsufficientAICreditsError(result.data)) {
+    throw Object.assign(new Error(result.data.message), result.data);
+  }
+  if (!result.data || result.data.success !== true) {
+    throw new Error("Failed to generate trip story image.");
   }
   return result.data;
 }

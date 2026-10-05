@@ -18,6 +18,7 @@ export function getFirebaseStorage(): FirebaseStorage {
  *   locations/{locationId}/original
  *   locations/{locationId}/image-2
  *   tripPlanner/{tripId}/cover
+ *   tripPlanner/{tripId}/story.png  (Functions-generated share image)
  *   tripPlanner/{tripId}/routes/{routeId}/{fileId}
  *
  * Only store user-uploaded images. Do not permanently store
@@ -35,6 +36,9 @@ export const StoragePaths = {
   /** User-uploaded trip cover image. */
   tripCover: (userId: string, tripId: string) =>
     `users/${userId}/tripPlanner/${tripId}/cover`,
+  /** AI-generated Instagram Story share image (written by Cloud Functions). */
+  tripStory: (userId: string, tripId: string) =>
+    `users/${userId}/tripPlanner/${tripId}/story.png`,
   /** Route ticket / boarding-pass attachments (image or PDF). */
   tripRouteAttachment: (
     userId: string,

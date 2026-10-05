@@ -20,6 +20,8 @@ export const AI_CREDIT_COSTS = {
   resolveCityAirports: 1,
   /** Pack of Google place name searches (5 searches per purchase). */
   searchPlaces: 10,
+  /** Instagram Story image for a completed trip (gpt-image-2.5-flare). */
+  shareTripStory: 15,
 } as const;
 
 /** How many name searches one `searchPlaces` credit purchase unlocks. */

@@ -37,6 +37,19 @@ export type PlacesLocationInput = TransportLocationsInput & {
   title: string;
 };
 
+/** Cached adult ticket / entry / typical meal price from GPT web search. */
+export type PlacesLocationPrice = {
+  amount: number;
+  /** ISO 4217 uppercase. */
+  currency: string;
+  label?: string;
+  /** Ticket/booking URL when known. */
+  link?: string;
+  /** Epoch ms when looked up. */
+  pricedAt: number;
+  source: "web_search";
+};
+
 export type PlacesLocationEntry = {
   countryId: string;
   /** Same as path locationId — English ASCII city slug. */
@@ -58,6 +71,8 @@ export type PlacesLocationEntry = {
   cityName?: string;
   /** Localized country display name. */
   countryName?: string;
+  /** Adult ticket / entry price when looked up. */
+  price?: PlacesLocationPrice;
 };
 
 /** In-memory city cache with lookup by ascii id and Google placeId. */
@@ -174,6 +189,8 @@ function normalizePlaceDoc(
       ? raw.cityId.trim().toLowerCase()
       : null) || ids.locationId;
 
+  const price = normalizePrice(raw.price);
+
   return {
     countryId: ids.countryId,
     cityId,
@@ -200,7 +217,60 @@ function normalizePlaceDoc(
     ...(typeof raw.countryName === "string" && raw.countryName.trim()
       ? { countryName: raw.countryName.trim() }
       : {}),
+    ...(price ? { price } : {}),
   };
+}
+
+function normalizePrice(raw: unknown): PlacesLocationPrice | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const amount =
+    typeof row.amount === "number" && Number.isFinite(row.amount) && row.amount >= 0
+      ? row.amount
+      : null;
+  const currency =
+    typeof row.currency === "string" && /^[A-Za-z]{3}$/.test(row.currency.trim())
+      ? row.currency.trim().toUpperCase()
+      : null;
+  if (amount == null || !currency) return undefined;
+  const pricedAt =
+    typeof row.pricedAt === "number" && Number.isFinite(row.pricedAt)
+      ? row.pricedAt
+      : 0;
+  const label =
+    typeof row.label === "string" && row.label.trim()
+      ? row.label.trim()
+      : undefined;
+  const link =
+    typeof row.link === "string" && /^https:\/\//i.test(row.link.trim())
+      ? row.link.trim()
+      : undefined;
+  return {
+    amount,
+    currency,
+    pricedAt,
+    source: "web_search",
+    ...(label ? { label } : {}),
+    ...(link ? { link } : {}),
+  };
+}
+
+/** True when cached price is present and fresher than TTL (default 180 days). */
+export function hasFreshCachedPrice(
+  entry: PlacesLocationEntry | null | undefined,
+  ttlMs = 180 * 24 * 60 * 60 * 1000
+): entry is PlacesLocationEntry & { price: PlacesLocationPrice } {
+  if (!entry?.price) return false;
+  if (
+    typeof entry.price.amount !== "number" ||
+    !Number.isFinite(entry.price.amount) ||
+    entry.price.amount < 0
+  ) {
+    return false;
+  }
+  if (!/^[A-Z]{3}$/.test(entry.price.currency)) return false;
+  if (!entry.price.pricedAt || entry.price.pricedAt <= 0) return true;
+  return Date.now() - entry.price.pricedAt <= ttlMs;
 }
 
 function indexEntry(
@@ -374,6 +444,130 @@ export async function setPlaceLocation(
     );
   } catch (err) {
     logger.warn("placesLocation set failed", {
+      countryId: ids.countryId,
+      locationId: ids.locationId,
+      placeDocId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+export type SetPlaceLocationPriceParams = {
+  ids: PlacesLocationIds;
+  placeDocId: string;
+  price: Omit<PlacesLocationPrice, "source"> & { source?: "web_search" };
+  /** Used when the place doc does not exist yet (coords enrich missed). */
+  stub?: {
+    id: string;
+    title: string;
+    location: { lat: number; lon: number };
+    cityName?: string;
+    countryName?: string;
+    cityId?: string;
+  };
+};
+
+/**
+ * Merge adult ticket/entry price onto a placesLocation place doc.
+ * Does not call Google — GPT web-search results only.
+ */
+export async function setPlaceLocationPrice(
+  params: SetPlaceLocationPriceParams
+): Promise<void> {
+  const { ids, placeDocId, price, stub } = params;
+  const now = Date.now();
+  const currency = price.currency.trim().toUpperCase();
+  if (
+    !Number.isFinite(price.amount) ||
+    price.amount < 0 ||
+    !/^[A-Z]{3}$/.test(currency)
+  ) {
+    return;
+  }
+
+  const priceDoc: PlacesLocationPrice = {
+    amount: price.amount,
+    currency,
+    pricedAt: price.pricedAt > 0 ? price.pricedAt : now,
+    source: "web_search",
+    ...(price.label?.trim() ? { label: price.label.trim() } : {}),
+    ...(price.link && /^https:\/\//i.test(price.link.trim())
+      ? { link: price.link.trim() }
+      : {}),
+  };
+
+  try {
+    const pRef = placeRef(ids.countryId, ids.locationId, placeDocId);
+    const existing = await pRef.get();
+    const placeCreatedAt =
+      existing.exists && typeof existing.data()?.createdAt === "number"
+        ? (existing.data()!.createdAt as number)
+        : now;
+
+    const cityId = isAsciiSlug(stub?.cityId)
+      ? stub!.cityId!.trim().toLowerCase()
+      : ids.locationId;
+    const placeAsciiId = isAsciiSlug(stub?.id)
+      ? stub!.id.trim().toLowerCase()
+      : isAsciiSlug(placeDocId)
+        ? placeDocId
+        : placeDocId;
+
+    if (!existing.exists && stub) {
+      const locRef = locationRef(ids.countryId, ids.locationId);
+      const existingLoc = await locRef.get();
+      const locCreatedAt =
+        existingLoc.exists && typeof existingLoc.data()?.createdAt === "number"
+          ? (existingLoc.data()!.createdAt as number)
+          : now;
+      await locRef.set(
+        {
+          countryId: ids.countryId,
+          locationId: ids.locationId,
+          cityId,
+          ...(stub.cityName?.trim() ? { cityName: stub.cityName.trim() } : {}),
+          ...(stub.countryName?.trim()
+            ? { countryName: stub.countryName.trim() }
+            : {}),
+          createdAt: locCreatedAt,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+
+    await pRef.set(
+      {
+        ...(existing.exists
+          ? {}
+          : {
+              id: placeAsciiId,
+              cityId,
+              countryId: ids.countryId,
+              title: stub?.title.trim() || placeDocId,
+              ...(stub
+                ? {
+                    location: {
+                      lat: stub.location.lat,
+                      lon: stub.location.lon,
+                    },
+                  }
+                : {}),
+              ...(stub?.cityName?.trim()
+                ? { cityName: stub.cityName.trim() }
+                : {}),
+              ...(stub?.countryName?.trim()
+                ? { countryName: stub.countryName.trim() }
+                : {}),
+            }),
+        price: priceDoc,
+        createdAt: placeCreatedAt,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    logger.warn("placesLocation price set failed", {
       countryId: ids.countryId,
       locationId: ids.locationId,
       placeDocId,

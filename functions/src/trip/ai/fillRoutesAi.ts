@@ -258,12 +258,17 @@ function parsePoint(raw: unknown): RoutePoint | null {
     if (lat != null && lon != null) location = { lat, lon };
   }
 
+  const cityId = asString(o.cityId)?.toLowerCase() ?? undefined;
+  const countryId = asString(o.countryId)?.toLowerCase() ?? undefined;
+
   return {
     name,
     city,
     ...(country ? { country } : {}),
     ...(code ? { code } : {}),
     ...(placeId ? { placeId } : {}),
+    ...(cityId && cityId !== "unknown" ? { cityId } : {}),
+    ...(countryId && countryId !== "unknown" ? { countryId } : {}),
     ...(location ? { location } : {}),
   };
 }

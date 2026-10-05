@@ -823,6 +823,51 @@ export function createOpenAIPlacesFiller(): OpenAIPlacesFiller {
 
 type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 
+const PLACE_PRICES_MAX_TOKENS = 1800;
+
+/**
+ * Cheapest GPT web-search for adult ticket/entry prices.
+ * One batched call, search_context_size=low (lowest web_search tier).
+ * web_search cannot use JSON mode — parse JSON from text.
+ */
+export async function completePlacePricesWebSearch(params: {
+  system: string;
+  user: string;
+  maxOutputTokens?: number;
+}): Promise<{
+  text: string;
+  metrics: { model: string; usage: AITokenUsage; cost: number };
+}> {
+  const client = createOpenAIClient();
+  const response = await client.responses.create({
+    model: PLAN_TRIP_MODEL,
+    max_output_tokens: params.maxOutputTokens ?? PLACE_PRICES_MAX_TOKENS,
+    tools: [{ type: "web_search", search_context_size: "low" }],
+    instructions: params.system,
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: params.user }],
+      },
+    ],
+  });
+
+  const text = response.output_text?.trim() ?? "";
+  if (!text) {
+    throw new Error("OpenAI returned an empty place-prices web search response.");
+  }
+
+  const usage = usageFromResponse(response.usage);
+  return {
+    text,
+    metrics: {
+      model: PLAN_TRIP_MODEL,
+      usage,
+      cost: estimateGpt4oCost(usage),
+    },
+  };
+}
+
 /**
  * Chat Completions JSON helper for Trip Planner AI stages (routes / places).
  * Uses max_completion_tokens + low reasoning; retries on empty content.

@@ -6,10 +6,11 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent as ReactMouseEvent,
   type MutableRefObject,
   type ReactNode,
 } from "react";
-import { Button, ConfirmModal, TextInput } from "@/components/ui";
+import { Button, ConfirmModal, TextInput, TimePicker } from "@/components/ui";
 import {
   Check,
   ChevronDown,
@@ -39,6 +40,7 @@ import type {
   ItineraryDay,
   ItineraryDayWeather,
   ItineraryPlace,
+  TripAccommodation,
   TripItinerary,
   TripPlannerDoc,
   TripRoute,
@@ -148,22 +150,70 @@ function formatPlacePrice(price: LocationPrice): string | null {
   return `${price.amount}${price.currency ? ` ${price.currency}` : ""}`;
 }
 
+/** Parse `HH:mm` → minutes from midnight. */
+function parseVisitClock(value?: string): number | null {
+  if (!value?.trim()) return null;
+  const match = value.trim().match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23
+  ) {
+    return null;
+  }
+  return hour * 60 + minute;
+}
+
+function formatVisitClock(totalMinutes: number): string {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(totalMinutes)));
+  const hour = Math.floor(clamped / 60);
+  const minute = clamped % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function durationFromVisitWindow(
+  from: string,
+  to: string
+): number | undefined {
+  const fromMins = parseVisitClock(from);
+  const toMins = parseVisitClock(to);
+  if (fromMins == null || toMins == null || toMins <= fromMins) return undefined;
+  return toMins - fromMins;
+}
+
 type DayMapPoint = {
   id: string;
   lat: number;
   lon: number;
   title: string;
   order: number;
-  kind: "place" | "city" | "airport";
+  kind: "place" | "city" | "airport" | "stay";
   status?: LocationStatus;
   googlePlaceId?: string;
 };
+
+/** True when the itinerary day falls inside the stay window (inclusive). */
+function stayCoversItineraryDay(
+  stay: TripAccommodation,
+  dayIso: string
+): boolean {
+  const start = stay.startDate?.trim();
+  const end = stay.endDate?.trim();
+  // Dates are optional on stays — still show a mappable pin every day.
+  if (!start || !end) return true;
+  return dayIso >= start && dayIso <= end;
+}
 
 /** Build numbered markers + route overlays for one itinerary day (existing data only). */
 function buildDayMapData(
   day: ItineraryDay | undefined,
   byId: Map<string, SavedLocation>,
-  routesById: Map<string, TripRoute>
+  routesById: Map<string, TripRoute>,
+  accommodations: TripAccommodation[] = []
 ): { markers: DayMapPoint[]; legs: ItineraryMapLeg[]; placeCount: number } {
   if (!day) return { markers: [], legs: [], placeCount: 0 };
 
@@ -175,6 +225,21 @@ function buildDayMapData(
   const legs: ItineraryMapLeg[] = [];
   const placePoints: { id: string; lat: number; lon: number }[] = [];
   let placeCount = 0;
+  const dayIso = toIsoDate(day.date.toDate());
+
+  // Stays covering this calendar day (pin first so places stay visually on top).
+  for (const stay of accommodations) {
+    if (!stayCoversItineraryDay(stay, dayIso)) continue;
+    if (!hasUsableMapCoords(stay.lat, stay.lon)) continue;
+    markers.push({
+      id: `stay:${stay.id ?? `${stay.lat},${stay.lon}`}`,
+      lat: stay.lat!,
+      lon: stay.lon!,
+      title: stay.name?.trim() || stay.address?.trim() || "Stay",
+      order: 0,
+      kind: "stay",
+    });
+  }
 
   activePlaces.forEach((slot, slotIndex) => {
     const displayOrder = slotIndex + 1;
@@ -728,10 +793,16 @@ export function PlacesStep({
     }
   }, [trip.itinerary.days.length, activeDayIndex]);
 
+  const tripAccommodations = useMemo(
+    () => listTripAccommodations(trip),
+    [trip]
+  );
+
   const activeDay = trip.itinerary.days[activeDayIndex];
   const dayMapData = useMemo(
-    () => buildDayMapData(activeDay, byId, routesById),
-    [activeDay, byId, routesById]
+    () =>
+      buildDayMapData(activeDay, byId, routesById, tripAccommodations),
+    [activeDay, byId, routesById, tripAccommodations]
   );
 
   const dayMapMarkers: MapMarkerInput[] = useMemo(
@@ -1413,6 +1484,41 @@ function ItineraryList({
     const targetSlot = ordered[target];
     if (!targetSlot) return;
     await reorderDaySlots(dayIndex, locationId, targetSlot.locationId);
+  }
+
+  async function updatePlaceVisitTime(
+    dayIndex: number,
+    locationId: string,
+    next: { from: string; to: string } | null
+  ) {
+    const day = trip.itinerary.days[dayIndex];
+    if (!day) return;
+
+    const days = trip.itinerary.days.map((d, i) => {
+      if (i !== dayIndex) return d;
+      return {
+        ...d,
+        places: d.places.map((slot) => {
+          if (slot.locationId !== locationId) return slot;
+          if (!next) {
+            const rest = { ...slot };
+            delete rest.bestVisitTime;
+            return rest;
+          }
+          const durationMinutes = durationFromVisitWindow(next.from, next.to);
+          return {
+            ...slot,
+            bestVisitTime: { from: next.from, to: next.to },
+            ...(durationMinutes != null ? { durationMinutes } : {}),
+          };
+        }),
+      };
+    });
+
+    await onUpdateItinerary({
+      status: "edited",
+      days,
+    });
   }
 
   const destinations = listTripDestinations(trip);
@@ -2181,29 +2287,18 @@ function ItineraryList({
                                 {displayDescription}
                               </p>
                             ) : null}
-                            {slot.bestVisitTime?.from &&
-                            slot.bestVisitTime?.to ? (
-                              <p className="mt-1 flex items-center gap-1 text-xs font-medium text-text">
-                                <Clock className="h-3 w-3 shrink-0 text-primary" />
-                                <span>
-                                  {slot.bestVisitTime.from} –{" "}
-                                  {slot.bestVisitTime.to}
-                                  {slot.durationMinutes != null &&
-                                  Number.isFinite(slot.durationMinutes)
-                                    ? ` · ~${formatAvailableDuration(slot.durationMinutes)}`
-                                    : ""}
-                                </span>
-                              </p>
-                            ) : slot.durationMinutes != null &&
-                              Number.isFinite(slot.durationMinutes) ? (
-                              <p className="mt-1 flex items-center gap-1 text-xs text-text-secondary">
-                                <Clock className="h-3 w-3 shrink-0" />
-                                <span>
-                                  ~{formatAvailableDuration(slot.durationMinutes)}{" "}
-                                  visit
-                                </span>
-                              </p>
-                            ) : null}
+                            <PlaceVisitTimeEditor
+                              from={slot.bestVisitTime?.from}
+                              to={slot.bestVisitTime?.to}
+                              durationMinutes={slot.durationMinutes}
+                              onChange={(next) =>
+                                updatePlaceVisitTime(
+                                  dayIndex,
+                                  slot.locationId,
+                                  next
+                                )
+                              }
+                            />
                             {displayNote ? (
                               <p className="mt-1 text-xs text-text">
                                 <span className="font-medium">Note: </span>
@@ -2285,6 +2380,202 @@ function ItineraryList({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function PlaceVisitTimeEditor({
+  from,
+  to,
+  durationMinutes,
+  onChange,
+}: {
+  from?: string;
+  to?: string;
+  durationMinutes?: number;
+  onChange: (next: { from: string; to: string } | null) => Promise<void> | void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftFrom, setDraftFrom] = useState(from ?? "");
+  const [draftTo, setDraftTo] = useState(to ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (editing) return;
+    setDraftFrom(from ?? "");
+    setDraftTo(to ?? "");
+  }, [from, to, editing]);
+
+  const hasWindow = Boolean(from?.trim() && to?.trim());
+  const durationLabel =
+    durationMinutes != null && Number.isFinite(durationMinutes)
+      ? formatAvailableDuration(durationMinutes)
+      : null;
+
+  function openEditor(event: ReactMouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    const start = from?.trim() || "10:00";
+    const end =
+      to?.trim() ||
+      (durationMinutes != null && Number.isFinite(durationMinutes)
+        ? formatVisitClock(
+            (parseVisitClock(start) ?? 10 * 60) + Math.max(30, durationMinutes)
+          )
+        : "12:00");
+    setDraftFrom(start);
+    setDraftTo(end);
+    setEditing(true);
+  }
+
+  async function commit(nextFrom: string, nextTo: string) {
+    const fromMins = parseVisitClock(nextFrom);
+    const toMins = parseVisitClock(nextTo);
+    if (fromMins == null || toMins == null || toMins <= fromMins) return;
+    if (nextFrom === from && nextTo === to) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onChange({ from: nextFrom, to: nextTo });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearTime() {
+    setSaving(true);
+    try {
+      await onChange(null);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={openEditor}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="mt-1 flex w-full items-center gap-1 rounded-lg text-left text-xs transition-colors hover:bg-surface"
+      >
+        <Clock
+          className={cx(
+            "h-3 w-3 shrink-0",
+            hasWindow ? "text-primary" : "text-text-muted"
+          )}
+        />
+        {hasWindow ? (
+          <span className="font-medium text-text">
+            {from} – {to}
+            {durationLabel ? ` · ~${durationLabel}` : ""}
+            <span className="ml-1.5 font-normal text-text-muted">Edit</span>
+          </span>
+        ) : durationLabel ? (
+          <span className="text-text-secondary">
+            ~{durationLabel} visit
+            <span className="ml-1.5 text-text-muted">Set time</span>
+          </span>
+        ) : (
+          <span className="text-text-muted">Set visit time</span>
+        )}
+      </button>
+    );
+  }
+
+  const draftDuration = durationFromVisitWindow(draftFrom, draftTo);
+  const canSave =
+    parseVisitClock(draftFrom) != null &&
+    parseVisitClock(draftTo) != null &&
+    (parseVisitClock(draftTo) ?? 0) > (parseVisitClock(draftFrom) ?? 0);
+
+  return (
+    <div
+      className="mt-2 space-y-2 rounded-xl border border-border bg-surface px-2.5 py-2"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDragStart={(e) => e.preventDefault()}
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <label className="min-w-0 space-y-1">
+          <span className="block text-[11px] font-medium text-text-muted">
+            From
+          </span>
+          <TimePicker
+            value={draftFrom}
+            max={draftTo || undefined}
+            stepMinutes={5}
+            placeholder="Start"
+            onChange={(value) => {
+              setDraftFrom(value);
+              const toMins = parseVisitClock(draftTo);
+              const fromMins = parseVisitClock(value);
+              if (
+                fromMins != null &&
+                toMins != null &&
+                toMins <= fromMins
+              ) {
+                setDraftTo(formatVisitClock(fromMins + 30));
+              }
+            }}
+          />
+        </label>
+        <label className="min-w-0 space-y-1">
+          <span className="block text-[11px] font-medium text-text-muted">
+            To
+          </span>
+          <TimePicker
+            value={draftTo}
+            min={draftFrom || undefined}
+            stepMinutes={5}
+            placeholder="End"
+            onChange={(value) => setDraftTo(value)}
+          />
+        </label>
+      </div>
+      {draftDuration != null ? (
+        <p className="text-[11px] text-text-secondary">
+          ~{formatAvailableDuration(draftDuration)} visit
+        </p>
+      ) : draftFrom && draftTo ? (
+        <p className="text-[11px] text-error">End time must be after start</p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          disabled={!canSave || saving}
+          onClick={() => void commit(draftFrom, draftTo)}
+          className="h-9 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
+        >
+          {saving ? "Saving…" : "Save time"}
+        </Button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => {
+            setDraftFrom(from ?? "");
+            setDraftTo(to ?? "");
+            setEditing(false);
+          }}
+          className="h-9 rounded-xl px-3 text-sm font-medium text-text-secondary hover:bg-divider hover:text-text"
+        >
+          Cancel
+        </button>
+        {hasWindow ? (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void clearTime()}
+            className="ml-auto h-9 rounded-xl px-3 text-sm font-medium text-error hover:bg-error-background"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -2457,7 +2748,7 @@ function PlaceMenu({
 
   useEffect(() => {
     if (!open) return;
-    function handlePointer(event: MouseEvent) {
+    function handlePointer(event: globalThis.MouseEvent) {
       if (!ref.current?.contains(event.target as Node)) {
         setOpen(false);
       }

@@ -236,6 +236,12 @@ export type TripAccommodation = {
   checkInTime?: string;
   /** Local check-out time (`HH:mm`). Defaults to 12:00 in the UI. */
   checkOutTime?: string;
+  /** Approximate total stay cost in the trip / user currency. */
+  priceAmount?: number;
+  /** ISO 4217 currency for priceAmount. */
+  priceCurrency?: string;
+  /** Display label e.g. "≈ 120 USD", "Free". */
+  priceLabel?: string;
 };
 
 /** Airport pin resolved for a trip city (IATA + coords when known). */
@@ -437,6 +443,16 @@ export interface TripPlanner {
    * Cleared if they later submit a review (optional).
    */
   reviewDismissedAt?: Timestamp;
+  /**
+   * True after the user submitted a trip review ("Rate your trip").
+   * Used to hide the rate CTA across reloads without re-querying tripReviews.
+   */
+  tripReviewed?: boolean;
+  /**
+   * Generated Instagram Story image URL from shareTripStory
+   * (users/{uid}/tripPlanner/{tripId}/story.png).
+   */
+  storyImageUrl?: string;
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

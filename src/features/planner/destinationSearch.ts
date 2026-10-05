@@ -8,7 +8,7 @@ import {
   cachedRequest,
   normalizeQuery,
 } from "@/lib/maps/requestCache";
-import { fetchPexelsCityPhoto } from "@/lib/pexels";
+import { fetchWikimediaCityPhoto } from "@/lib/wikimedia";
 import { isAsciiId } from "@/lib/utils";
 
 export type GeocodedPlace = {
@@ -23,7 +23,7 @@ export type GeocodedPlace = {
   lat?: number;
   lon?: number;
   label: string;
-  /** Pexels (or other external) image URLs for trip covers. */
+  /** Wikimedia Commons (or other external) image URLs for trip covers. */
   photos?: string[];
 };
 
@@ -56,8 +56,8 @@ function fromGeocoderResult(
 }
 
 /**
- * Resolve a cover photo for a city destination via Pexels.
- * Same source as plan-place thumbs — no Google Places Text Search / Photos.
+ * Resolve a cover photo for a city destination via Wikimedia Commons.
+ * Same source as place thumbs — no Google Places Text Search / Photos.
  */
 export async function fetchDestinationPhotos(place: {
   cityName: string;
@@ -69,9 +69,11 @@ export async function fetchDestinationPhotos(place: {
   const country = place.countryName.trim();
   if (!city && !country) return [];
 
-  const photo = await fetchPexelsCityPhoto({
+  const photo = await fetchWikimediaCityPhoto({
     cityName: city || country,
     countryName: country && country !== city ? country : undefined,
+    lat: place.lat,
+    lon: place.lon,
   });
   return photo?.url ? [photo.url] : [];
 }

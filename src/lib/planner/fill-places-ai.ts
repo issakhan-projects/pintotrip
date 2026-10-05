@@ -4,6 +4,11 @@
  */
 
 import { PLACE_CATEGORIES, type LeisureType, type PlaceCategory } from "@/types/trip-plan";
+import {
+  TRIP_ROUTE_TRANSPORTS,
+  type RoutePoint,
+  type TripRouteTransport,
+} from "@/types/trip-planner";
 import type {
   TripPlannerAiRequest,
   TripPlannerAiRequestDestination,
@@ -11,9 +16,20 @@ import type {
   TripPlannerAiResponseLocationPlace,
   TripPlannerAiResponseNestedPlace,
   TripPlannerAiResponsePlace,
+  TripPlannerAiResponseRoute,
 } from "@/types/trip-planner-ai-request";
 
 const PLACE_CATEGORY_SET = new Set<string>(PLACE_CATEGORIES);
+const TRANSPORT_SET = new Set<string>(TRIP_ROUTE_TRANSPORTS);
+/** Modes allowed for same-day island / peninsula / coastal day-trip access. */
+const DAY_TRIP_TRANSPORT_SET = new Set<TripRouteTransport>([
+  "ferry",
+  "bus",
+  "taxi",
+  "car",
+  "metro",
+  "other",
+]);
 
 const LEISURE_HINT: Record<LeisureType, string> = {
   sightseeing:
@@ -83,6 +99,23 @@ PART A — PLACES + ACTIVITIES / EXPERIENCES:
    - entertainment and short paid activities that fit the remaining freeTime
    Prefer named operators / venues / ticketed products over vague labels
    ("Bosphorus sunset cruise" not "do a boat trip").
+3b. Destination-defining nearby attractions (CRITICAL — easy to under-recommend):
+   - Do NOT limit picks to the city center / old town. Also cover iconic places
+     travelers visit FROM this stay city in the same metro / province / bay —
+     including nearby islands, peninsulas, beach resorts, wildlife islands,
+     ferry day-trips, cable-car islands, and coastal parks — when they are
+     genuinely associated with that destination and reachable as a day outing
+     (roughly within ~1–2 hours by ferry/boat/car).
+   - Keep cityId / city.id as the stay city; put real lat/lon on the attraction
+     itself (even if offshore or in a neighboring district).
+   - On multi-day stays with freeTime ≥ ~360 min at least once, include at least
+     ONE such signature nearby outing across the stay when the destination is
+     known for them — do not fill every day with only downtown museums/markets.
+   - Still respect freeTime: short half-days stay local; full/near-full days may
+     use one longer island/day-trip activity instead of packing only short stops.
+   - When the place needs ferry / boat / coastal hop / short transfer to reach,
+     you MUST also ADD outbound + return transport routes for that day
+     (see PART C day-trip access rules) with realistic times and fares.
 4. New entries MUST use the locations subcollection shape (no googlePhotoUrl):
    {
      "id": "ascii-slug-id",
@@ -109,6 +142,14 @@ PART A — PLACES + ACTIVITIES / EXPERIENCES:
     - experience → bookable tourist experiences (boat trips, workshops, tastings, local activities)
     - show → performances, concerts, theaters, spectacle shows
     - adventure / wellness / nightlife → keep using those when they fit better
+4c. SAME-DAY VARIETY (CRITICAL — avoid repetitive days):
+    - Do NOT put dining venues in places[] — restaurants/cafés/markets belong in whereToEat[] only
+      (exception: leisureType is "food", and even then at most ONE food stop in places[]).
+    - Never schedule two food/cafe/market stops back-to-back in the day's timeline
+      (including whereToEat). Separate meals with a non-dining activity or leave gaps.
+    - At most ONE of each activity type per day: wellness (spa/hammam/bath), tour,
+      adventure, show, nightlife. Example: never hammam morning AND hammam/spa evening.
+    - Prefer a mixed day (sight + activity + meal) over repeating the same category.
 5. cityId / city.id / country.id must be English ASCII (never localized script).
 6. locationId values must come from destinations[].savedPlaces[].id or from the slot's existing places. Never invent locationIds.
 7. NO DUPLICATES ACROSS DAYS: each locationId, each new place id, and each place title (same city) may appear on at most ONE day — across BOTH places[] and whereToEat[].
@@ -122,8 +163,10 @@ PART A — PLACES + ACTIVITIES / EXPERIENCES:
 9. Respect freeTime.durationMinutes (and start/end when present). Rough guide for places[]:
    - under 90 min → 0–1 new items (short paid activity OK if it fits)
    - 90–240 → 1–2 (prefer at least one doable activity/experience when leisure fits)
-   - 240–480 → 2–3 (mix sights + 1 tour/experience when the city offers them)
-   - 480+ → 2–4 (include 1–2 activities/experiences, not only landmarks)
+   - 240–480 → 2–3 (mix sights + 1 tour/experience when the city offers them);
+     OR 1 longer nearby day-trip / island outing when that is the city's icon
+   - 480+ → 2–4 (include 1–2 activities/experiences, not only landmarks);
+     OR 1 signature nearby island/peninsula/day-trip as the day's anchor
    Count saved locationIds toward the day's load — do not overfill.
    Only recommend activities whose durationMinutes fit inside remaining freeTime
    after saved places (leave buffer for travel between stops).
@@ -147,9 +190,10 @@ PART B — WHERE TO EAT (popular dining, mealType HARD FILTER):
     - Suggest realistic meal windows inside freeTime
 14. whereToEat count guide (separate from places[]):
    - under 90 min → 0
-   - 90–240 → 1
-   - 240–480 → 1–2
-   - 480+ → 2–3
+   - 90–240 → 1 (one meal only — do not add a second café/snack stop)
+   - 240–480 → 1–2 (different meal windows only, e.g. lunch + dinner — never two lunches)
+   - 480+ → 2–3 (spread across breakfast / lunch / dinner — never consecutive dining)
+   At most ONE whereToEat per meal window (breakfast <11:00, lunch 11:00–16:00, dinner ≥16:00).
 15. mealType is a HARD dietary filter for whereToEat AND any food/cafe/market in places[]:
     - default: recommend popular local food freely
     - halal: ONLY halal / halal-friendly. NEVER pork, bacon, ham, lard, non-halal meat, or alcohol-centric bars. If a famous local dish is pork-based, recommend a popular HALAL alternative — popularity NEVER overrides diet.
@@ -158,12 +202,30 @@ PART B — WHERE TO EAT (popular dining, mealType HARD FILTER):
     - other + mealCustom: strictly follow the stated diet.
 16. Do not duplicate the same venue across places[] and whereToEat[].
 
-PART C — NON-FLIGHT ROUTES (price + link):
-17. For each route in the input with transport NOT "flight", return fare + official booking/timetable URL when known.
+PART C — NON-FLIGHT ROUTES (fare enrich + day-trip access):
+17. For each EXISTING route in the input with transport NOT "flight", return fare + official booking/timetable URL when known. Identify by day + routeIndex (0-based).
 18. NEVER add priceAmount / priceCurrency / priceLabel / link for transport "flight".
 19. Use approximate one-way adult fare. Prefer trip currency when converting. priceLabel like "≈ 45 USD" or "from 12 EUR".
 20. link must be https official operator / timetable / booking page. Omit if not reliable.
-21. Identify each route by day + routeIndex (0-based index in that day's routes array).
+21. DAY-TRIP ACCESS ROUTES — ADD when a recommended place needs ferry/boat/coastal hop:
+    If you recommend an island, peninsula, ferry day-trip, or coastal icon that is NOT
+    walkable from the city center, you MUST add TWO new same-day routes:
+      a) outbound: stay-city pier / ferry terminal / hub → island/attraction pier
+      b) return: island/attraction pier → stay-city pier / hub
+    Use transport "ferry" when that is the real mode; otherwise bus|taxi|car|metro|other.
+    NEVER use flight or airport_transfer for these access legs.
+    Each NEW route object MUST include:
+      - "add": true
+      - "forPlaceId": ascii id of the place it serves
+      - transport, from, to (name, city, location {lat,lon})
+      - departure + arrival: { datetime: ISO with offset on that day, timezone: IANA, timeKnown: true }
+      - priceAmount, priceCurrency, priceLabel (one-way adult fare when known), link when known
+    Timing rules:
+      - Both legs must fall inside that day's freeTime window when freeTime start/end exist
+      - Outbound arrival ≤ place.bestVisitTime.from
+      - Return departure ≥ place.bestVisitTime.to
+      - Place durationMinutes is ON-SITE time only (exclude ferry riding time)
+    Do NOT add day-trip routes for ordinary downtown walks. Do NOT invent intercity legs.
 
 OUTPUT SCHEMA:
 {
@@ -176,7 +238,7 @@ OUTPUT SCHEMA:
           "cityId": "",
           "places": [
             { "locationId": "saved-id", "bestVisitTime": { "from": "10:00", "to": "12:30" }, "durationMinutes": 150 },
-            { "id": "new-slug", "title": "", "description": "", "cityId": "", "status": "planned", "category": "attraction", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "bestVisitTime": { "from": "14:00", "to": "17:00" }, "durationMinutes": 180, "ai": { "why": "", "model": "fillPlaces" }, "source": { "type": "manual" }, "confidence": 0.7 }
+            { "id": "princes-islands", "title": "", "description": "", "cityId": "", "status": "planned", "category": "attraction", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "bestVisitTime": { "from": "11:00", "to": "16:00" }, "durationMinutes": 300, "ai": { "why": "", "model": "fillPlaces" }, "source": { "type": "manual" }, "confidence": 0.7 }
           ],
           "whereToEat": [
             { "id": "popular-restaurant-slug", "title": "", "description": "", "cityId": "", "status": "planned", "category": "food", "location": { "lat": 0, "lon": 0 }, "city": { "id": "", "name": "" }, "country": { "id": "", "name": "" }, "images": [], "bestVisitTime": { "from": "12:30", "to": "13:30" }, "durationMinutes": 60, "ai": { "why": "Popular local spot matching mealType", "model": "fillWhereToEat" }, "source": { "type": "manual" }, "confidence": 0.75 }
@@ -191,13 +253,39 @@ OUTPUT SCHEMA:
           "priceCurrency": "SAR",
           "priceLabel": "≈ 150 SAR",
           "link": "https://example.com/book"
+        },
+        {
+          "add": true,
+          "forPlaceId": "princes-islands",
+          "transport": "ferry",
+          "from": { "name": "Kabataş Ferry Terminal", "city": "Istanbul", "location": { "lat": 41.034, "lon": 28.995 } },
+          "to": { "name": "Büyükada Pier", "city": "Istanbul", "location": { "lat": 40.874, "lon": 29.12 } },
+          "departure": { "datetime": "2026-06-10T09:00:00+03:00", "timezone": "Europe/Istanbul", "timeKnown": true },
+          "arrival": { "datetime": "2026-06-10T10:00:00+03:00", "timezone": "Europe/Istanbul", "timeKnown": true },
+          "priceAmount": 15,
+          "priceCurrency": "TRY",
+          "priceLabel": "≈ 15 TRY one-way",
+          "link": "https://example.com/ferry"
+        },
+        {
+          "add": true,
+          "forPlaceId": "princes-islands",
+          "transport": "ferry",
+          "from": { "name": "Büyükada Pier", "city": "Istanbul", "location": { "lat": 40.874, "lon": 29.12 } },
+          "to": { "name": "Kabataş Ferry Terminal", "city": "Istanbul", "location": { "lat": 41.034, "lon": 28.995 } },
+          "departure": { "datetime": "2026-06-10T16:30:00+03:00", "timezone": "Europe/Istanbul", "timeKnown": true },
+          "arrival": { "datetime": "2026-06-10T17:30:00+03:00", "timezone": "Europe/Istanbul", "timeKnown": true },
+          "priceAmount": 15,
+          "priceCurrency": "TRY",
+          "priceLabel": "≈ 15 TRY one-way",
+          "link": "https://example.com/ferry"
         }
       ]
     }
   ]
 }
 
-Return strict JSON only. Include routes[] only for non-flight legs that need price/link.`;
+Return strict JSON only. Include routes[] for non-flight fare enrichment (by routeIndex) AND any new day-trip access legs (add:true).`;
 
 export function buildFillPlacesUserPrompt(input: {
   language?: string;
@@ -230,13 +318,16 @@ export function buildFillPlacesUserPrompt(input: {
     "ITINERARY TO FILL:",
     "- places[] = free-time city slots (seeded locationId first, then places AND bookable activities/experiences)",
     "- Prefer a mix of sights + tours/experiences/shows that fit freeTime; weight picks toward leisureType",
+    "- Also include destination-defining nearby attractions (islands, peninsulas, ferry day-trips, coastal icons) when freeTime allows — not only downtown",
+    "- For island/peninsula/ferry day-trips: ADD outbound + return transport routes (add:true) with departure/arrival times and one-way fare",
     "- whereToEat[] = popular dining for each slot (food/cafe/market), HARD-filtered by mealType",
+    "- SAME-DAY VARIETY: no dining in places[] (use whereToEat); no back-to-back meals; at most one wellness/tour/adventure/show/nightlife per day",
     "- Never repeat the same locationId / place id / title across days — vary places, activities, and dining for multi-day city stays",
     "- For EVERY place and whereToEat entry: include bestVisitTime { from, to } as HH:mm and durationMinutes",
-    "- routes[] = include non-flight legs with routeIndex; fill priceAmount/priceCurrency/priceLabel/link (never for flight)",
+    "- routes[] = (1) enrich existing non-flight legs by routeIndex with fare/link; (2) add day-trip ferry/access legs with add:true",
     input.itineraryJson,
     "",
-    "Return itinerary with places/activities + whereToEat filled and non-flight route fare/link enrichment.",
+    "Return itinerary with places/activities + whereToEat filled, non-flight fare enrichment, and day-trip access routes when needed.",
   ].join("\n");
 }
 
@@ -648,8 +739,286 @@ export function dedupePlacesAcrossItinerary(
   }));
 }
 
+/** Activity types that should not repeat on the same day. */
+const SINGLETON_DAY_CATEGORIES = new Set<PlaceCategory>([
+  "wellness",
+  "tour",
+  "adventure",
+  "show",
+  "nightlife",
+]);
+
+const SPA_TITLE_RE =
+  /\b(hammam|hamam|spa|thermal\s*baths?|sauna|onsen|bathhouse)\b/i;
+
+type MealBucket = "breakfast" | "lunch" | "dinner";
+
+function parseHhMmMinutes(value?: string): number | null {
+  if (!value?.trim()) return null;
+  const m = value.trim().match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!m) return null;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour > 23) {
+    return null;
+  }
+  return hour * 60 + minute;
+}
+
+function mealBucketFromMinutes(mins: number | null): MealBucket {
+  if (mins == null) return "lunch";
+  if (mins < 11 * 60) return "breakfast";
+  if (mins < 16 * 60) return "lunch";
+  return "dinner";
+}
+
+function nestedPlaceCategory(
+  place: TripPlannerAiResponseNestedPlace
+): PlaceCategory | undefined {
+  if ("category" in place && place.category) return place.category;
+  return undefined;
+}
+
+function nestedPlaceTitle(place: TripPlannerAiResponseNestedPlace): string {
+  if ("title" in place && typeof place.title === "string") {
+    return place.title.trim();
+  }
+  return "";
+}
+
+function nestedVisitFromMinutes(
+  place: TripPlannerAiResponseNestedPlace
+): number | null {
+  if (!("bestVisitTime" in place) || !place.bestVisitTime?.from) return null;
+  return parseHhMmMinutes(place.bestVisitTime.from);
+}
+
 /**
- * Merge AI place fill + non-flight route fare/link into the itinerary.
+ * Soft post-filter: drop same-day dining stacks and repeated activity types
+ * (e.g. two hammams, or restaurant then café with no break).
+ * Saved `{ locationId }` refs are never removed.
+ */
+export function diversifySameDayActivities(
+  itinerary: TripPlannerAiResponseDay[]
+): TripPlannerAiResponseDay[] {
+  return itinerary.map((day) => ({
+    ...day,
+    places: (day.places ?? []).map((slot) => {
+      const hasWhereToEat = (slot.whereToEat?.length ?? 0) > 0;
+      const seenSingleton = new Set<string>();
+      const places: TripPlannerAiResponseNestedPlace[] = [];
+
+      const rankedPlaces = [...(slot.places ?? [])].sort((a, b) => {
+        const am = nestedVisitFromMinutes(a) ?? 24 * 60;
+        const bm = nestedVisitFromMinutes(b) ?? 24 * 60;
+        return am - bm;
+      });
+
+      for (const place of rankedPlaces) {
+        if ("locationId" in place && place.locationId?.trim()) {
+          places.push(place);
+          continue;
+        }
+
+        const category = nestedPlaceCategory(place);
+        const title = nestedPlaceTitle(place);
+
+        if (
+          hasWhereToEat &&
+          category &&
+          FOOD_PLACE_CATEGORIES.has(category)
+        ) {
+          continue;
+        }
+
+        if (category && SINGLETON_DAY_CATEGORIES.has(category)) {
+          if (seenSingleton.has(category)) continue;
+          seenSingleton.add(category);
+        }
+
+        if (SPA_TITLE_RE.test(title)) {
+          if (seenSingleton.has("spa-title")) continue;
+          seenSingleton.add("spa-title");
+        }
+
+        places.push(place);
+      }
+
+      const whereToEat: TripPlannerAiResponseLocationPlace[] = [];
+      const usedMealBuckets = new Set<MealBucket>();
+      let lastEatMins: number | null = null;
+
+      const rankedEat = [...(slot.whereToEat ?? [])].sort((a, b) => {
+        const am = parseHhMmMinutes(a.bestVisitTime?.from) ?? 24 * 60;
+        const bm = parseHhMmMinutes(b.bestVisitTime?.from) ?? 24 * 60;
+        return am - bm;
+      });
+
+      for (const place of rankedEat) {
+        const fromMins = parseHhMmMinutes(place.bestVisitTime?.from);
+        const bucket = mealBucketFromMinutes(fromMins);
+        if (usedMealBuckets.has(bucket)) continue;
+        if (
+          lastEatMins != null &&
+          fromMins != null &&
+          fromMins - lastEatMins < 150
+        ) {
+          continue;
+        }
+        usedMealBuckets.add(bucket);
+        if (fromMins != null) lastEatMins = fromMins;
+        whereToEat.push(place);
+      }
+
+      const cleanedPlaces: TripPlannerAiResponseNestedPlace[] = [];
+      let prevWasFood = false;
+      const placesByTime = [...places].sort((a, b) => {
+        const am = nestedVisitFromMinutes(a) ?? 24 * 60;
+        const bm = nestedVisitFromMinutes(b) ?? 24 * 60;
+        return am - bm;
+      });
+      for (const place of placesByTime) {
+        const isFood =
+          !("locationId" in place && place.locationId?.trim()) &&
+          Boolean(
+            nestedPlaceCategory(place) &&
+              FOOD_PLACE_CATEGORIES.has(nestedPlaceCategory(place)!)
+          );
+        if (isFood && prevWasFood) continue;
+        cleanedPlaces.push(place);
+        prevWasFood = isFood;
+      }
+
+      return {
+        ...slot,
+        places: cleanedPlaces,
+        ...(whereToEat.length ? { whereToEat } : {}),
+      };
+    }),
+  }));
+}
+
+function parseTransport(value: unknown): TripRouteTransport | null {
+  const s = asString(value)?.toLowerCase();
+  if (!s || !TRANSPORT_SET.has(s)) return null;
+  return s as TripRouteTransport;
+}
+
+function parseRoutePoint(raw: unknown): RoutePoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const name = asString(o.name);
+  const city = asString(o.city);
+  if (!name || !city) return null;
+
+  const country = asString(o.country) ?? undefined;
+  const code = asString(o.code)?.toUpperCase() ?? undefined;
+  const placeId = asString(o.placeId) ?? undefined;
+  let location: { lat: number; lon: number } | undefined;
+  if (o.location && typeof o.location === "object") {
+    const loc = o.location as Record<string, unknown>;
+    const lat = asNumber(loc.lat);
+    const lon = asNumber(loc.lon);
+    if (lat != null && lon != null) location = { lat, lon };
+  }
+
+  return {
+    name,
+    city,
+    ...(country ? { country } : {}),
+    ...(code ? { code } : {}),
+    ...(placeId ? { placeId } : {}),
+    ...(location ? { location } : {}),
+  };
+}
+
+function parseRouteInstant(
+  raw: unknown,
+  fallbackTimezone?: string
+):
+  | { datetime: string; timezone: string; timeKnown?: boolean }
+  | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const datetime = asString(o.datetime);
+  if (!datetime || !Number.isFinite(Date.parse(datetime))) return undefined;
+  const timezone = asString(o.timezone) || fallbackTimezone?.trim() || "";
+  const timeKnown =
+    typeof o.timeKnown === "boolean" ? o.timeKnown : undefined;
+  return {
+    datetime,
+    timezone,
+    ...(timeKnown !== undefined ? { timeKnown } : {}),
+  };
+}
+
+function dayTripRouteKey(r: TripPlannerAiResponseRoute): string {
+  const from =
+    r.from.placeId || `${r.from.city}|${r.from.name}`.toLowerCase();
+  const to = r.to.placeId || `${r.to.city}|${r.to.name}`.toLowerCase();
+  const dep = r.departure?.datetime ?? "";
+  return `${from}->${to}|${r.transport}|${dep}`;
+}
+
+function parseDayTripRoute(
+  row: Record<string, unknown>,
+  dayDate: string,
+  destinations: Record<string, TripPlannerAiRequestDestination>
+): TripPlannerAiResponseRoute | null {
+  const transport = parseTransport(row.transport);
+  if (!transport || !DAY_TRIP_TRANSPORT_SET.has(transport)) return null;
+
+  const from = parseRoutePoint(row.from);
+  const to = parseRoutePoint(row.to);
+  if (!from || !to) return null;
+
+  const cityId =
+    asString(row.cityId)?.toLowerCase() || slugifyAscii(from.city);
+  const dest =
+    (cityId && destinations[cityId]) ||
+    Object.values(destinations).find(
+      (d) =>
+        d?.cityName?.trim().toLowerCase() === from.city.trim().toLowerCase()
+    );
+  const fallbackTz = dest?.cityInfo?.timezone;
+
+  const departure = parseRouteInstant(row.departure, fallbackTz);
+  const arrival = parseRouteInstant(row.arrival, fallbackTz);
+  if (!departure || !arrival) return null;
+
+  if (
+    !departure.datetime.startsWith(dayDate) ||
+    !arrival.datetime.startsWith(dayDate)
+  ) {
+    return null;
+  }
+  if (Date.parse(arrival.datetime) <= Date.parse(departure.datetime)) {
+    return null;
+  }
+
+  const priceAmount = asNumber(row.priceAmount);
+  const priceCurrency = asString(row.priceCurrency);
+  const priceLabel = asString(row.priceLabel);
+  const link = asHttpUrl(row.link);
+
+  return {
+    from,
+    to,
+    transport,
+    departure,
+    arrival,
+    source: "generated",
+    ...(priceAmount != null && priceAmount >= 0 ? { priceAmount } : {}),
+    ...(priceCurrency && /^[A-Za-z]{3}$/.test(priceCurrency)
+      ? { priceCurrency: priceCurrency.toUpperCase() }
+      : {}),
+    ...(priceLabel ? { priceLabel } : {}),
+    ...(link ? { link } : {}),
+  };
+}
+
+/**
+ * Merge AI place fill + non-flight route fare/link + day-trip access routes.
  * Saved `{ locationId }` from the original slot stay first.
  * Flights never receive price/link.
  * Cross-day duplicates (same locationId / place id / title) are dropped.
@@ -681,6 +1050,7 @@ export function mergeAiPlacesIntoItinerary(
       }
     >
   >();
+  const dayTripRoutesByKey = new Map<string, TripPlannerAiResponseRoute[]>();
 
   for (const dayRow of daysRaw) {
     if (!dayRow || typeof dayRow !== "object") continue;
@@ -758,11 +1128,23 @@ export function mergeAiPlacesIntoItinerary(
         link?: string;
       }
     >();
+    const dayTripRoutes: TripPlannerAiResponseRoute[] = [];
     for (const routeRow of Array.isArray(d.routes) ? d.routes : []) {
       if (!routeRow || typeof routeRow !== "object") continue;
       const r = routeRow as Record<string, unknown>;
       const transport = asString(r.transport)?.toLowerCase();
       if (transport === "flight") continue;
+
+      const wantsAdd =
+        r.add === true ||
+        (asString(r.action)?.toLowerCase() === "add" &&
+          r.from != null &&
+          r.to != null);
+      if (wantsAdd) {
+        const draft = parseDayTripRoute(r, date, destinations);
+        if (draft) dayTripRoutes.push(draft);
+        continue;
+      }
 
       const routeIndex = asNumber(r.routeIndex);
       if (routeIndex == null || routeIndex < 0) continue;
@@ -795,6 +1177,10 @@ export function mergeAiPlacesIntoItinerary(
       routeFareByKey.set(key, fareMap);
       routeFareByKey.set(`date:${date}`, fareMap);
     }
+    if (dayTripRoutes.length > 0) {
+      dayTripRoutesByKey.set(key, dayTripRoutes);
+      dayTripRoutesByKey.set(`date:${date}`, dayTripRoutes);
+    }
   }
 
   const mergedDays = itinerary.map((day) => {
@@ -805,6 +1191,10 @@ export function mergeAiPlacesIntoItinerary(
       routeFareByKey.get(key) ||
       routeFareByKey.get(`date:${day.date}`) ||
       new Map();
+    const dayTripRoutes =
+      dayTripRoutesByKey.get(key) ||
+      dayTripRoutesByKey.get(`date:${day.date}`) ||
+      [];
 
     const places: TripPlannerAiResponsePlace[] = (day.places ?? []).map(
       (slot) => {
@@ -937,10 +1327,27 @@ export function mergeAiPlacesIntoItinerary(
       };
     });
 
+    const existingKeys = new Set(routes.map(dayTripRouteKey));
+    for (const draft of dayTripRoutes) {
+      const rk = dayTripRouteKey(draft);
+      if (existingKeys.has(rk)) continue;
+      existingKeys.add(rk);
+      routes.push(draft);
+    }
+
+    routes.sort((a, b) => {
+      const at = a.departure?.datetime ?? a.arrival?.datetime ?? "";
+      const bt = b.departure?.datetime ?? b.arrival?.datetime ?? "";
+      if (at && bt) return at.localeCompare(bt);
+      if (at) return -1;
+      if (bt) return 1;
+      return 0;
+    });
+
     return { ...day, places, routes };
   });
 
-  return dedupePlacesAcrossItinerary(mergedDays);
+  return diversifySameDayActivities(dedupePlacesAcrossItinerary(mergedDays));
 }
 
 export function buildFillPlacesPayload(

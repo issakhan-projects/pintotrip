@@ -218,7 +218,11 @@ function SingleCityTripDetails({
         />
       </div>
 
-      <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
+      <TripRouteTimeBreakdownSection
+        trip={trip}
+        routes={routes}
+        locations={locations}
+      />
 
       <TripCityIntelligenceBlock
         status={trip.cityIntelligence.status}
@@ -432,7 +436,11 @@ function MultiCityTripDetails({
         />
       </div>
 
-      <TripRouteTimeBreakdownSection trip={trip} routes={routes} />
+      <TripRouteTimeBreakdownSection
+        trip={trip}
+        routes={routes}
+        locations={locations}
+      />
 
       <TripCityIntelligenceBlock
         status={trip.cityIntelligence.status}

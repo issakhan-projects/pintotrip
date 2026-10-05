@@ -234,9 +234,9 @@ service cloud.firestore {
       }
     }
 
-    // Country → city → suggested places coords — Admin SDK only.
+    // Country → city → suggested places coords + ticket prices — Admin SDK only.
     // Match keys: countryId + cityId + ascii place id / Google placeId
-    // (never localized title). Filled by planTrip; Places only on cache miss.
+    // (never localized title). Filled by planTrip; Places/web_search only on cache miss.
     match /placesLocation/{countryId}/locations/{locationId} {
       allow read, write: if false;
 

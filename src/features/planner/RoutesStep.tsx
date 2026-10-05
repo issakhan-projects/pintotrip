@@ -296,7 +296,11 @@ export function RoutesStep({
         flightNumber:
           fields.transport === "flight" ? (fields.flightNumber ?? "") : "",
         attachments: attachments ?? [],
-      });
+        // null clears a previously saved fare when the field is emptied.
+        priceAmount: fields.priceAmount ?? null,
+        priceCurrency: fields.priceCurrency ?? null,
+        priceLabel: fields.priceLabel ?? null,
+      } as Parameters<typeof updateTripRoute>[3]);
       return;
     }
     const order = nextRouteOrder(routes);

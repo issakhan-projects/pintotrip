@@ -3,7 +3,7 @@
  * AI and privileged work runs here — never in the browser.
  *
  * Callables: findPlace, findAroundMe, getCityIntelligence, planTrip,
- * fillTripPlannerAiPlaces, getTripWeather, resolveCityAirports,
+ * fillTripPlannerAiPlaces, shareTripStory, getTripWeather, resolveCityAirports,
  * purchasePlaceSearchPack, submitReview, createReferral, completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
@@ -19,6 +19,7 @@ import { purchasePlaceSearchPack } from "./location/purchasePlaceSearchPack";
 import { getCityIntelligence } from "./city/getCityIntelligence";
 import { planTrip } from "./trip/planTrip";
 import { fillTripPlannerAiPlaces } from "./trip/fillTripPlannerAiPlaces";
+import { shareTripStory } from "./trip/shareTripStory";
 import { resolveCityAirports } from "./trip/resolveCityAirports";
 import { onTripPlannerCreated } from "./trip/onTripPlannerCreated";
 import { getTripWeather } from "./weather/getTripWeather";
@@ -43,6 +44,7 @@ export {
   getCityIntelligence,
   planTrip,
   fillTripPlannerAiPlaces,
+  shareTripStory,
   resolveCityAirports,
   onTripPlannerCreated,
   getTripWeather,

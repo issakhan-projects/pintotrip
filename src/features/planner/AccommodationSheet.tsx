@@ -15,6 +15,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  Wallet,
 } from "lucide-react";
 import { Button, DateRangePicker, TextInput, type DateRangeValue } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
@@ -41,6 +42,7 @@ import {
   parseLocalIsoDate,
   toLocalIsoDate,
 } from "./essentialsHelpers";
+import { currencySymbolForCode } from "./tripUtils";
 
 type AccommodationMode = "link" | "map";
 
@@ -75,6 +77,28 @@ function normalizeStayTime(value: string | undefined, fallback: string): string 
     return fallback;
   }
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/** Parse a user-entered price; empty → undefined. */
+function parsePriceAmount(raw: string): number | undefined {
+  const trimmed = raw.trim().replace(",", ".");
+  if (!trimmed) return undefined;
+  const amount = Number(trimmed);
+  if (!Number.isFinite(amount) || amount < 0) return undefined;
+  return Math.round(amount * 100) / 100;
+}
+
+function priceFieldsFromAmount(
+  amount: number | undefined,
+  currencyCode: string
+): Pick<TripAccommodation, "priceAmount" | "priceCurrency" | "priceLabel"> {
+  if (amount == null) return {};
+  const code = currencyCode.trim().toUpperCase() || "USD";
+  return {
+    priceAmount: amount,
+    priceCurrency: code,
+    priceLabel: amount === 0 ? "Free" : `≈ ${amount} ${code}`,
+  };
 }
 
 function todayLocalIso(): string {
@@ -143,6 +167,7 @@ export function AccommodationSheet({
   const [datesOpen, setDatesOpen] = useState(false);
   const [checkInTime, setCheckInTime] = useState(DEFAULT_CHECK_IN_TIME);
   const [checkOutTime, setCheckOutTime] = useState(DEFAULT_CHECK_OUT_TIME);
+  const [priceAmount, setPriceAmount] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<AccommodationSearchResult[]>([]);
@@ -156,7 +181,13 @@ export function AccommodationSheet({
   const notesId = useId();
   const checkInTimeId = useId();
   const checkOutTimeId = useId();
+  const priceAmountId = useId();
   const primaryDest = primaryTripDestination(trip);
+  const tripCurrencyCode =
+    trip.currency?.code?.trim().toUpperCase() || "USD";
+  const tripCurrencySymbol =
+    trip.currency?.symbol?.trim() ||
+    currencySymbolForCode(tripCurrencyCode);
 
   const editing = editingId
     ? items.find((item) => item.id === editingId) ?? null
@@ -190,6 +221,11 @@ export function AccommodationSheet({
     );
     setCheckOutTime(
       normalizeStayTime(initial?.checkOutTime, DEFAULT_CHECK_OUT_TIME)
+    );
+    setPriceAmount(
+      initial?.priceAmount != null && Number.isFinite(initial.priceAmount)
+        ? String(initial.priceAmount)
+        : ""
     );
     setSearchQuery("");
     setResults([]);
@@ -432,6 +468,10 @@ export function AccommodationSheet({
         source: nextSource,
         checkInTime: normalizeStayTime(checkInTime, DEFAULT_CHECK_IN_TIME),
         checkOutTime: normalizeStayTime(checkOutTime, DEFAULT_CHECK_OUT_TIME),
+        ...priceFieldsFromAmount(
+          parsePriceAmount(priceAmount),
+          tripCurrencyCode
+        ),
         ...(dateRange.from && dateRange.to
           ? {
               startDate: toLocalIsoDate(dateRange.from),
@@ -628,6 +668,24 @@ export function AccommodationSheet({
                                 aria-hidden
                               />
                             </a>
+                          ) : null}
+
+                          {stay.priceLabel?.trim() ||
+                          stay.priceAmount != null ? (
+                            <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-text">
+                              <Wallet
+                                className="h-3.5 w-3.5 shrink-0 text-primary"
+                                aria-hidden
+                              />
+                              {stay.priceLabel?.trim() ||
+                                (stay.priceAmount === 0
+                                  ? "Free"
+                                  : `≈ ${stay.priceAmount}${
+                                      stay.priceCurrency
+                                        ? ` ${stay.priceCurrency}`
+                                        : ""
+                                    }`)}
+                            </p>
                           ) : null}
 
                           {checkIn || checkOut ? (
@@ -935,6 +993,30 @@ export function AccommodationSheet({
               </div>
             </EssentialsField>
           </div>
+
+          <EssentialsField
+            label={`Price (${tripCurrencyCode})`}
+            htmlFor={priceAmountId}
+            hint={
+              <p className="text-xs text-text-muted">
+                Approximate stay total in your trip currency · optional
+              </p>
+            }
+          >
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-text-muted">
+                {tripCurrencySymbol}
+              </span>
+              <TextInput
+                id={priceAmountId}
+                inputMode="decimal"
+                value={priceAmount}
+                onChange={(e) => setPriceAmount(e.target.value)}
+                placeholder="0"
+                className="!shadow-none !min-h-11 !h-11 !pl-9"
+              />
+            </div>
+          </EssentialsField>
 
           <div className="min-w-0">
             <label

@@ -597,6 +597,10 @@ function HowCreditsWork() {
           label="Resolve city airports"
           credits={AI_CREDIT_COSTS.resolveCityAirports}
         />
+        <CreditRow
+          label="Share trip story"
+          credits={AI_CREDIT_COSTS.shareTripStory}
+        />
       </ul>
     </section>
   );

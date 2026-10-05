@@ -557,6 +557,23 @@ export const planner = {
   timeBreakdown: {
     total: "Total trip time",
     title: "Time breakdown",
+    approxCost: "Approximate cost",
+    places: "Places",
+    transport: "Transport",
+    accommodation: "Stays",
+    fromPlaces_one:
+      "From {count} priced place. Estimates only — not a booking total.",
+    fromPlaces_other:
+      "From {count} priced places. Estimates only — not a booking total.",
+    fromTransport_one:
+      "From {count} priced transfer. Estimates only — not a booking total.",
+    fromTransport_other:
+      "From {count} priced transfers. Estimates only — not a booking total.",
+    fromAccommodation_one:
+      "From {count} priced stay. Estimates only — not a booking total.",
+    fromAccommodation_other:
+      "From {count} priced stays. Estimates only — not a booking total.",
+    costHint: "Estimates only — not a booking total. Mixed currencies stay separate.",
   },
   setup: {
     collapsedLabel: "Setup",

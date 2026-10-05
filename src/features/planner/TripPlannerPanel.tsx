@@ -19,12 +19,28 @@ import { TripCard } from "./TripCard";
 import { TripCalendar } from "./TripCalendar";
 import { CreateTripSheet } from "./CreateTripSheet";
 import { TripReviewModal } from "./TripReviewModal";
+import { ShareTripModal } from "./ShareTripModal";
+import { listTripDestinations } from "./tripDestinations";
 import {
   isPastTrip,
   needsCompletedStatus,
   needsTripReviewPrompt,
   startOfToday,
 } from "./tripLifecycle";
+
+function canShowRateTripCta(
+  trip: TripPlannerDoc,
+  reviewedTripIds: Set<string>
+): boolean {
+  if (trip.tripReviewed || reviewedTripIds.has(trip.id)) return false;
+  if (trip.status === "cancelled") return false;
+  return isPastTrip(trip);
+}
+
+function canShowShareTripCta(trip: TripPlannerDoc): boolean {
+  if (trip.status === "cancelled") return false;
+  return isPastTrip(trip);
+}
 
 interface TripPlannerPanelProps {
   user: User;
@@ -79,6 +95,10 @@ export function TripPlannerPanel({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tab, setTab] = useState<TripFilterTab>("active");
   const [reviewTrip, setReviewTrip] = useState<TripPlannerDoc | null>(null);
+  const [shareTrip, setShareTrip] = useState<TripPlannerDoc | null>(null);
+  const [reviewedTripIds, setReviewedTripIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const completingIdsRef = useRef<Set<string>>(new Set());
   const reviewCheckedRef = useRef<Set<string>>(new Set());
 
@@ -125,13 +145,16 @@ export function TripPlannerPanel({
     });
   }, [loading, isPro, trips, user.uid]);
 
-  // Also prompt for already-completed trips that still need a review.
+  // Backfill tripReviewed + prompt for past trips that still need a review.
   useEffect(() => {
     if (loading || !isPro || reviewTrip || trips.length === 0) return;
 
     const candidates = trips.filter(
       (trip) =>
-        needsTripReviewPrompt(trip) && !reviewCheckedRef.current.has(trip.id)
+        !trip.tripReviewed &&
+        trip.status !== "cancelled" &&
+        isPastTrip(trip) &&
+        !reviewCheckedRef.current.has(trip.id)
     );
     if (candidates.length === 0) return;
 
@@ -142,7 +165,19 @@ export function TripPlannerPanel({
         try {
           const existing = await getTripReview(user.uid, trip.id);
           if (cancelled) return;
-          if (!existing) {
+          if (existing) {
+            setReviewedTripIds((prev) => {
+              if (prev.has(trip.id)) return prev;
+              const next = new Set(prev);
+              next.add(trip.id);
+              return next;
+            });
+            if (!trip.tripReviewed) {
+              void updateTrip(user.uid, trip.id, { tripReviewed: true });
+            }
+            continue;
+          }
+          if (needsTripReviewPrompt(trip)) {
             setReviewTrip(trip);
             return;
           }
@@ -325,6 +360,10 @@ export function TripPlannerPanel({
                         ? undefined
                         : () => handleDelete(trip.id)
                     }
+                    showRateTrip={canShowRateTripCta(trip, reviewedTripIds)}
+                    onRateTrip={() => setReviewTrip(trip)}
+                    showShareTrip={canShowShareTripCta(trip)}
+                    onShareTrip={() => setShareTrip(trip)}
                   />
                 ))}
               </div>
@@ -360,7 +399,35 @@ export function TripPlannerPanel({
         tripId={reviewTrip?.id ?? ""}
         tripName={reviewTrip?.name ?? ""}
         onClose={() => void dismissReviewPrompt()}
-        onSubmitted={() => setReviewTrip(null)}
+        onSubmitted={() => {
+          const tripId = reviewTrip?.id;
+          setReviewTrip(null);
+          if (!tripId) return;
+          setReviewedTripIds((prev) => {
+            if (prev.has(tripId)) return prev;
+            const next = new Set(prev);
+            next.add(tripId);
+            return next;
+          });
+        }}
+      />
+
+      <ShareTripModal
+        open={Boolean(shareTrip)}
+        userId={user.uid}
+        tripId={shareTrip?.id ?? ""}
+        tripName={
+          shareTrip
+            ? listTripDestinations(shareTrip)
+                .map((d) => d.cityName)
+                .filter(Boolean)
+                .join(" · ") ||
+              shareTrip.name ||
+              "Trip"
+            : ""
+        }
+        existingImageUrl={shareTrip?.storyImageUrl}
+        onClose={() => setShareTrip(null)}
       />
     </div>
   );
