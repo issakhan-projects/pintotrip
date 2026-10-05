@@ -951,14 +951,15 @@ export function PlacesStep({
           {/*
             ONE shared map shell:
             - Desktop (lg+): sticky right column
-            - Mobile/tablet: same instance, fullscreen when open (never remounted)
+            - Mobile/tablet: same instance, fullscreen when open (never remounted).
+              Keep flex + full size while closed so Google Maps does not init at 0×0.
           */}
           <div
             className={cx(
               "overflow-hidden bg-surface-elevated",
               mobileMapOpen
                 ? "fixed inset-0 z-50 flex flex-col"
-                : "max-lg:pointer-events-none max-lg:fixed max-lg:inset-0 max-lg:z-50 max-lg:invisible",
+                : "max-lg:pointer-events-none max-lg:fixed max-lg:inset-0 max-lg:-z-10 max-lg:flex max-lg:flex-col max-lg:invisible",
               "lg:sticky lg:top-20 lg:z-auto lg:flex lg:h-[calc(100vh-6.5rem)] lg:flex-col lg:rounded-2xl lg:border lg:border-border lg:shadow-sm"
             )}
           >
@@ -1003,8 +1004,11 @@ export function PlacesStep({
             <button
               type="button"
               onClick={() => {
-                setMapFitToken((n) => n + 1);
                 setMobileMapOpen(true);
+                // Refit after the fullscreen shell paints (tiles + markers).
+                window.requestAnimationFrame(() => {
+                  setMapFitToken((n) => n + 1);
+                });
               }}
               className="fixed bottom-5 left-1/2 z-40 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface-elevated px-4 py-3 text-sm font-semibold text-text shadow-md ring-1 ring-black/5 lg:hidden"
             >
@@ -2332,28 +2336,19 @@ function ItineraryList({
                           </div>
                         </div>
 
-                        {place &&
-                        Number.isFinite(place.lat) &&
-                        Number.isFinite(place.lon) ? (
-                          <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="Open in Google Maps"
-                            title="Open in Google Maps"
-                            className="mt-3 inline-flex rounded-lg p-1.5 text-text-muted hover:bg-surface hover:text-primary"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <MapIcon className="h-4 w-4" />
-                          </a>
-                        ) : null}
-
                         {reorderControls}
 
                         <div className="mt-1.5">
                           <PlaceMenu
                             onOpen={() => place && onOpen(place)}
                             onRemove={() => onRemove(slot.locationId)}
+                            mapsUrl={
+                              place &&
+                              Number.isFinite(place.lat) &&
+                              Number.isFinite(place.lon)
+                                ? `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`
+                                : null
+                            }
                           />
                         </div>
                       </li>
@@ -2739,9 +2734,12 @@ function PlaceThumb({
 function PlaceMenu({
   onOpen,
   onRemove,
+  mapsUrl = null,
 }: {
   onOpen: () => void;
   onRemove: () => void;
+  /** Google Maps deep link when the place has usable coordinates. */
+  mapsUrl?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -2783,6 +2781,21 @@ function PlaceMenu({
           >
             View details
           </button>
+          {mapsUrl ? (
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-surface"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+              }}
+            >
+              <MapIcon className="h-3.5 w-3.5" />
+              Show on map
+            </a>
+          ) : null}
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error-background"

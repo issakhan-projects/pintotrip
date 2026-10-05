@@ -16,7 +16,6 @@ import {
   pushCachedMap,
   resolveMapsMapId,
   type MapInstance,
-  type MapMarkerHandle,
   type MapMarkerInput,
   type MarkerRecord,
 } from "@/lib/maps";
@@ -74,6 +73,12 @@ function arcMidpoint(
   };
 }
 
+function resizeMap(map: MapInstance) {
+  const center = map.getCenter();
+  google.maps.event.trigger(map, "resize");
+  if (center) map.setCenter(center);
+}
+
 export function TripPlannerItineraryMap({
   markers,
   legs = [],
@@ -102,6 +107,7 @@ export function TripPlannerItineraryMap({
   const lastLegsSigRef = useRef("");
   const lastFitTokenRef = useRef(-1);
   const lastFocusIdRef = useRef<string | null>(null);
+  const lastSizeKeyRef = useRef("");
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -212,15 +218,54 @@ export function TripPlannerItineraryMap({
     };
   }, [configured]);
 
-  // Keep tiles correct when the shell toggles between sticky column / fullscreen.
+  // Keep tiles correct when the shell toggles between sticky column / fullscreen
+  // or when the host goes from 0×0 → real size (mobile PWA closed → open).
+  useEffect(() => {
+    const container = containerRef.current;
+    const map = mapRef.current;
+    if (!ready || !container || !map) return;
+
+    const applySize = (width: number, height: number) => {
+      if (width < 2 || height < 2) {
+        lastSizeKeyRef.current = "";
+        return;
+      }
+      const key = `${Math.round(width)}x${Math.round(height)}`;
+      const wasCollapsed = lastSizeKeyRef.current === "";
+      if (key === lastSizeKeyRef.current) return;
+      lastSizeKeyRef.current = key;
+      resizeMap(map);
+      // Only auto-fit when the host first gains a real size (e.g. mobile open).
+      if (!wasCollapsed) return;
+      const usable = markersWithSelection.filter((m) =>
+        hasUsableMapCoords(m.lat, m.lon)
+      );
+      if (usable.length > 0) {
+        googleMapsProvider.fitToMarkers(map, usable);
+      }
+    };
+
+    applySize(container.clientWidth, container.clientHeight);
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || mapRef.current !== map) return;
+      const { width, height } = entry.contentRect;
+      applySize(width, height);
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [ready, markersWithSelection]);
+
+  // Keep tiles correct when fitToken / className changes.
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
-    const center = map.getCenter();
     window.setTimeout(() => {
       if (mapRef.current !== map) return;
-      google.maps.event.trigger(map, "resize");
-      if (center) map.setCenter(center);
+      resizeMap(map);
     }, 0);
   }, [ready, className, fitToken]);
 
@@ -333,7 +378,7 @@ export function TripPlannerItineraryMap({
 
     window.setTimeout(() => {
       if (mapRef.current !== map) return;
-      google.maps.event.trigger(map, "resize");
+      resizeMap(map);
       googleMapsProvider.fitToMarkers(map, usable);
     }, 40);
   }, [fitToken, ready, markersWithSelection]);

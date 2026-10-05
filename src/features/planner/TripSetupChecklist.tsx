@@ -72,7 +72,6 @@ export function TripSetupChecklist({
   userId: string;
 }) {
   const [collapsed, setCollapsed] = useState(() => readCollapsedFlag(trip.id));
-  const [dismissed, setDismissed] = useState(false);
   const [routes, setRoutes] = useState<TripRoute[]>([]);
   const [liveTrip, setLiveTrip] = useState(trip);
   const [routeSheetOpen, setRouteSheetOpen] = useState(false);
@@ -124,11 +123,8 @@ export function TripSetupChecklist({
   const allDone = completed === total;
   const activeIndex = steps.findIndex((step) => !step.done);
 
-  useEffect(() => {
-    if (!allDone) setDismissed(false);
-  }, [allDone]);
-
-  if (dismissed) return null;
+  // Fully set up — no floating checklist (routes + accommodation both done).
+  if (allDone) return null;
 
   async function openRouteSheet() {
     setRouteSheetOpen(true);
@@ -274,72 +270,50 @@ export function TripSetupChecklist({
             </span>
           </button>
 
-          {allDone ? (
-            <div className="space-y-3 px-4 py-4">
-              <p className="text-sm font-semibold text-text">
-                <span className="mr-1.5 text-success" aria-hidden>
-                  ✓
-                </span>
-                Trip setup complete
-              </p>
-              <p className="text-sm leading-relaxed text-text-secondary">
-                Routes and accommodation are ready for a more accurate
-                itinerary.
-              </p>
-              <button
-                type="button"
-                onClick={() => setDismissed(true)}
-                className="text-xs font-medium text-text-muted hover:text-text"
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : (
-            <ul className="divide-y divide-divider px-1.5 py-1">
-              {steps.map((step, index) => {
-                const isActive = index === activeIndex;
-                const number = index + 1;
-                return (
-                  <li key={step.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleStepClick(step)}
-                      className="flex w-full items-center gap-3 px-2.5 py-3 text-left transition-colors hover:bg-surface"
-                    >
-                      {step.done ? (
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success text-white">
-                          <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-                        </span>
-                      ) : (
-                        <span
-                          className={cx(
-                            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                            isActive
-                              ? "bg-text text-white"
-                              : "bg-divider text-text-secondary"
-                          )}
-                        >
-                          {number}
-                        </span>
-                      )}
+          <ul className="divide-y divide-divider px-1.5 py-1">
+            {steps.map((step, index) => {
+              const isActive = index === activeIndex;
+              const number = index + 1;
+              return (
+                <li key={step.id}>
+                  <button
+                    type="button"
+                    onClick={() => handleStepClick(step)}
+                    className="flex w-full items-center gap-3 px-2.5 py-3 text-left transition-colors hover:bg-surface"
+                  >
+                    {step.done ? (
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success text-white">
+                        <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      </span>
+                    ) : (
                       <span
                         className={cx(
-                          "min-w-0 flex-1 text-sm font-medium",
-                          step.done ? "text-text-muted" : "text-text"
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+                          isActive
+                            ? "bg-text text-white"
+                            : "bg-divider text-text-secondary"
                         )}
                       >
-                        {step.label}
+                        {number}
                       </span>
-                      <ChevronRight
-                        className="h-4 w-4 shrink-0 text-text-muted"
-                        aria-hidden
-                      />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                    )}
+                    <span
+                      className={cx(
+                        "min-w-0 flex-1 text-sm font-medium",
+                        step.done ? "text-text-muted" : "text-text"
+                      )}
+                    >
+                      {step.label}
+                    </span>
+                    <ChevronRight
+                      className="h-4 w-4 shrink-0 text-text-muted"
+                      aria-hidden
+                    />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 
