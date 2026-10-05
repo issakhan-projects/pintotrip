@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Lobster, Montserrat, Manrope } from "next/font/google";
 import { APP_NAME, SITE_URL, SUPPORT_EMAIL } from "@/features/legal";
 import { AppProviders } from "@/components/AppProviders";
+import { PwaRegister } from "@/components/PwaRegister";
 import "./globals.css";
 
 const montserrat = Montserrat({
@@ -27,6 +28,17 @@ const siteDescription =
 const googleSiteVerification =
   process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION?.trim() || undefined;
 
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#42005E" },
+    { media: "(prefers-color-scheme: dark)", color: "#42005E" },
+  ],
+  colorScheme: "light",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
@@ -35,6 +47,14 @@ export const metadata: Metadata = {
   },
   description: siteDescription,
   applicationName: APP_NAME,
+  appleWebApp: {
+    capable: true,
+    title: APP_NAME,
+    statusBarStyle: "default",
+  },
+  formatDetection: {
+    telephone: false,
+  },
   alternates: {
     canonical: "/",
   },
@@ -67,10 +87,12 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icon-512.png", type: "image/png", sizes: "512x512" },
       { url: "/icon.png", type: "image/png", sizes: "1024x1024" },
     ],
-    apple: [{ url: "/icon.png", type: "image/png" }],
-    shortcut: ["/icon.png"],
+    apple: [{ url: "/apple-touch-icon.png", type: "image/png", sizes: "180x180" }],
+    shortcut: ["/icon-192.png"],
   },
 };
 
@@ -105,6 +127,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           }}
         />
         <AppProviders>{children}</AppProviders>
+        <PwaRegister />
       </body>
     </html>
   );
