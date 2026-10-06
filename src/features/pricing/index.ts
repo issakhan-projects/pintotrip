@@ -24,3 +24,11 @@ export {
   tiersHavePriceIds,
 } from "./tiers";
 export type { Tier, TierName, BillingInterval as PricingBillingInterval } from "./tiers";
+export {
+  CREDIT_PACKS,
+  getCreditPack,
+  getCreditPackPriceId,
+  listConfiguredCreditPackPriceIds,
+  peekCreditPackPriceId,
+} from "./creditPacks";
+export type { CreditPack, CreditPackId } from "./creditPacks";

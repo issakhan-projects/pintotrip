@@ -20,6 +20,7 @@ import { landing } from "./landing";
 import { review } from "./review";
 import { ui } from "./ui";
 import { credits } from "./credits";
+import { aroundMe } from "./aroundMe";
 
 export const en = {
   common,
@@ -43,6 +44,7 @@ export const en = {
   review,
   ui,
   credits,
+  aroundMe,
   promo: {
     error: {
       not_found: "Promo code not found.",

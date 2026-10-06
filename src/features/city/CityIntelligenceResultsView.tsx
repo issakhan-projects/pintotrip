@@ -12,6 +12,7 @@ import {
   CreditCard,
   ExternalLink,
   Globe2,
+  Landmark,
   Languages,
   Map,
   ShieldCheck,
@@ -24,10 +25,12 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
+import { useI18n } from "@/i18n";
 import {
   CITY_INTELLIGENCE_DISCLAIMER,
   type CityIntelligenceDetails,
   type CityIntelligenceResult,
+  type InterestingPlace,
   type UsefulApp,
   type UsefulAppCategory,
 } from "@/types/city-intelligence";
@@ -37,12 +40,16 @@ export function CityIntelligenceResultsView({
   citizenship,
   onChangeCitizenship,
   showDisclaimer = true,
+  showCurrencyAndExchange = true,
 }: {
   data: CityIntelligenceResult;
   citizenship: string;
   onChangeCitizenship?: () => void;
   showDisclaimer?: boolean;
+  /** Hide local currency / FX when the city is in the user's own country. */
+  showCurrencyAndExchange?: boolean;
 }) {
+  const { t } = useI18n();
   const [visaExpanded, setVisaExpanded] = useState(false);
 
   const details = data.details;
@@ -60,6 +67,7 @@ export function CityIntelligenceResultsView({
         details.practicalInfo.tips?.length)
   );
   const usefulApps = getUsefulApps(data, details);
+  const interestingPlaces = getInterestingPlaces(data);
 
   return (
     <>
@@ -89,30 +97,31 @@ export function CityIntelligenceResultsView({
           ) : null}
         </div>
 
-        {/* Currency + Exchange */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <MetricCard
-            icon={Coins}
-            label="Currency"
-            value={currencyParts.primary}
-            hint={currencyParts.symbol}
-          />
-          {data.exchangeRate ? (
+        {showCurrencyAndExchange ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <MetricCard
-              icon={TrendingUp}
-              label="Exchange rate"
-              value={`1 ${data.exchangeRate.from} ≈ ${data.exchangeRate.rate} ${data.exchangeRate.to}`}
-              hint={`Source: ${data.exchangeRate.source}. Confirm before exchanging money.`}
+              icon={Coins}
+              label="Currency"
+              value={currencyParts.primary}
+              hint={currencyParts.symbol}
             />
-          ) : (
-            <MetricCard
-              icon={TrendingUp}
-              label="Exchange rate"
-              value="Not available"
-              hint="Confirm rates with a bank or exchange office."
-            />
-          )}
-        </div>
+            {data.exchangeRate ? (
+              <MetricCard
+                icon={TrendingUp}
+                label="Exchange rate"
+                value={`1 ${data.exchangeRate.from} ≈ ${data.exchangeRate.rate} ${data.exchangeRate.to}`}
+                hint={`Source: ${data.exchangeRate.source}. Confirm before exchanging money.`}
+              />
+            ) : (
+              <MetricCard
+                icon={TrendingUp}
+                label="Exchange rate"
+                value="Not available"
+                hint="Confirm rates with a bank or exchange office."
+              />
+            )}
+          </div>
+        ) : null}
 
         {/* Safety */}
         {data.safeRate ? <SafeRateCard data={data} details={details} /> : null}
@@ -219,6 +228,20 @@ export function CityIntelligenceResultsView({
                 </div>
               ) : null}
             </div>
+          </div>
+        ) : null}
+
+        {interestingPlaces.length > 0 ? (
+          <div className="rounded-2xl bg-surface px-4 py-3.5">
+            <SectionHeader
+              icon={Landmark}
+              label={t("city.section.places")}
+            />
+            <ul className="mt-3 divide-y divide-border/70 overflow-hidden rounded-xl ring-1 ring-border/70">
+              {interestingPlaces.map((place) => (
+                <InterestingPlaceRow key={place.title} place={place} />
+              ))}
+            </ul>
           </div>
         ) : null}
 
@@ -345,6 +368,30 @@ function getUsefulApps(
   const apps = data?.usefulApps;
   if (!apps?.length) return [];
   return apps.filter((app) => app.isRecommended !== false).slice(0, 8);
+}
+
+function getInterestingPlaces(
+  data: CityIntelligenceResult | null
+): InterestingPlace[] {
+  const places = data?.interestingPlaces;
+  if (!places?.length) return [];
+  return places.filter((p) => p.title?.trim() && p.description?.trim()).slice(0, 5);
+}
+
+function InterestingPlaceRow({ place }: { place: InterestingPlace }) {
+  return (
+    <li className="bg-white/50 px-3 py-2.5">
+      <p className="text-sm font-semibold text-text">{place.title}</p>
+      <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
+        {place.description}
+      </p>
+      {place.highlight ? (
+        <p className="mt-1.5 text-xs leading-relaxed text-text">
+          {place.highlight}
+        </p>
+      ) : null}
+    </li>
+  );
 }
 
 function UsefulAppRow({ app }: { app: UsefulApp }) {

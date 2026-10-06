@@ -67,7 +67,7 @@ export function cityIntelligenceFullFingerprint(params: {
   language: string;
 }): string {
   return fingerprintParts("getCityIntelligence", {
-    scope: "full",
+    scope: "full-v2",
     city: params.city,
     country: params.country,
     lat: roundCoord(params.lat),
@@ -90,7 +90,7 @@ export function cityIntelligenceSlowFingerprint(params: {
   language: string;
 }): string {
   return fingerprintParts("getCityIntelligence", {
-    scope: "slow",
+    scope: "slow-v2",
     city: params.city,
     country: params.country,
     lat: roundCoord(params.lat),

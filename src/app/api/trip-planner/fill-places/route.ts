@@ -38,7 +38,7 @@ type Body = {
   language?: string;
 };
 
-type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 async function chatJson(
   client: OpenAI,
@@ -73,7 +73,7 @@ async function chatJson(
     const retry = await client.chat.completions.create({
       model: MODEL,
       max_completion_tokens: retryTokens,
-      reasoning_effort: "minimal",
+      reasoning_effort: "none",
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },

@@ -33,6 +33,18 @@ export function resolveCountryCode(value: string | undefined | null): string {
   return fuzzy?.code ?? "";
 }
 
+/** True when both values are the same country (ISO code or name). */
+export function isSameCountry(
+  a?: string | null,
+  b?: string | null
+): boolean {
+  if (!a?.trim() || !b?.trim()) return false;
+  const codeA = resolveCountryCode(a);
+  const codeB = resolveCountryCode(b);
+  if (codeA && codeB) return codeA === codeB;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /** Resolve ISO alpha-2 code to English country name. */
 export function countryNameFromCode(code: string | undefined | null): string {
   if (!code?.trim()) return "";

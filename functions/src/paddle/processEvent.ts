@@ -15,6 +15,8 @@ import {
   type PaddleBillingEnvironment,
 } from "./paddleClient";
 import {
+  grantCreditPacksIfNeeded,
+  grantPlanAiCreditsIfNeeded,
   markEventProcessed,
   resolveFirebaseUserId,
   syncSubscriptionFromPaddle,
@@ -22,7 +24,11 @@ import {
   writeUserSubscription,
 } from "./syncSubscription";
 import { savePaddleTransaction } from "./saveTransaction";
-import type { AppPlan, AppSubscriptionStatus } from "./planMapping";
+import {
+  resolvePlanFromCatalogIds,
+  type AppPlan,
+  type AppSubscriptionStatus,
+} from "./planMapping";
 
 type SubscriptionEvent =
   | SubscriptionCreatedEvent
@@ -34,6 +40,23 @@ function asCustomData(
 ): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function transactionSubscriptionId(
+  tx: TransactionNotification
+): string | null {
+  const raw = (tx as { subscriptionId?: string | null }).subscriptionId;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function transactionPeriodEndsAt(
+  tx: TransactionNotification
+): string | null {
+  const period = (
+    tx as { billingPeriod?: { endsAt?: string | null } | null }
+  ).billingPeriod;
+  const endsAt = period?.endsAt;
+  return typeof endsAt === "string" && endsAt.trim() ? endsAt.trim() : null;
 }
 
 function primaryItemIds(sub: {
@@ -133,6 +156,8 @@ async function handleSubscriptionEvent(
     priceId,
     productId,
     currentPeriodEnd: sub.currentBillingPeriod?.endsAt ?? null,
+    scheduledChangeAction: sub.scheduledChange?.action ?? null,
+    scheduledChangeEffectiveAt: sub.scheduledChange?.effectiveAt ?? null,
   });
 
   return userId;
@@ -141,6 +166,7 @@ async function handleSubscriptionEvent(
 /**
  * transaction.completed — link customer + persist transactions/{txnId}.
  * Plan entitlement is driven by subscription.* events (source of truth).
+ * One-time AI credit packs are granted here (idempotent on txn id).
  */
 async function handleTransactionCompleted(
   event: TransactionCompletedEvent,
@@ -182,6 +208,31 @@ async function handleTransactionCompleted(
     transaction: tx,
     environment,
   });
+
+  const lineIds = primaryItemIds(tx);
+  const paidPlan = resolvePlanFromCatalogIds(lineIds);
+  if (paidPlan) {
+    await grantPlanAiCreditsIfNeeded({
+      userId,
+      plan: paidPlan,
+      paddleSubscriptionId:
+        transactionSubscriptionId(tx) ?? existing?.paddleSubscriptionId,
+      currentPeriodEnd: transactionPeriodEndsAt(tx),
+      priceId: lineIds.priceId,
+    });
+  }
+
+  const transactionId = tx.id?.trim();
+  if (transactionId) {
+    await grantCreditPacksIfNeeded({
+      userId,
+      transactionId,
+      items: (tx.items ?? []).map((item) => ({
+        priceId: item.price?.id ?? null,
+        quantity: item.quantity ?? 1,
+      })),
+    });
+  }
 
   logger.info("paddle transaction.completed: linked customer", {
     userId,

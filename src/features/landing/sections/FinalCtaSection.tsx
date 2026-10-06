@@ -3,9 +3,12 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { useI18n } from "@/i18n";
 import { LANDING_IMAGES } from "../constants";
 
 export function FinalCtaSection() {
+  const { t } = useI18n();
+
   return (
     <section className="border-t border-border bg-background">
       <div className="mx-auto">
@@ -13,7 +16,7 @@ export function FinalCtaSection() {
           <div className="relative min-h-[320px] sm:min-h-[380px]">
             <Image
               src={LANDING_IMAGES.finalCta}
-              alt="Coastal destination at sunset"
+              alt=""
               fill
               sizes="100vw"
               className="object-cover"
@@ -22,16 +25,16 @@ export function FinalCtaSection() {
 
             <div className="absolute inset-0 flex flex-col justify-end p-6 sm:justify-center sm:p-10 lg:p-14">
               <h2 className="max-w-md text-2xl font-semibold tracking-tight text-white sm:text-3xl sm:leading-tight">
-                Your next destination might already be in your camera roll.
+                {t("landing.cta.title")}
               </h2>
               <p className="mt-2 text-sm text-white/85 sm:text-base">
-                Find it. Save it. Go there.
+                {t("landing.cta.sub")}
               </p>
               <Link
                 href="/login"
                 className="btn-primary mt-6 h-11 w-fit gap-2 px-5"
               >
-                Start for free
+                {t("landing.nav.startForFree")}
                 <ArrowRight className="h-4 w-4" aria-hidden />
               </Link>
             </div>

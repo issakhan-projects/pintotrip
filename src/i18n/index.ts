@@ -9,3 +9,13 @@ export { en } from "./messages/en";
 export type { EnMessages } from "./messages/en";
 export type { MessageTree, LocaleCode } from "./types";
 export { getMessagesForLocale, registerMessages } from "./messages";
+export {
+  UI_LOCALES,
+  UI_LOCALE_CODES,
+  LOCALE_STORAGE_KEY,
+  normalizeUiLocale,
+  getUiLocaleOption,
+  readStoredUiLocale,
+  writeStoredUiLocale,
+} from "./locales";
+export type { UiLocaleCode } from "./locales";

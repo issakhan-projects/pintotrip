@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button, TextInput } from "@/components/ui";
+import { useI18n, type TranslateFn } from "@/i18n";
 import {
   Check,
   ChevronRight,
@@ -28,17 +29,16 @@ import {
 import { resolveUserLanguage } from "@/services/users";
 import {
   AI_CREDIT_COSTS,
-  formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import type { AnalyzeLocationResult } from "@/types/ai";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
-import { slugifyId, countryIdFromParts, isAsciiId, formatConfidenceCopy, cx } from "@/lib/utils";
+import { slugifyId, countryIdFromParts, isAsciiId, confidencePercent, cx } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
 import { withCityGooglePlaceId, resolveEnglishPlaceIds, englishPlaceIdsFromNames } from "@/lib/maps";
 import {
   IMAGE_FILE_ACCEPT,
-  imageUploadErrorMessage,
+  ImageUploadError,
   prepareClientImage,
 } from "@/lib/images";
 import type { UserLocationCreateInput } from "@/types/location";
@@ -78,12 +78,12 @@ interface AddPlaceSheetProps {
   onPickFromMap?: () => void;
 }
 
-const ANALYZE_MESSAGES = [
-  "Analyzing your photo…",
-  "Looking for visual clues…",
-  "Checking possible locations…",
-  "Verifying when needed…",
-];
+const ANALYZE_MESSAGE_KEYS = [
+  "addPlace.analyzing.photo",
+  "addPlace.analyzing.clues",
+  "addPlace.analyzing.locations",
+  "addPlace.analyzing.verifying",
+] as const;
 
 export function AddPlaceSheet({
   open,
@@ -93,6 +93,7 @@ export function AddPlaceSheet({
   isPro = false,
   onPickFromMap,
 }: AddPlaceSheetProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const [step, setStep] = useState<AddStep>("menu");
   const [jpegDataUrl, setJpegDataUrl] = useState<string | null>(null);
@@ -182,7 +183,7 @@ export function AddPlaceSheet({
   useEffect(() => {
     if (step !== "analyzing") return;
     const id = window.setInterval(() => {
-      setMessageIndex((i) => (i + 1) % ANALYZE_MESSAGES.length);
+      setMessageIndex((i) => (i + 1) % ANALYZE_MESSAGE_KEYS.length);
     }, 2200);
     return () => window.clearInterval(id);
   }, [step]);
@@ -207,7 +208,7 @@ export function AddPlaceSheet({
       setJpegBlob(prepared.blob);
       setPreviewUrl(prepared.dataUrl);
     } catch (err) {
-      setError(imageUploadErrorMessage(err));
+      setError(photoUploadErrorMessage(t, err));
     } finally {
       setPreparingPhoto(false);
     }
@@ -228,7 +229,7 @@ export function AddPlaceSheet({
       setResult(data);
       setStep("result");
     } catch (err) {
-      const message = parseAnalyzeError(err);
+      const message = parseAnalyzeError(t, err);
       setError(message);
       setStep("error");
     }
@@ -282,7 +283,7 @@ export function AddPlaceSheet({
           englishIds?.countryNameEn || countryName,
           countryCode
         ),
-        name: countryName || countryCode || "Unknown",
+        name: countryName || countryCode || t("common.unknown"),
       };
       const cityId = isAsciiId(result.cityId)
         ? result.cityId!.trim().toLowerCase()
@@ -294,14 +295,12 @@ export function AddPlaceSheet({
             : null) ||
           (isAsciiId(slugifyId(cityName)) ? slugifyId(cityName) : null);
       if (!isAsciiId(country.id) || !cityId) {
-        throw new Error(
-          "Could not resolve English city/country ids for this place. Try again."
-        );
+        throw new Error(t("addPlace.resolveIds"));
       }
       const city = await withCityGooglePlaceId(
         {
           id: cityId,
-          name: cityName || "Unknown",
+          name: cityName || t("common.unknown"),
         },
         country,
         { lat: result.lat, lon: result.lon }
@@ -334,7 +333,7 @@ export function AddPlaceSheet({
       onSaved();
       handleClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save place.");
+      setError(err instanceof Error ? err.message : t("addPlace.saveFailed"));
       setStep("error");
     } finally {
       setSaving(false);
@@ -364,7 +363,7 @@ export function AddPlaceSheet({
   async function saveSearchedPlace() {
     if (!selectedPlace || !isPro) return;
     if (!manualTitle.trim() || !manualCity.trim() || !manualCountry.trim()) {
-      setError("Title, city, and country are required.");
+      setError(t("addPlace.requiredFields"));
       return;
     }
     setSaving(true);
@@ -411,9 +410,7 @@ export function AddPlaceSheet({
           : null) ||
         (isAsciiId(slugifyId(cityName)) ? slugifyId(cityName) : null);
       if (!isAsciiId(countryData.id) || !cityId) {
-        throw new Error(
-          "Could not resolve English city/country ids for this place. Try again."
-        );
+        throw new Error(t("addPlace.resolveIds"));
       }
       const cityData = await withCityGooglePlaceId(
         {
@@ -427,7 +424,7 @@ export function AddPlaceSheet({
       await createUserLocation(userId, {
         title: manualTitle.trim(),
         description:
-          note || selectedPlace.address || "Added from Google Maps search.",
+          note || selectedPlace.address || t("addPlace.addedFromSearch"),
         ...(note ? { note } : {}),
         lat: selectedPlace.lat,
         lon: selectedPlace.lon,
@@ -439,7 +436,9 @@ export function AddPlaceSheet({
           : [],
         confidence: 1,
         ai: {
-          why: `Matched from Google Maps search: ${selectedPlace.address}`,
+          why: t("addPlace.matchedFromSearch", {
+            address: selectedPlace.address,
+          }),
           model: "manual",
           processedAt: Timestamp.now(),
         },
@@ -448,7 +447,7 @@ export function AddPlaceSheet({
       onSaved();
       handleClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save place.");
+      setError(err instanceof Error ? err.message : t("addPlace.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -456,50 +455,48 @@ export function AddPlaceSheet({
 
   const title =
     step === "menu"
-      ? "Add a place"
+      ? t("addPlace.title.menu")
       : step === "photo"
-        ? "Add from photo"
+        ? t("addPlace.title.photo")
         : step === "link"
-          ? "Add from link"
+          ? t("addPlace.title.link")
           : step === "analyzing"
-            ? "Finding location"
+            ? t("addPlace.title.analyzing")
             : step === "result"
               ? result?.identified
-                ? "Found it"
-                : "Couldn't identify"
+                ? t("addPlace.title.found")
+                : t("addPlace.title.notIdentified")
               : step === "search"
-                ? "Search by name"
+                ? t("addPlace.title.search")
                 : step === "search-confirm"
-                  ? "Save place"
-                  : "Couldn't identify";
+                  ? t("addPlace.title.save")
+                  : t("addPlace.title.notIdentified");
 
   return (
     <Sheet open={open} onClose={handleClose} title={title} size="lg">
       {step === "menu" ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-text-secondary">
-            Where did you discover it?
+            {t("addPlace.discoverPrompt")}
           </p>
           <div className="flex gap-2 rounded-xl border border-primary/15 bg-primary-tint px-3 py-2.5 text-xs text-primary">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <div>
-              <p className="font-medium">Hint</p>
+              <p className="font-medium">{t("addPlace.hint")}</p>
               <p className="mt-0.5 text-primary/80">
-                Prefer uploading a photo or screenshot. Some websites block
-                reading their images from another source, so links may fail to
-                analyze.
+                {t("addPlace.hintBody")}
               </p>
             </div>
           </div>
           <MenuOptionCard
             variant="photo"
             icon={<ImageIcon className="h-5 w-5" />}
-            title="Add from photo"
-            subtitle="Best for Instagram & TikTok screenshots"
+            title={t("addPlace.menu.photo")}
+            subtitle={t("addPlace.menu.photoSub")}
             tags={[
-              { label: "Landmarks", checked: true },
-              { label: "Buildings", checked: true },
-              { label: "Landscapes", checked: true },
+              { label: t("addPlace.chips.landmarks"), checked: true },
+              { label: t("addPlace.chips.buildings"), checked: true },
+              { label: t("addPlace.chips.landscapes"), checked: true },
             ]}
             visual={<PhotoStackVisual />}
             onClick={() => setStep("photo")}
@@ -507,12 +504,12 @@ export function AddPlaceSheet({
           <MenuOptionCard
             variant="link"
             icon={<MapPin className="h-5 w-5" />}
-            title="Pick from map"
-            subtitle="Tap the map to drop a pin"
+            title={t("addPlace.menu.map")}
+            subtitle={t("addPlace.menu.mapSub")}
             tags={[
-              { label: "Pin" },
-              { label: "Any spot" },
-              { label: "Manual" },
+              { label: t("addPlace.chips.pin") },
+              { label: t("addPlace.chips.anySpot") },
+              { label: t("addPlace.chips.manual") },
             ]}
             visual={<MapPickVisual />}
             onClick={() => {
@@ -523,14 +520,14 @@ export function AddPlaceSheet({
           <MenuOptionCard
             variant="link"
             icon={<Link2 className="h-5 w-5" />}
-            title="Add from link"
-            subtitle="Paste a post or place URL"
+            title={t("addPlace.menu.link")}
+            subtitle={t("addPlace.menu.linkSub")}
             tags={[
-              { label: "Instagram" },
-              { label: "TikTok" },
-              { label: "Google Maps" },
-              { label: "Blog" },
-              { label: "Other" },
+              { label: t("addPlace.chips.instagram") },
+              { label: t("addPlace.chips.tiktok") },
+              { label: t("addPlace.chips.googleMaps") },
+              { label: t("addPlace.chips.blog") },
+              { label: t("addPlace.chips.other") },
             ]}
             visual={<LinkInputVisual />}
             onClick={() => setStep("link")}
@@ -545,20 +542,20 @@ export function AddPlaceSheet({
                   <Lock className="h-5 w-5" />
                 )
               }
-              title="Search by name"
+              title={t("addPlace.menu.search")}
               subtitle={
                 isPro
-                  ? "Find a place on Google Maps"
-                  : "Pro plan — find places on Google Maps"
+                  ? t("addPlace.menu.searchSub")
+                  : t("addPlace.menu.searchPro")
               }
               tags={
                 isPro
                   ? [
-                      { label: "Landmarks" },
-                      { label: "Cities" },
-                      { label: "Restaurants" },
+                      { label: t("addPlace.chips.landmarks") },
+                      { label: t("addPlace.chips.cities") },
+                      { label: t("addPlace.chips.restaurants") },
                     ]
-                  : [{ label: "Pro" }]
+                  : [{ label: t("addPlace.chips.pro") }]
               }
               visual={<SearchInputVisual />}
               onClick={() => {
@@ -577,7 +574,7 @@ export function AddPlaceSheet({
       {step === "photo" ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-secondary">
-            Upload a screenshot or photo of the place.
+            {t("addPlace.photoPrompt")}
           </p>
           <label
             className={cx(
@@ -598,7 +595,7 @@ export function AddPlaceSheet({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={previewUrl}
-                alt="Selected"
+                alt={t("addPlace.altSelected")}
                 className="mb-3 max-h-56 rounded-xl object-cover"
               />
             ) : preparingPhoto ? (
@@ -608,13 +605,13 @@ export function AddPlaceSheet({
             )}
             <span className="text-sm font-medium text-text">
               {preparingPhoto
-                ? "Preparing photo…"
+                ? t("addPlace.preparing")
                 : previewUrl
-                  ? "Change photo"
-                  : "Upload photo"}
+                  ? t("addPlace.change")
+                  : t("addPlace.upload")}
             </span>
             <span className="mt-1 text-xs text-text-muted">
-              JPEG, PNG, WebP, or HEIC
+              {t("addPlace.formats")}
             </span>
           </label>
           {error && step === "photo" ? (
@@ -622,16 +619,11 @@ export function AddPlaceSheet({
           ) : null}
           <div className="rounded-xl bg-surface px-3 py-3 text-xs text-text-secondary">
             <p className="font-medium text-text">
-              Choose a clear photo of the place
+              {t("addPlace.photoTipsTitle")}
             </p>
             <ul className="mt-1.5 list-disc space-y-1 pl-4">
-              <li>
-                Best results with visible landmarks, buildings, streets, or
-                distinctive surroundings.
-              </li>
-              <li>
-                Avoid blurry photos, selfies, and images with little context.
-              </li>
+              <li>{t("addPlace.photoTips.visible")}</li>
+              <li>{t("addPlace.photoTips.avoid")}</li>
             </ul>
           </div>
           <Button
@@ -642,7 +634,7 @@ export function AddPlaceSheet({
             className="w-full disabled:!opacity-40"
           >
             <span className="inline-flex items-center gap-2">
-              Analyze location
+              {t("addPlace.analyze")}
               <AiCreditCostBadge credits={AI_CREDIT_COSTS.findPlace} />
             </span>
           </Button>
@@ -651,7 +643,7 @@ export function AddPlaceSheet({
             className="text-sm text-text-secondary"
             onClick={() => setStep("menu")}
           >
-            Back
+            {t("common.back")}
           </button>
         </div>
       ) : null}
@@ -659,12 +651,12 @@ export function AddPlaceSheet({
       {step === "link" ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-secondary">
-            Paste a link to a post or place.
+            {t("addPlace.linkPrompt")}
           </p>
           <TextInput
             value={link}
             onChange={(e) => setLink(e.target.value)}
-            placeholder="https://…"
+            placeholder={t("addPlace.linkPlaceholder")}
           />
           <Button
             icon={Search}
@@ -674,7 +666,7 @@ export function AddPlaceSheet({
             color="neutral"
           >
             <span className="inline-flex items-center gap-2">
-              Analyze location
+              {t("addPlace.analyze")}
               <AiCreditCostBadge credits={AI_CREDIT_COSTS.findPlace} />
             </span>
           </Button>
@@ -683,7 +675,7 @@ export function AddPlaceSheet({
             className="text-sm text-text-secondary"
             onClick={() => setStep("menu")}
           >
-            Back
+            {t("common.back")}
           </button>
         </div>
       ) : null}
@@ -692,9 +684,9 @@ export function AddPlaceSheet({
         <div className="flex flex-col items-center gap-4 py-10 text-center">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-base font-medium text-text">
-            {ANALYZE_MESSAGES[messageIndex]}
+            {t(ANALYZE_MESSAGE_KEYS[messageIndex])}
           </p>
-          <p className="text-sm text-text-muted">This usually takes a moment.</p>
+          <p className="text-sm text-text-muted">{t("addPlace.analyzingHint")}</p>
         </div>
       ) : null}
 
@@ -714,7 +706,7 @@ export function AddPlaceSheet({
       {step === "error" ? (
         <div className="flex flex-col items-center gap-4 py-6 text-center">
           <p className="text-base font-medium text-text">
-            We couldn&apos;t identify this place.
+            {t("addPlace.couldNotIdentify")}
           </p>
           <p className="text-sm text-text-secondary">{error}</p>
           <Button
@@ -722,14 +714,14 @@ export function AddPlaceSheet({
             className="w-full"
             color="neutral"
           >
-            Try another photo
+            {t("addPlace.tryAnotherPhoto")}
           </Button>
           <button
             type="button"
             className="text-sm text-text-secondary"
             onClick={() => setStep("menu")}
           >
-            Back to options
+            {t("addPlace.backToOptions")}
           </button>
         </div>
       ) : null}
@@ -737,25 +729,25 @@ export function AddPlaceSheet({
       {step === "search" ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-secondary">
-            Type a place name and we&apos;ll look it up on Google Maps.
+            {t("addPlace.searchPrompt")}
           </p>
           <TextInput
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Eiffel Tower, Paris…"
+            placeholder={t("addPlace.searchPlaceholder")}
             autoFocus
           />
           {searching ? (
             <div className="flex items-center gap-2 py-2 text-sm text-text-muted">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Searching…
+              {t("addPlace.searching")}
             </div>
           ) : null}
           {!searching &&
           searchQuery.trim().length >= 2 &&
           searchResults.length === 0 ? (
             <p className="text-sm text-text-muted">
-              No matches yet. Try a more specific name.
+              {t("addPlace.noMatches")}
             </p>
           ) : null}
           {searchResults.length > 0 ? (
@@ -790,7 +782,7 @@ export function AddPlaceSheet({
             className="text-sm text-text-secondary"
             onClick={() => setStep("menu")}
           >
-            Back
+            {t("common.back")}
           </button>
         </div>
       ) : null}
@@ -809,22 +801,22 @@ export function AddPlaceSheet({
           ) : null}
           <p className="text-xs text-text-muted">{selectedPlace.address}</p>
           <TextInput
-            placeholder="Place title"
+            placeholder={t("addPlace.fields.title")}
             value={manualTitle}
             onChange={(e) => setManualTitle(e.target.value)}
           />
           <TextInput
-            placeholder="City"
+            placeholder={t("addPlace.fields.city")}
             value={manualCity}
             onChange={(e) => setManualCity(e.target.value)}
           />
           <TextInput
-            placeholder="Country"
+            placeholder={t("addPlace.fields.country")}
             value={manualCountry}
             onChange={(e) => setManualCountry(e.target.value)}
           />
           <TextInput
-            placeholder="Note (optional)"
+            placeholder={t("addPlace.fields.note")}
             value={manualNote}
             onChange={(e) => setManualNote(e.target.value)}
           />
@@ -836,7 +828,7 @@ export function AddPlaceSheet({
             onClick={() => void saveSearchedPlace()}
             className="w-full"
           >
-            Save place
+            {t("addPlace.title.save")}
           </Button>
           <button
             type="button"
@@ -847,7 +839,7 @@ export function AddPlaceSheet({
               setStep("search");
             }}
           >
-            Back
+            {t("common.back")}
           </button>
         </div>
       ) : null}
@@ -984,11 +976,14 @@ function PhotoStackVisual() {
 }
 
 function LinkInputVisual() {
+  const { t } = useI18n();
   return (
     <span className="flex h-[56px] w-[108px] items-center justify-center rounded-xl bg-[#eef0f3] p-2 shadow-sm">
       <span className="flex w-full items-center gap-1.5 rounded-lg border border-border bg-white px-2 py-2 shadow-sm">
         <Link2 className="h-3 w-3 shrink-0 text-text-muted" aria-hidden />
-        <span className="truncate text-[10px] text-text-muted">https://…</span>
+        <span className="truncate text-[10px] text-text-muted">
+          {t("addPlace.linkPlaceholder")}
+        </span>
       </span>
     </span>
   );
@@ -1007,11 +1002,15 @@ function MapPickVisual() {
 }
 
 function SearchInputVisual() {
+  const { t } = useI18n();
+
   return (
     <span className="flex h-[56px] w-[108px] items-center justify-center rounded-xl bg-[#eef0f3] p-2 shadow-sm">
       <span className="flex w-full items-center gap-1.5 rounded-lg border border-border bg-white px-2 py-2 shadow-sm">
         <Search className="h-3 w-3 shrink-0 text-text-muted" aria-hidden />
-        <span className="truncate text-[10px] text-text-muted">Search…</span>
+        <span className="truncate text-[10px] text-text-muted">
+          {t("addPlace.searchEllipsis")}
+        </span>
       </span>
     </span>
   );
@@ -1030,6 +1029,7 @@ function AiResultView({
   onSave: () => void;
   onReject: () => void;
 }) {
+  const { t } = useI18n();
   if (!result.identified) {
     const alternatives = (result.alternatives ?? []).slice(0, 3);
     return (
@@ -1039,7 +1039,7 @@ function AiResultView({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imageUrl}
-              alt="Uploaded place"
+              alt={t("addPlace.altUploaded")}
               className="h-full w-full object-cover"
             />
           </div>
@@ -1047,7 +1047,7 @@ function AiResultView({
 
         <div>
           <h3 className="text-xl font-semibold text-text">
-            We couldn&apos;t confidently identify this place.
+            {t("addPlace.couldNotIdentifyConfident")}
           </h3>
           {result.why ? (
             <p className="mt-2 text-sm text-text-secondary">{result.why}</p>
@@ -1056,7 +1056,9 @@ function AiResultView({
 
         {alternatives.length > 0 ? (
           <div className="rounded-xl bg-surface px-3 py-3">
-            <p className="text-sm font-medium text-text">Possible matches</p>
+            <p className="text-sm font-medium text-text">
+              {t("addPlace.possibleMatches")}
+            </p>
             <ul className="mt-2 space-y-2">
               {alternatives.map((alt) => (
                 <li
@@ -1081,15 +1083,15 @@ function AiResultView({
           onClick={onReject}
           className="btn-secondary w-full"
         >
-          Try another photo
+          {t("addPlace.tryAnotherPhoto")}
         </Button>
       </div>
     );
   }
 
-  const confidence = formatConfidenceCopy(result.confidence);
+  const identifiedConfidence = formatIdentifiedConfidence(t, result.confidence);
   const showConfidenceDetail =
-    result.confidenceLevel !== "high" || Boolean(confidence.detail);
+    result.confidenceLevel !== "high" || Boolean(identifiedConfidence.detail);
 
   return (
     <div className="flex flex-col gap-4">
@@ -1105,7 +1107,9 @@ function AiResultView({
       ) : null}
 
       <div>
-        <p className="text-sm font-medium text-primary">{confidence.label}</p>
+        <p className="text-sm font-medium text-primary">
+          {identifiedConfidence.label}
+        </p>
         <h3 className="mt-1 text-xl font-semibold text-text">{result.title}</h3>
         <p className="mt-1 text-sm text-text-secondary">
           {[result.city, result.country].filter(Boolean).join(", ")}
@@ -1118,8 +1122,8 @@ function AiResultView({
             </span>
           ) : null}
         </div>
-        {showConfidenceDetail && confidence.detail ? (
-          <p className="mt-1 text-sm text-warning">{confidence.detail}</p>
+        {showConfidenceDetail && identifiedConfidence.detail ? (
+          <p className="mt-1 text-sm text-warning">{identifiedConfidence.detail}</p>
         ) : null}
       </div>
 
@@ -1127,7 +1131,7 @@ function AiResultView({
 
       <div className="rounded-xl bg-surface px-3 py-3">
         <p className="text-sm font-medium text-text">
-          Why we think this is the place
+          {t("addPlace.whyThisPlace")}
         </p>
         <p className="mt-1 text-sm text-text-secondary">{result.why}</p>
       </div>
@@ -1139,14 +1143,14 @@ function AiResultView({
         color="primary"
         className="btn-primary w-full"
       >
-        Save
+        {t("common.save")}
       </Button>
       <Button
         variant="secondary"
         onClick={onReject}
         className="btn-secondary w-full"
       >
-        Not this place
+        {t("addPlace.notThisPlace")}
       </Button>
     </div>
   );
@@ -1161,19 +1165,52 @@ function AiCreditCostBadge({ credits }: { credits: number }) {
   );
 }
 
-function parseAnalyzeError(err: unknown): string {
+function photoUploadErrorMessage(t: TranslateFn, err: unknown): string {
+  if (err instanceof ImageUploadError) {
+    return t(`addPlace.uploadError.${err.code}`);
+  }
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return t("addPlace.uploadError.unreadable");
+}
+
+function formatIdentifiedConfidence(
+  t: TranslateFn,
+  confidence: number
+): { label: string; detail?: string } {
+  if (confidence >= 0.85) {
+    return { label: t("places.confidence.found") };
+  }
+  if (confidence >= 0.7) {
+    return {
+      label: t("places.confidence.likely"),
+      detail: t("addPlace.confidencePercent", {
+        n: confidencePercent(confidence),
+      }),
+    };
+  }
+  return {
+    label: t("places.confidence.uncertain"),
+    detail: t("places.confidence.unconfirmed"),
+  };
+}
+
+function parseAnalyzeError(t: TranslateFn, err: unknown): string {
   if (isInsufficientAICreditsError(err)) {
-    return formatInsufficientCreditsMessage(err);
+    return t("credits.insufficientDetail", {
+      message: err.message,
+      required: err.requiredCredits,
+      available: err.availableCredits,
+    });
   }
   if (err && typeof err === "object" && "code" in err) {
     const code = String((err as { code: string }).code);
     if (code.includes("unimplemented")) {
-      return "AI location analysis is not enabled yet on this project. Try again once the Cloud Function is deployed.";
+      return t("addPlace.error.notEnabled");
     }
     if (code.includes("unauthenticated")) {
-      return "Please sign in again and retry.";
+      return t("addPlace.error.signInAgain");
     }
   }
   if (err instanceof Error && err.message) return err.message;
-  return "Something went wrong while analyzing. Try another photo.";
+  return t("addPlace.error.analyzeGeneric");
 }

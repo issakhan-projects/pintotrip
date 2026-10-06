@@ -15,12 +15,14 @@ export const pricing = {
   pastDue: "Past due",
   paused: "Paused",
   canceled: "Canceled",
+  currentPlan: "Current plan",
   currentPlanAria: "{label} — current active plan",
   subscribeAria: "Subscribe to {label}",
   creditsHeading: "How AI Credits Work",
-  creditsIntro: "AI credits are used when you use AI-powered features. Credits are included with your monthly plan.",
+  creditsIntro: "AI credits are used when you use AI-powered features. Credits are included with your monthly plan. If you run out before the next billing date, you can buy a one-time pack.",
   creditRow: {
     findPlace: "Find a Place",
+    searchPlaces: "Place name search (5 searches)",
     cityIntelligence: "City Intelligence",
     aroundMe: "Around Me",
     planOrdinary: "Plan trip (ordinary)",
@@ -29,6 +31,7 @@ export const pricing = {
     recreateAdvanced: "Recreate trip plan (advanced)",
     regenerate: "Regenerate",
     resolveAirports: "Resolve city airports",
+    shareTripStory: "Share trip story",
   },
   creditsUnit: "{n} credits",
   faq: {
@@ -49,13 +52,34 @@ export const pricing = {
       q: "What are AI credits?",
       a: "AI credits are units used when PinToTrip runs AI features like finding a place from a photo or generating city intelligence.",
     },
+    buyCredits: {
+      q: "What if I run out of AI credits before my next billing date?",
+      a: "Buy a one-time credit pack on this page. Credits are added to your balance after Paddle confirms payment. Your subscription stays the same.",
+    },
   },
   error: {
     paddleNotConfigured: "Paddle is not configured. Set NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_SANDBOX and NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_LIVE.",
     missingPriceIds: "Add Paddle price IDs for Plus and Pro in src/features/pricing/tiers.ts.",
     loadPrices: "Could not load localized prices from Paddle.",
     signIn: "Sign in to subscribe so we can link your purchase.",
+    signInCredits: "Sign in to buy credits so we can add them to your account.",
     openCheckout: "Could not open Paddle Checkout.",
+  },
+  cancel: {
+    link: "Cancel subscription",
+    title: "Cancel subscription?",
+    body: "Access stays until the end of the current billing period, then you’ll move to Free.",
+    bodyUntil:
+      "Access stays until {date}, then you’ll move to Free.",
+    confirm: "Cancel subscription",
+    keep: "Keep plan",
+    error: "Could not cancel your subscription. Try again.",
+    doneTitle: "Subscription cancelled",
+    doneBody:
+      "Your plan stays active until the end of the current billing period, then you’ll move to Free.",
+    doneBodyUntil:
+      "Your plan stays active until {date}, then you’ll move to Free.",
+    done: "Done",
   },
   tiers: {
     free: {
@@ -100,6 +124,26 @@ export const pricing = {
       },
       cta: "Subscribe",
     },
+  },
+  packs: {
+    heading: "Need more AI credits?",
+    intro:
+      "If you run out before your next billing date, buy a one-time pack. Credits are added to your balance after payment — your plan does not change.",
+    creditsLabel: "{n} AI Credits",
+    oneTime: "one-time",
+    cardIntro: "Top up when your monthly allowance is gone.",
+    featureAdded: "{n} credits added to your balance",
+    featureKeepPlan: "Does not change your subscription",
+    buy: "Buy credits",
+    buyAria: "Buy {n} AI credits",
+    fallbackPrice: "Showing USD list price until Paddle preview loads.",
+    fulfillTitle: "Adding your credits",
+    fulfillWait: "Payment received. Credits are added when Paddle confirms the purchase.",
+    fulfillError: "Payment succeeded, but credits are not on your balance yet. They appear after Paddle’s webhook confirms the sale.",
+    fulfillMissingTxn: "Payment succeeded. Credits will appear after Paddle confirms the purchase.",
+    successTitle: "Credits added",
+    successBody: "We added {n} AI credits. Your new balance is {balance}.",
+    successDone: "Done",
   },
   checkout: {
     title: "Confirm your plan",

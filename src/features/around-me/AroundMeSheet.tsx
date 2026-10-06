@@ -17,6 +17,7 @@ import {
 import { Timestamp } from "firebase/firestore";
 import { Button, TextInput } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
+import { useI18n } from "@/i18n";
 import { findAroundMe } from "@/services/functions";
 import { createUserLocation } from "@/services/locations";
 import {
@@ -40,7 +41,6 @@ import {
 } from "@/types/around-me";
 import {
   AI_CREDIT_COSTS,
-  formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import type { SavedLocation } from "@/hooks/useLocations";
@@ -117,6 +117,7 @@ export function AroundMeSheet({
   initialOrigin = null,
   onPickFromMap,
 }: AroundMeSheetProps) {
+  const { t } = useI18n();
   const [phase, setPhase] = useState<SheetPhase>("pick");
   const [query, setQuery] = useState("");
   const [selectedType, setSelectedType] = useState<AroundMeTypeId | null>(
@@ -163,11 +164,11 @@ export function AroundMeSheet({
   const filteredTypes = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return AROUND_ME_TYPES;
-    return AROUND_ME_TYPES.filter(
-      (t) =>
-        t.label.toLowerCase().includes(q) || t.id.toLowerCase().includes(q)
-    );
-  }, [query]);
+    return AROUND_ME_TYPES.filter((type) => {
+      const label = t(`aroundMe.types.${type.id}`).toLowerCase();
+      return label.includes(q) || type.id.toLowerCase().includes(q);
+    });
+  }, [query, t]);
 
   const savedKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -183,8 +184,11 @@ export function AroundMeSheet({
   const canAfford =
     aiCreditsBalance === null || aiCreditsBalance >= creditCost;
 
-  const selectedMeta = selectedType
-    ? AROUND_ME_TYPES.find((t) => t.id === selectedType)
+  const selectedTypeMeta = selectedType
+    ? AROUND_ME_TYPES.find((type) => type.id === selectedType)
+    : null;
+  const selectedLabel = selectedType
+    ? t(`aroundMe.types.${selectedType}`)
     : null;
 
   /** Places still missing a cover — drives Pexels fill without looping. */
@@ -261,9 +265,7 @@ export function AroundMeSheet({
       enableHighAccuracy: true,
     });
     if (!coords) {
-      throw new Error(
-        "Could not get your location. Allow location access and try again."
-      );
+      throw new Error(t("aroundMe.error.gps"));
     }
 
     const [place, englishIds] = await Promise.all([
@@ -272,9 +274,7 @@ export function AroundMeSheet({
     ]);
 
     if (!place?.city && !place?.country && !englishIds?.countryId) {
-      throw new Error(
-        "Could not determine your city from GPS. Try again outdoors or check location permission."
-      );
+      throw new Error(t("aroundMe.error.cityFromGps"));
     }
 
     const cityName =
@@ -283,7 +283,7 @@ export function AroundMeSheet({
       englishIds?.countryNameEn || place?.country || undefined;
     const label =
       [cityName, countryName].filter(Boolean).join(", ") ||
-      "Current location";
+      t("aroundMe.currentLocation");
 
     return {
       lat: coords.lat,
@@ -329,7 +329,7 @@ export function AroundMeSheet({
       setNearLabel(next.label);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not get your location."
+        err instanceof Error ? err.message : t("aroundMe.error.gpsGeneric")
       );
     } finally {
       setLocating(false);
@@ -376,10 +376,16 @@ export function AroundMeSheet({
       setPhase("results");
     } catch (err) {
       if (isInsufficientAICreditsError(err)) {
-        setError(formatInsufficientCreditsMessage(err));
+        setError(
+          t("credits.insufficientDetail", {
+            message: err.message,
+            required: err.requiredCredits,
+            available: err.availableCredits,
+          })
+        );
       } else {
         setError(
-          err instanceof Error ? err.message : "Around Me search failed."
+          err instanceof Error ? err.message : t("aroundMe.error.searchFailed")
         );
       }
       setPhase(onErrorPhase);
@@ -403,7 +409,7 @@ export function AroundMeSheet({
     setError(null);
     try {
       if (!isAsciiId(place.city.id) || !isAsciiId(place.country.id)) {
-        throw new Error("Place is missing valid city/country ids.");
+        throw new Error(t("aroundMe.error.missingIds"));
       }
       const country = {
         id: place.country.id.trim().toLowerCase(),
@@ -444,7 +450,7 @@ export function AroundMeSheet({
       setAddedIds((prev) => new Set(prev).add(place.googlePlaceId));
       onPlaceSaved?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save place.");
+      setError(err instanceof Error ? err.message : t("aroundMe.error.saveFailed"));
     } finally {
       setAddingId(null);
     }
@@ -460,8 +466,8 @@ export function AroundMeSheet({
     <Sheet
       open={open}
       onClose={onClose}
-      title="Around Me"
-      description="Discover interesting places near your current location or a spot you pick on the map."
+      title={t("aroundMe.title")}
+      description={t("aroundMe.description")}
       leading={
         <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-primary/15">
           <LocateFixed className="h-[18px] w-[18px]" aria-hidden />
@@ -479,11 +485,10 @@ export function AroundMeSheet({
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-text">
-                  What are you in the mood for?
+                  {t("aroundMe.moodTitle")}
                 </p>
                 <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-                  Pick a type nearby. We&apos;ll find standout places and fill
-                  in traveler-ready details.
+                  {t("aroundMe.moodBody")}
                 </p>
               </div>
             </div>
@@ -491,12 +496,12 @@ export function AroundMeSheet({
 
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Search near
+              {t("aroundMe.searchNear")}
             </p>
             <div
               className="flex flex-wrap gap-1.5"
               role="radiogroup"
-              aria-label="Search location"
+              aria-label={t("aroundMe.searchLocationAria")}
             >
               <button
                 type="button"
@@ -519,10 +524,10 @@ export function AroundMeSheet({
                 )}
                 <span>
                   {locating
-                    ? "Getting GPS…"
+                    ? t("aroundMe.gettingGps")
                     : origin?.source === "gps"
                       ? origin.label
-                      : "Current location"}
+                      : t("aroundMe.currentLocation")}
                 </span>
               </button>
 
@@ -542,7 +547,7 @@ export function AroundMeSheet({
               >
                 <MapPin className="h-3.5 w-3.5" aria-hidden />
                 <span>
-                  {origin?.source === "map" ? origin.label : "Pick on map"}
+                  {origin?.source === "map" ? origin.label : t("aroundMe.pickOnMap")}
                 </span>
               </button>
             </div>
@@ -550,12 +555,12 @@ export function AroundMeSheet({
 
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
-              Search radius
+              {t("aroundMe.searchRadius")}
             </p>
             <div
               className="grid grid-cols-4 gap-2"
               role="radiogroup"
-              aria-label="Search radius"
+              aria-label={t("aroundMe.searchRadiusAria")}
             >
               {AROUND_ME_RADIUS_KM_OPTIONS.map((km) => {
                 const selected = radiusKm === km;
@@ -575,7 +580,7 @@ export function AroundMeSheet({
                   >
                     {km}
                     <span className="ml-0.5 text-[11px] font-medium opacity-70">
-                      km
+                      {t("aroundMe.km")}
                     </span>
                   </button>
                 );
@@ -586,9 +591,9 @@ export function AroundMeSheet({
           <TextInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search types…"
+            placeholder={t("aroundMe.searchTypesPlaceholder")}
             icon={Search}
-            aria-label="Search place types"
+            aria-label={t("aroundMe.searchTypesAria")}
           />
 
           <ul className="flex flex-wrap gap-1.5">
@@ -610,7 +615,9 @@ export function AroundMeSheet({
                     <span className="text-sm leading-none" aria-hidden>
                       {type.icon}
                     </span>
-                    <span className="truncate">{type.label}</span>
+                    <span className="truncate">
+                      {t(`aroundMe.types.${type.id}`)}
+                    </span>
                   </button>
                 </li>
               );
@@ -619,7 +626,7 @@ export function AroundMeSheet({
 
           {filteredTypes.length === 0 ? (
             <p className="text-center text-sm text-text-secondary">
-              No types match that search.
+              {t("aroundMe.noTypes")}
             </p>
           ) : null}
 
@@ -634,34 +641,37 @@ export function AroundMeSheet({
             <div className="mb-2.5 flex items-center justify-between gap-2 text-xs text-text-secondary">
               <span className="inline-flex items-center gap-1.5">
                 <Coins className="h-3.5 w-3.5 text-primary" aria-hidden />
-                {creditCost} AI credits
+                {t("aroundMe.aiCredits", { n: creditCost })}
               </span>
               {aiCreditsBalance !== null ? (
                 <span className="tabular-nums">
-                  Balance: {aiCreditsBalance}
+                  {t("aroundMe.balance", { n: aiCreditsBalance })}
                 </span>
               ) : null}
             </div>
             {!origin ? (
               <p className="mb-2 text-center text-xs text-text-secondary">
-                Choose a search location to continue.
+                {t("aroundMe.chooseLocation")}
               </p>
             ) : null}
             {!canAfford ? (
               <p className="mb-2 text-center text-xs text-danger">
-                Not enough credits for this search.
+                {t("aroundMe.notEnoughCredits")}
               </p>
             ) : null}
             <Button
               onClick={() => void handleContinue()}
               disabled={!selectedType || !canAfford || !origin || locating}
-              className="btn-primary w-full"
+              color="neutral"
+              className="w-full"
               icon={LocateFixed}
             >
-              {selectedMeta
-                ? `Find ${selectedMeta.label}`
-                : "Continue"}{" "}
-              · {creditCost} credits
+              {t("aroundMe.continueCredits", {
+                action: selectedLabel
+                  ? t("aroundMe.findType", { label: selectedLabel })
+                  : t("common.continue"),
+                n: creditCost,
+              })}
             </Button>
           </div>
         </div>
@@ -677,16 +687,16 @@ export function AroundMeSheet({
           </div>
           <div>
             <p className="text-base font-semibold text-text">
-              Scanning around you…
+              {t("aroundMe.scanning")}
             </p>
             <p className="mt-1 max-w-xs text-sm text-text-secondary">
-              {selectedMeta
-                ? `Finding standout ${selectedMeta.label.toLowerCase()} nearby, then enriching with AI.`
-                : "Finding standout places nearby, then enriching with AI."}
+              {selectedLabel
+                ? t("aroundMe.findingType", { label: selectedLabel })
+                : t("aroundMe.findingPlaces")}
             </p>
             {nearLabel ? (
               <p className="mt-2 text-xs font-medium text-primary">
-                Near {nearLabel}
+                {t("aroundMe.near", { label: nearLabel })}
               </p>
             ) : null}
           </div>
@@ -698,19 +708,31 @@ export function AroundMeSheet({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-text">
-                {selectedMeta ? (
+                {selectedTypeMeta && selectedLabel ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <span aria-hidden>{selectedMeta.icon}</span>
-                    {selectedMeta.label}
+                    <span aria-hidden>{selectedTypeMeta.icon}</span>
+                    {selectedLabel}
                   </span>
                 ) : (
-                  "Nearby places"
+                  t("aroundMe.nearbyPlaces")
                 )}
               </p>
               <p className="mt-0.5 text-xs text-text-secondary">
-                {places.length} place{places.length === 1 ? "" : "s"}
-                {` · within ${radiusKm} km`}
-                {nearLabel ? ` · near ${nearLabel}` : ""}
+                {t(
+                  nearLabel
+                    ? "aroundMe.resultsMetaNear"
+                    : "aroundMe.resultsMeta",
+                  {
+                    places: t(
+                      places.length === 1
+                        ? "places.placeCount_one"
+                        : "places.placeCount_other",
+                      { count: places.length }
+                    ),
+                    km: radiusKm,
+                    label: nearLabel ?? "",
+                  }
+                )}
               </p>
             </div>
             <Button
@@ -721,7 +743,7 @@ export function AroundMeSheet({
               onClick={() => void handleSearchAgain()}
               className="shrink-0"
             >
-              Again · {creditCost}
+              {t("aroundMe.again", { n: creditCost })}
             </Button>
           </div>
 
@@ -734,8 +756,10 @@ export function AroundMeSheet({
 
           {!canAfford ? (
             <p className="text-center text-xs text-text-secondary">
-              Need {creditCost} credits to search again. You have{" "}
-              {aiCreditsBalance ?? 0}.
+              {t("aroundMe.needCreditsAgain", {
+                need: creditCost,
+                have: aiCreditsBalance ?? 0,
+              })}
             </p>
           ) : null}
 
@@ -786,8 +810,10 @@ export function AroundMeSheet({
                           <button
                             type="button"
                             onClick={() => openInGoogleMaps(place)}
-                            aria-label={`Open ${place.title} in Google Maps`}
-                            title="Open in Google Maps"
+                            aria-label={t("aroundMe.openInMapsAria", {
+                              title: place.title,
+                            })}
+                            title={t("aroundMe.openInMaps")}
                             className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary transition-colors hover:border-primary/30 hover:bg-primary-tint hover:text-primary"
                           >
                             <Globe className="h-4 w-4" aria-hidden />
@@ -798,10 +824,16 @@ export function AroundMeSheet({
                             onClick={() => void handleAdd(place)}
                             aria-label={
                               saved
-                                ? `${place.title} already saved`
-                                : `Add ${place.title}`
+                                ? t("aroundMe.alreadySavedAria", {
+                                    title: place.title,
+                                  })
+                                : t("aroundMe.addAria", { title: place.title })
                             }
-                            title={saved ? "Added" : "Add to map"}
+                            title={
+                              saved
+                                ? t("aroundMe.added")
+                                : t("aroundMe.addToMap")
+                            }
                             className={cx(
                               "inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-colors",
                               saved
@@ -831,7 +863,9 @@ export function AroundMeSheet({
 
                       {place.ai.why ? (
                         <p className="mt-2 line-clamp-2 rounded-xl bg-surface px-2.5 py-1.5 text-xs leading-relaxed text-text-secondary">
-                          <span className="font-medium text-text">Why: </span>
+                          <span className="font-medium text-text">
+                            {t("aroundMe.why")}{" "}
+                          </span>
                           {place.ai.why}
                         </p>
                       ) : null}
@@ -857,7 +891,7 @@ export function AroundMeSheet({
               setError(null);
             }}
           >
-            Change type
+            {t("aroundMe.changeType")}
           </button>
         </div>
       ) : null}

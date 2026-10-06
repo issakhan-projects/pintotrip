@@ -309,6 +309,24 @@ function slimCityIntelligence(raw: unknown): TripPlanningCityIntelligence | null
         .filter((app) => app.name)
     : undefined;
 
+  const interestingPlaces = Array.isArray(body.interestingPlaces)
+    ? body.interestingPlaces
+        .filter(
+          (row): row is Record<string, unknown> =>
+            !!row && typeof row === "object"
+        )
+        .map((row) => ({
+          title: typeof row.title === "string" ? row.title.trim() : "",
+          description:
+            typeof row.description === "string" ? row.description.trim() : "",
+          ...(typeof row.highlight === "string" && row.highlight.trim()
+            ? { highlight: row.highlight.trim() }
+            : {}),
+        }))
+        .filter((row) => row.title && row.description)
+        .slice(0, 5)
+    : undefined;
+
   return {
     city: {
       name,
@@ -356,6 +374,9 @@ function slimCityIntelligence(raw: unknown): TripPlanningCityIntelligence | null
         }
       : {}),
     ...(apps && apps.length > 0 ? { usefulApps: apps } : {}),
+    ...(interestingPlaces && interestingPlaces.length > 0
+      ? { interestingPlaces }
+      : {}),
     ...(climate?.trim() ? { climate: climate.trim() } : {}),
     ...(practical?.transport?.trim()
       ? { transport: practical.transport.trim() }

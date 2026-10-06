@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { AlertTriangle, Clock, Coins } from "lucide-react";
+import { AlertTriangle, Clock, Coins, Crown } from "lucide-react";
 import type { Timestamp } from "firebase/firestore";
 import { AnalyticsEvents } from "@/types/analytics";
 import { useAnalytics } from "@/hooks/useAnalytics";
@@ -18,6 +18,35 @@ interface AiCreditsCardProps {
 
 /** Show the low-credits warning at or below this remaining fraction of the monthly allowance. */
 const LOW_CREDITS_RATIO = 0.4;
+const WARN_CREDITS_RATIO = 0.7;
+
+type CreditsTone = {
+  icon: string;
+  bar: string;
+  value: string;
+};
+
+function creditsTone(ratio: number): CreditsTone {
+  if (ratio <= LOW_CREDITS_RATIO) {
+    return {
+      icon: "text-red-600",
+      bar: "bg-red-500",
+      value: "text-red-700",
+    };
+  }
+  if (ratio <= WARN_CREDITS_RATIO) {
+    return {
+      icon: "text-amber-500",
+      bar: "bg-amber-400",
+      value: "text-amber-700",
+    };
+  }
+  return {
+    icon: "text-emerald-600",
+    bar: "bg-emerald-500",
+    value: "text-text",
+  };
+}
 
 function daysUntilReset(resetsAt?: Timestamp | Date | null): number {
   let end: Date;
@@ -51,8 +80,9 @@ export function AiCreditsCard({
     allowance > 0
       ? Math.min(100, Math.round((safeBalance / allowance) * 1000) / 10)
       : 0;
-  const isLow =
-    allowance > 0 && safeBalance / allowance <= LOW_CREDITS_RATIO;
+  const remainingRatio = allowance > 0 ? safeBalance / allowance : 0;
+  const isLow = remainingRatio <= LOW_CREDITS_RATIO;
+  const tone = creditsTone(remainingRatio);
   const resetDays = useMemo(() => daysUntilReset(resetsAt), [resetsAt]);
   const resetLabel =
     resetDays === 0
@@ -72,14 +102,14 @@ export function AiCreditsCard({
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Coins
-            className="h-4 w-4 shrink-0 text-text-muted"
+            className={`h-4 w-4 shrink-0 ${tone.icon}`}
             strokeWidth={2}
             aria-hidden
           />
           <p className="text-sm font-medium text-text">Credits</p>
         </div>
         <span className="inline-flex shrink-0 items-center rounded-lg bg-surface px-2.5 py-1 text-sm tabular-nums">
-          <span className="font-semibold text-text">{safeBalance}</span>
+          <span className={`font-semibold ${tone.value}`}>{safeBalance}</span>
           <span className="font-medium text-text-muted">/{allowance}</span>
         </span>
       </div>
@@ -93,7 +123,7 @@ export function AiCreditsCard({
         aria-label={`AI credits ${safeBalance} of ${allowance}`}
       >
         <div
-          className="h-full rounded-full bg-warning transition-[width] duration-300"
+          className={`h-full rounded-full transition-[width] duration-300 ${tone.bar}`}
           style={{ width: `${progressPct}%` }}
         />
       </div>
@@ -121,8 +151,9 @@ export function AiCreditsCard({
         <button
           type="button"
           onClick={onUpgrade}
-          className="shrink-0 text-sm font-semibold text-warning transition-colors hover:text-warning/80"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
         >
+          <Crown className="h-3 w-3" strokeWidth={2.5} aria-hidden />
           Upgrade Plan
         </button>
       </div>

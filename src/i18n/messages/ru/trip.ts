@@ -1,0 +1,31 @@
+export const trip = {
+  create: "Создать поездку",
+  edit: "Изменить поездку",
+  delete: "Удалить поездку",
+  addRoute: "Добавить маршрут",
+  editRoute: "Изменить маршрут",
+  addAccommodation: "Добавить проживание",
+  destination: "Направление",
+  destinations: "Направления",
+  from: "Откуда",
+  dates: "Даты",
+  currency: "Валюта",
+  name: "Название поездки",
+  typeOfLeisure: "Тип отдыха",
+  spendMoney: "Уровень трат",
+  optionsAria: "Действия с поездкой",
+  stepsAria: "Шаги поездки",
+  spend: {
+    low: "Экономно",
+    medium: "Сбалансированно",
+    high: "Комфорт в приоритете",
+  },
+  tickets: {
+    buy: "Купить билеты",
+    info: "Билеты / информация",
+  },
+  stop: {
+    destination: "Направление",
+    transit: "Транзит",
+  },
+} as const;

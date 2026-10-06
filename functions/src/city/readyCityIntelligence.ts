@@ -14,7 +14,7 @@ import { logger } from "firebase-functions";
 import { adminDb } from "../shared/admin";
 import type { ModelCityIntelligence } from "./parseModelResponse";
 import { toSlowCityIntelligence } from "./parseModelResponse";
-import type { UsefulApp } from "./types";
+import type { InterestingPlace, UsefulApp } from "./types";
 
 const ROOT = "readyCityIntelligence";
 
@@ -36,6 +36,7 @@ export type ReadyCityIntelligenceInfo = {
     summary: string;
   };
   usefulApps?: UsefulApp[];
+  interestingPlaces?: InterestingPlace[];
   dailyBudget?: {
     currency: string;
     budget?: { local?: number | null };
@@ -73,6 +74,7 @@ export type ReadyCompleteness = {
     | "bestTimeToVisit"
     | "safeRate"
     | "usefulApps"
+    | "interestingPlaces"
     | "dailyBudget"
     | "climate"
     | "practicalInfo"
@@ -144,6 +146,9 @@ export function toReadyCityIntelligenceInfo(
       : {}),
     ...(safeRate ? { safeRate } : {}),
     ...(slow.usefulApps?.length ? { usefulApps: slow.usefulApps } : {}),
+    ...(slow.interestingPlaces?.length
+      ? { interestingPlaces: slow.interestingPlaces }
+      : {}),
     ...(slow.dailyBudget
       ? {
           dailyBudget: {
@@ -217,6 +222,7 @@ export function readyInfoToModelCityIntelligence(
     climate: info.climate,
     practicalInfo,
     usefulApps: info.usefulApps,
+    interestingPlaces: info.interestingPlaces,
     lastCheckedAt: info.lastCheckedAt,
   };
 }
@@ -248,6 +254,9 @@ function extractReadyInfo(
       : {}),
     ...(data.safeRate ? { safeRate: data.safeRate } : {}),
     ...(data.usefulApps?.length ? { usefulApps: data.usefulApps } : {}),
+    ...(data.interestingPlaces?.length
+      ? { interestingPlaces: data.interestingPlaces }
+      : {}),
     ...(data.dailyBudget ? { dailyBudget: data.dailyBudget } : {}),
     ...(data.climate ? { climate: data.climate } : {}),
     ...(data.practicalInfo ? { practicalInfo: data.practicalInfo } : {}),
@@ -276,6 +285,7 @@ export function assessReadyCompleteness(
         "bestTimeToVisit",
         "safeRate",
         "usefulApps",
+        "interestingPlaces",
         "dailyBudget",
         "climate",
         "practicalInfo",
@@ -288,6 +298,9 @@ export function assessReadyCompleteness(
   if (!info.bestTimeToVisit) missing.push("bestTimeToVisit");
   if (!info.safeRate && !info.practicalInfo?.safeRate) missing.push("safeRate");
   if (!info.usefulApps?.length) missing.push("usefulApps");
+  if (!info.interestingPlaces || info.interestingPlaces.length < 3) {
+    missing.push("interestingPlaces");
+  }
   if (!info.dailyBudget?.currency) missing.push("dailyBudget");
   if (!info.climate) missing.push("climate");
   if (!info.practicalInfo) missing.push("practicalInfo");
@@ -398,6 +411,9 @@ export async function setReadyCityIntelligence(params: {
         : {}),
       ...(info.safeRate ? { safeRate: info.safeRate } : {}),
       ...(info.usefulApps?.length ? { usefulApps: info.usefulApps } : {}),
+      ...(info.interestingPlaces?.length
+        ? { interestingPlaces: info.interestingPlaces }
+        : {}),
       ...(info.dailyBudget ? { dailyBudget: info.dailyBudget } : {}),
       ...(info.climate ? { climate: info.climate } : {}),
       ...(info.practicalInfo ? { practicalInfo: info.practicalInfo } : {}),
@@ -417,6 +433,7 @@ export async function setReadyCityIntelligence(params: {
       countryId,
       cityId,
       hasUsefulApps: Boolean(info.usefulApps?.length),
+      interestingPlaceCount: info.interestingPlaces?.length ?? 0,
       hasSafeRate: Boolean(info.safeRate),
       currency: info.currency.code,
     });

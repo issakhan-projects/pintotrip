@@ -23,6 +23,13 @@ export interface UsefulApp {
   isRecommended: boolean;
 }
 
+/** GPT-only visitor highlights — no Google Places / Maps IDs or URLs. */
+export interface InterestingPlace {
+  title: string;
+  description: string;
+  highlight?: string;
+}
+
 export type CityIntelligenceCityInput = {
   city: string;
   country: string;
@@ -99,6 +106,7 @@ export interface CityIntelligenceResult {
     source?: string;
   };
   usefulApps?: UsefulApp[];
+  interestingPlaces?: InterestingPlace[];
   disclaimer: typeof CITY_INTELLIGENCE_DISCLAIMER;
   generatedAt: string;
   details?: CityIntelligenceDetails;

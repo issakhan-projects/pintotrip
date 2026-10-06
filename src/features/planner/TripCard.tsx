@@ -19,13 +19,14 @@ import type { TripPlannerDoc, TripStatus } from "@/types/trip-planner";
 import type { SavedLocation } from "@/hooks/useLocations";
 import { tripDayCount } from "@/services/trip-planner";
 import { fetchWikimediaCityPhoto } from "@/lib/wikimedia";
-import { placesProgress, tripStatusLabel } from "./tripUtils";
+import { placesProgress } from "./tripUtils";
 import {
   listTripDestinations,
   primaryTripDestination,
 } from "./tripDestinations";
 import { isPastTrip } from "./tripLifecycle";
 import { cx } from "@/lib/utils";
+import { useI18n, type UiLocaleCode } from "@/i18n";
 
 interface TripCardProps {
   trip: TripPlannerDoc;
@@ -68,12 +69,19 @@ function tripCoverUrl(
   return null;
 }
 
-function formatCardStartDate(startDate: Timestamp): string {
-  return new Intl.DateTimeFormat("en-GB", {
+function formatCardStartDate(
+  startDate: Timestamp,
+  locale: UiLocaleCode
+): string {
+  return new Intl.DateTimeFormat(locale === "kz" ? "kk" : locale, {
     day: "numeric",
     month: "long",
     year: "numeric",
   }).format(startDate.toDate());
+}
+
+function tripStatusMessageKey(status: TripStatus): string {
+  return status === "upcoming" ? "status.planned" : `status.${status}`;
 }
 
 function statusBadgeClass(status: TripStatus): string {
@@ -115,6 +123,7 @@ export function TripCard({
   onShareTrip,
   showShareTrip,
 }: TripCardProps) {
+  const { t, locale } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -134,8 +143,11 @@ export function TripCard({
   const coverCity = primary.cityName || destinations[0]?.cityName || "";
   const placesLabel =
     progress.total === 0
-      ? "No places added yet"
-      : `${progress.visited}/${progress.total} visited`;
+      ? t("planner.card.noPlaces")
+      : t("planner.card.visited", {
+          visited: progress.visited,
+          total: progress.total,
+        });
   const canRateTrip =
     Boolean(onRateTrip) &&
     (showRateTrip ??
@@ -244,7 +256,7 @@ export function TripCard({
                 )}
                 aria-hidden
               />
-              {tripStatusLabel(trip.status)}
+              {t(tripStatusMessageKey(trip.status))}
             </span>
 
             <h3 className="mt-2 truncate text-[15px] font-semibold tracking-tight text-text sm:text-base">
@@ -257,15 +269,19 @@ export function TripCard({
                 aria-hidden
               />
               <span className="truncate">
-                {formatCardStartDate(trip.startDate)}{" "}
-                <span className="text-text-muted">(day {days})</span>
+                {formatCardStartDate(trip.startDate, locale)}{" "}
+                <span className="text-text-muted">
+                  {t("planner.card.dayParen", { days })}
+                </span>
               </span>
             </p>
 
             <div className="mt-2.5 flex flex-wrap items-center gap-x-0 gap-y-1.5 text-xs text-text-secondary sm:text-[13px]">
               <span className="inline-flex items-center gap-1.5 pr-2.5 sm:pr-3">
                 <Plane className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
-                {days} day{days === 1 ? "" : "s"}
+                {t(days === 1 ? "common.day_one" : "common.day_other", {
+                  count: days,
+                })}
               </span>
               <span
                 className="hidden h-3.5 w-px bg-border sm:block"
@@ -273,7 +289,12 @@ export function TripCard({
               />
               <span className="inline-flex items-center gap-1.5 px-2.5 sm:px-3">
                 <MapPin className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
-                {progress.total} place{progress.total === 1 ? "" : "s"}
+                {t(
+                  progress.total === 1
+                    ? "planner.card.placeCount_one"
+                    : "planner.card.placeCount_other",
+                  { count: progress.total }
+                )}
               </span>
               <span
                 className="hidden h-3.5 w-px bg-border sm:block"
@@ -325,7 +346,7 @@ export function TripCard({
               </div>
             ) : (
               <p className="min-w-0 flex-1 font-[family-name:var(--font-lobster)] text-sm text-text-muted/80">
-                A more meaningful journey
+                {t("planner.card.tagline")}
               </p>
             )}
 
@@ -350,7 +371,7 @@ export function TripCard({
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-warning-background px-3 py-2 text-sm font-medium text-warning ring-1 ring-warning/20 transition-colors hover:bg-warning/15"
           >
             <Star className="h-4 w-4 fill-warning" aria-hidden />
-            Rate your trip
+            {t("planner.card.rate")}
           </button>
         </div>
       ) : null}
@@ -363,7 +384,7 @@ export function TripCard({
         {/* {canShareTrip ? (
           <button
             type="button"
-            aria-label="Share trip"
+            aria-label={t("planner.card.shareAria")}
             onClick={(e) => {
               e.stopPropagation();
               onShareTrip?.();
@@ -375,7 +396,7 @@ export function TripCard({
         ) : null} */}
         <button
           type="button"
-          aria-label="Trip options"
+          aria-label={t("trip.optionsAria")}
           onClick={(e) => {
             e.stopPropagation();
             setMenuOpen((v) => !v);
@@ -397,7 +418,7 @@ export function TripCard({
                 }}
               >
                 <Star className="h-3.5 w-3.5 text-warning" />
-                Rate your trip
+                {t("planner.card.rate")}
               </button>
             ) : null}
             {onDelete ? (
@@ -411,7 +432,7 @@ export function TripCard({
                 }}
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete trip
+                {t("trip.delete")}
               </button>
             ) : null}
           </div>
@@ -420,14 +441,10 @@ export function TripCard({
 
       <DeleteConfirmModal
         open={deleteOpen}
-        entity="trip"
-        description={
-          <>
-            This removes{" "}
-            <span className="font-medium text-text">{title}</span> and its
-            itinerary. This can’t be undone.
-          </>
-        }
+        title={t("planner.card.deleteTitle")}
+        description={t("planner.card.deleteDesc", { title })}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.keep")}
         loading={deleting}
         onCancel={() => {
           if (!deleting) setDeleteOpen(false);

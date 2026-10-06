@@ -37,6 +37,7 @@ type LegacyIntelEntry = {
     summary?: string;
   };
   usefulApps?: CityIntelligenceResult["usefulApps"];
+  interestingPlaces?: CityIntelligenceResult["interestingPlaces"];
   disclaimer?: string;
   generatedAt?: string;
   details?: CityIntelligenceDetails & {
@@ -273,6 +274,9 @@ export function normalizeCityIntelligenceEntry(
     ...(safeRate ? { safeRate } : {}),
     ...(bestTimeToVisit?.summary ? { bestTimeToVisit } : {}),
     ...(entry.usefulApps ? { usefulApps: entry.usefulApps } : {}),
+    ...(entry.interestingPlaces?.length
+      ? { interestingPlaces: entry.interestingPlaces }
+      : {}),
     disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
     generatedAt,
     ...(details ? { details } : {}),

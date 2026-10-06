@@ -112,6 +112,89 @@ export const planner = {
     currencySearch: "Search currencies…",
     tripDates: "Trip dates",
     submit: "Create trip",
+    mealType: "Meal type",
+    mealCustomPlaceholder: "e.g. vegan, gluten-free, no seafood",
+    mealCustomHint: "We'll prefer restaurants and food spots that match this.",
+    nameFromPlace: "{place} Trip",
+    fallbackTrip: "Trip",
+    spendLevel: {
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+    },
+    leisure: {
+      sightseeing: {
+        label: "Sightseeing & culture",
+        description: "Landmarks, museums, tours, and neighborhoods",
+      },
+      food: {
+        label: "Food & culinary",
+        description: "Cafes, markets, dining, and tasting experiences",
+      },
+      nature: {
+        label: "Nature & outdoors",
+        description: "Parks, viewpoints, walks, and outdoor activities",
+      },
+      nightlife: {
+        label: "Nightlife",
+        description: "Evening entertainment, shows, and bars",
+      },
+      shopping: {
+        label: "Shopping",
+        description: "Markets, boutiques, and crafts",
+      },
+      relaxation: {
+        label: "Relaxation",
+        description: "Wellness, beaches, and slow days",
+      },
+      adventure: {
+        label: "Adventure",
+        description: "Active and outdoorsy experiences",
+      },
+      family: {
+        label: "Family-friendly",
+        description: "Kid-friendly attractions",
+      },
+      mixed: {
+        label: "Mixed / balanced",
+        description: "Culture, food, and local favorites",
+      },
+      custom: {
+        label: "Custom",
+        description: "Describe what you want — surfing, diving, skydiving, etc.",
+      },
+      umrah: {
+        label: "Umrah planner",
+        description:
+          "Worship-first plan for Makkah & Madinah, with rest and optional ziyarat",
+      },
+    },
+    meal: {
+      default: {
+        label: "Default",
+        description: "No dietary preference",
+      },
+      halal: {
+        label: "Halal",
+        description: "Halal-friendly meals",
+      },
+      vegetarian: {
+        label: "Vegetarian",
+        description: "Vegetarian options",
+      },
+      kosher: {
+        label: "Kosher",
+        description: "Jewish dietary laws",
+      },
+      other: {
+        label: "Other",
+        description: "Describe your preference",
+      },
+    },
+    stopDesc: {
+      destination: "A city you stay in and explore",
+      transit: "Pass-through / layover city",
+    },
     err: {
       chooseStopType: "Choose Destination or Transit before adding a city.",
       cityLimit: "You can add up to {max} cities (destinations and transit).",
@@ -125,6 +208,9 @@ export const planner = {
       maxDays: "Trip can be at most {max} days.",
       selectCurrency: "Select a currency.",
       customLeisure: "Describe the activities you want for Custom leisure.",
+      customMeal: "Describe your meal preference for Other.",
+      datesOverlap:
+        "Dates overlap with “{label}”. Choose dates that don’t conflict.",
       cityDatesBoth: "Select both dates for {city}, or leave them unset.",
       cityEndAfterStart: "End date must be after start date for {city}.",
       cityDatesInTrip: "Dates for {city} must fall within the trip dates.",
@@ -448,6 +534,9 @@ export const planner = {
     placeCount_one: "{count} place",
     placeCount_other: "{count} places",
     tagline: "A more meaningful journey",
+    rate: "Rate your trip",
+    shareAria: "Share trip",
+    deleteTitle: "Delete this trip?",
     deleteDesc: "This removes {title} and its itinerary. This can’t be undone.",
   },
   dateField: {

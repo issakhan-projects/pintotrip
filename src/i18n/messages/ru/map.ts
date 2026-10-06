@@ -1,0 +1,23 @@
+export const map = {
+  legendAria: "Легенда зон города",
+  legend: {
+    visited: "Посещено",
+    planned: "Запланировано",
+  },
+  noPhoto: "Пока нет фото",
+  status: "Статус",
+  tags: "Теги",
+  confidence: "Уверенность",
+  saveNote: "Сохранить заметку",
+  shareAria: "Поделиться",
+  moreAria: "Ещё",
+  addNote: "Добавить заметку",
+  editNote: "Изменить заметку",
+  viewOnMap: "На карте",
+  myNote: "Моя заметка",
+  notePlaceholder: "Лучше на закате…",
+  whyWeThinkThis: "Почему мы так считаем:",
+  markVisited: "Отметить как посещённое",
+  visited: "Посещено",
+  deleteDesc: "{title} будет удалено с карты и из списка мест. Это нельзя отменить.",
+} as const;

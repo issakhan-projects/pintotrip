@@ -13,21 +13,21 @@ import { detectDeviceLanguage } from "@/services/users";
 import { createTranslator } from "./t";
 import { en } from "./messages/en";
 import { getMessagesForLocale } from "./messages";
+import {
+  normalizeUiLocale,
+  readStoredUiLocale,
+  writeStoredUiLocale,
+  type UiLocaleCode,
+} from "./locales";
 import type { TranslateFn, TranslateParams } from "./types";
 
 type I18nContextValue = {
-  locale: string;
+  locale: UiLocaleCode;
   setLocale: (locale: string) => void;
   t: TranslateFn;
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);
-
-function normalizeLocale(value: string | undefined | null): string {
-  if (!value?.trim()) return "en";
-  const primary = value.trim().toLowerCase().split(/[-_]/)[0] ?? "en";
-  return primary || "en";
-}
 
 export function I18nProvider({
   children,
@@ -37,21 +37,41 @@ export function I18nProvider({
   /** Override locale (e.g. from user profile). */
   language?: string | null;
 }) {
-  const [locale, setLocaleState] = useState(() =>
-    normalizeLocale(
-      language ||
-        (typeof navigator !== "undefined" ? detectDeviceLanguage() : "en")
-    )
+  const [locale, setLocaleState] = useState<UiLocaleCode>(() =>
+    language != null && String(language).trim() !== ""
+      ? normalizeUiLocale(language)
+      : "en"
   );
+
+  // Guest preference / device language — applied after mount to avoid SSR mismatch.
+  useEffect(() => {
+    if (language != null && String(language).trim() !== "") return;
+    const stored = readStoredUiLocale();
+    if (stored) {
+      setLocaleState(stored);
+      return;
+    }
+    setLocaleState(normalizeUiLocale(detectDeviceLanguage()));
+  }, [language]);
 
   useEffect(() => {
     if (language != null && String(language).trim() !== "") {
-      setLocaleState(normalizeLocale(language));
+      const next = normalizeUiLocale(language);
+      setLocaleState(next);
+      writeStoredUiLocale(next);
     }
   }, [language]);
 
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = locale === "kz" ? "kk" : locale;
+    }
+  }, [locale]);
+
   const setLocale = useCallback((next: string) => {
-    setLocaleState(normalizeLocale(next));
+    const code = normalizeUiLocale(next);
+    setLocaleState(code);
+    writeStoredUiLocale(code);
   }, []);
 
   const t = useMemo(() => {

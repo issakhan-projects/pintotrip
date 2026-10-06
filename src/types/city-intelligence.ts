@@ -32,6 +32,14 @@ export interface UsefulApp {
   isRecommended: boolean;
 }
 
+/** GPT-only visitor highlights — no Google Places / Maps IDs or URLs. */
+export interface InterestingPlace {
+  title: string;
+  description: string;
+  /** Short notable fact (history, view, local tip). */
+  highlight?: string;
+}
+
 /** One destination in a getCityIntelligence request (single or multi-city). */
 export type CityIntelligenceCityInput = {
   city: string;
@@ -125,6 +133,8 @@ export interface CityIntelligenceResult {
    * Based on the destination city, not the traveler's home country.
    */
   usefulApps?: UsefulApp[];
+  /** 3–5 visitor highlights in the city/area (model knowledge only). */
+  interestingPlaces?: InterestingPlace[];
   disclaimer: typeof CITY_INTELLIGENCE_DISCLAIMER;
   /** ISO timestamp of when this payload was assembled. */
   generatedAt: string;

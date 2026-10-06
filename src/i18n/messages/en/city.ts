@@ -31,6 +31,7 @@ export const city = {
     climate: "Climate",
     practical: "Practical info",
     apps: "Useful apps",
+    places: "Places worth seeing",
     safety: "Safety rate",
   },
   practical: {

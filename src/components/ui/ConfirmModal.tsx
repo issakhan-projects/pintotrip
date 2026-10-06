@@ -12,6 +12,8 @@ export interface ConfirmModalProps {
   description?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** When false, only the confirm button is shown (success notices). */
+  showCancel?: boolean;
   /** Destructive styling for delete / irreversible actions. */
   tone?: "default" | "danger";
   loading?: boolean;
@@ -28,6 +30,7 @@ export function ConfirmModal({
   description,
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
+  showCancel = true,
   tone = "default",
   loading = false,
   onConfirm,
@@ -96,14 +99,16 @@ export function ConfirmModal({
         ) : null}
 
         <div className="mt-5 flex gap-2">
-          <Button
-            variant="secondary"
-            disabled={loading}
-            onClick={onCancel}
-            className="flex-1"
-          >
-            {cancelLabel}
-          </Button>
+          {showCancel ? (
+            <Button
+              variant="secondary"
+              disabled={loading}
+              onClick={onCancel}
+              className="flex-1"
+            >
+              {cancelLabel}
+            </Button>
+          ) : null}
           <Button
             loading={loading}
             disabled={loading}

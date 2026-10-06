@@ -11,6 +11,7 @@ import {
   Info,
   Lightbulb,
   Loader2,
+  Landmark,
   Shield,
   Sun,
   Wallet,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import type { Timestamp } from "firebase/firestore";
 import { Sheet } from "@/components/ui/Sheet";
+import { useI18n } from "@/i18n";
 import type { CityIntelligenceResult } from "@/types/city-intelligence";
 import type { CityIntelligenceStatus } from "@/types/trip-planner";
 import { cx } from "@/lib/utils";
@@ -74,6 +76,7 @@ export function TripCityIntelligenceBlock({
   lastUpdatedAt,
   onRetry,
 }: TripCityIntelligenceBlockProps) {
+  const { t } = useI18n();
   const validResults = useMemo(() => results.filter(hasCity), [results]);
   const isLoading = status === "pending" || status === "loading";
   const isError =
@@ -253,6 +256,9 @@ export function TripCityIntelligenceBlock({
       ? `${selected.safeRate.score}/${selected.safeRate.outOf}`
       : null);
   const tips = details?.practicalInfo?.tips?.[0];
+  const interestingPlaces = (selected?.interestingPlaces ?? [])
+    .filter((p) => p.title?.trim() && p.description?.trim())
+    .slice(0, 5);
 
   const checkedAt =
     selected?.generatedAt != null
@@ -381,6 +387,37 @@ export function TripCityIntelligenceBlock({
           />
         ))}
       </div>
+
+      {interestingPlaces.length > 0 ? (
+        <div className="mt-4">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-tint text-primary">
+              <Landmark className="h-3.5 w-3.5" />
+            </span>
+            <h4 className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              {t("planner.cityIntel.placesTitle")}
+            </h4>
+          </div>
+          <ul className="space-y-2.5">
+            {interestingPlaces.map((place) => (
+              <li
+                key={place.title}
+                className="rounded-xl border border-border/70 bg-surface px-3 py-2.5"
+              >
+                <p className="text-sm font-semibold text-text">{place.title}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
+                  {place.description}
+                </p>
+                {place.highlight ? (
+                  <p className="mt-1 text-xs leading-relaxed text-text">
+                    {place.highlight}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="mt-4 flex flex-col gap-2 border-t border-divider pt-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="flex items-start gap-1.5 text-xs text-sky-800">

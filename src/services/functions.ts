@@ -402,11 +402,31 @@ export async function completeReferral(
  * Open Paddle Customer Portal for the signed-in Plus/Pro user.
  * Portal URL is one-time; never cache.
  */
-export async function createPaddlePortalSession(): Promise<{ url: string }> {
-  const callable = httpsCallable<Record<string, never>, { url: string }>(
-    getCloudFunctions(),
-    "createPaddlePortalSession"
-  );
+export async function createPaddlePortalSession(): Promise<{
+  url: string;
+  cancelUrl: string | null;
+}> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    { url: string; cancelUrl: string | null }
+  >(getCloudFunctions(), "createPaddlePortalSession");
+  const result = await callable({});
+  return result.data;
+}
+
+export type CancelPaddleSubscriptionResult = {
+  scheduledChangeEffectiveAt: string | null;
+};
+
+/**
+ * Schedule Paddle cancellation at period end.
+ * Access stays until paddleWebhook records canceled / cancelAtPeriodEnd.
+ */
+export async function cancelPaddleSubscription(): Promise<CancelPaddleSubscriptionResult> {
+  const callable = httpsCallable<
+    Record<string, never>,
+    CancelPaddleSubscriptionResult
+  >(getCloudFunctions(), "cancelPaddleSubscription");
   const result = await callable({});
   return result.data;
 }

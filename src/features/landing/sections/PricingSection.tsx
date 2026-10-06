@@ -11,6 +11,7 @@ import {
   getYearlyListPrice,
   type BillingInterval,
 } from "@/features/profile/plans";
+import { useI18n } from "@/i18n";
 import type { SubscriptionPlan } from "@/types/user";
 import { cx } from "@/lib/utils";
 
@@ -23,74 +24,34 @@ const POLAROID_LEFT =
 const POLAROID_RIGHT =
   "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=600&q=80";
 
-const PLAN_META: Record<
-  SubscriptionPlan,
-  {
-    tagline: string;
-    blurb: string;
-    features: { label: string; included: boolean }[];
-  }
-> = {
-  free: {
-    tagline: "Get started",
-    blurb: "Perfect for exploring and trying out the app.",
-    features: [
-      { label: "30 AI credits / month", included: true },
-      { label: "Save up to 10 places", included: true },
-      { label: "Basic travel information", included: true },
-      { label: "Access on all devices", included: true },
-      { label: "Advanced city insights", included: false },
-      { label: "Priority support", included: false },
-      { label: "Early access to new features", included: false },
-    ],
-  },
-  plus: {
-    tagline: "For active travelers",
-    blurb: "More places, more insights, more travel possibilities.",
-    features: [
-      { label: "200 AI credits / month", included: true },
-      { label: "Save up to 100 places", included: true },
-      { label: "Detailed city insights", included: true },
-      { label: "Visa, budget, best time and more", included: true },
-      { label: "Access on all devices", included: true },
-      { label: "Priority support", included: true },
-      { label: "Early access to new features", included: false },
-    ],
-  },
-  pro: {
-    tagline: "For travel lovers",
-    blurb: "Everything you need for bigger journeys.",
-    features: [
-      { label: "500 AI credits / month", included: true },
-      { label: "Save up to 300 places", included: true },
-      { label: "Detailed city insights", included: true },
-      { label: "Visa, budget, best time and more", included: true },
-      { label: "Access on all devices", included: true },
-      { label: "Priority support", included: true },
-      { label: "Early access to new features", included: true },
-    ],
-  },
-};
+const FREE_FEATURE_KEYS = [
+  { key: "credits", included: true },
+  { key: "saveMap", included: true },
+  { key: "basicInfo", included: true },
+  { key: "devices", included: true },
+  { key: "advanced", included: false },
+  { key: "support", included: false },
+  { key: "early", included: false },
+] as const;
 
-const STATS = [
-  {
-    Icon: Users,
-    value: "10,000+",
-    label: "Travelers already exploring",
-  },
-  {
-    Icon: Globe2,
-    value: "180+",
-    label: "Countries on the map",
-  },
-  {
-    Icon: Star,
-    value: "4.8",
-    label: "Average rating",
-  },
+const PAID_FEATURE_KEYS = [
+  { key: "credits", included: true },
+  { key: "unlimited", included: true },
+  { key: "insights", included: true },
+  { key: "visaBudget", included: true },
+  { key: "devices", included: true },
+  { key: "support", included: true },
+  { key: "early", included: false as boolean },
+] as const;
+
+const STAT_ITEMS = [
+  { Icon: Users, value: "10,000+", labelKey: "travelers" },
+  { Icon: Globe2, value: "180+", labelKey: "countries" },
+  { Icon: Star, value: "4.8", labelKey: "rating" },
 ] as const;
 
 export function PricingSection() {
+  const { t } = useI18n();
   const [interval, setInterval] = useState<BillingInterval>("month");
 
   return (
@@ -98,7 +59,6 @@ export function PricingSection() {
       id="pricing"
       className="relative scroll-mt-16 overflow-hidden border-t border-border py-14 sm:py-20"
     >
-      {/* Soft mountain backdrop */}
       <div className="pointer-events-none absolute inset-0" aria-hidden>
         <Image
           src={MOUNTAIN_BG}
@@ -110,21 +70,20 @@ export function PricingSection() {
         <div className="absolute inset-0 bg-gradient-to-b from-white/85 via-white/70 to-white/90" />
       </div>
 
-      {/* Decorative script + polaroids — desktop only */}
       <div
         className="pointer-events-none absolute inset-0 hidden lg:block"
         aria-hidden
       >
         <p className="absolute top-16 left-[4%] max-w-[11rem] -rotate-6 font-[family-name:var(--font-montserrat)] text-sm italic leading-snug text-text-secondary/80">
-          More places.
+          {t("landing.pricing.decor.morePlaces")}
           <br />
-          Brighter journeys.
+          {t("landing.pricing.decor.brighter")}
           <span className="mt-1 block h-0.5 w-16 rounded-full bg-primary/50" />
         </p>
         <div className="absolute top-14 right-[3%] flex max-w-[12rem] rotate-3 items-start gap-2">
           <Plane className="mt-0.5 h-4 w-4 text-primary" />
           <p className="text-sm italic leading-snug text-text-secondary/80">
-            Ideas today. Adventures tomorrow.
+            {t("landing.pricing.decor.ideas")}
           </p>
         </div>
 
@@ -139,7 +98,7 @@ export function PricingSection() {
             />
           </div>
           <p className="mt-2 flex items-center justify-center gap-1 text-[11px] italic text-text-secondary">
-            Collect moments
+            {t("landing.pricing.decor.moments")}
             <Heart className="h-3 w-3 fill-primary/70 text-primary/70" />
           </p>
         </div>
@@ -155,7 +114,7 @@ export function PricingSection() {
             />
           </div>
           <p className="mt-2 text-center text-[11px] italic text-text-secondary">
-            A bigger world awaits
+            {t("landing.pricing.decor.biggerWorld")}
           </p>
         </div>
       </div>
@@ -163,14 +122,13 @@ export function PricingSection() {
       <div className="relative mx-auto max-w-5xl px-4 sm:px-6">
         <div className="mx-auto max-w-2xl text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-            Pricing
+            {t("landing.pricing.eyebrow")}
           </p>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight text-text sm:text-4xl">
-            Start saving the places you love.
+            {t("landing.pricing.title")}
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-text-secondary sm:text-base">
-            Turn travel inspiration into a personal map. Choose the plan that
-            fits your journey.
+            {t("landing.pricing.sub")}
           </p>
         </div>
 
@@ -182,12 +140,11 @@ export function PricingSection() {
           ))}
         </div>
 
-        {/* Stats bar */}
         <div className="mt-8 rounded-2xl border border-border/80 bg-white/90 px-4 py-4 shadow-sm backdrop-blur sm:mt-10 sm:px-6">
           <div className="grid gap-4 sm:grid-cols-3 sm:gap-2">
-            {STATS.map(({ Icon, value, label }) => (
+            {STAT_ITEMS.map(({ Icon, value, labelKey }) => (
               <div
-                key={label}
+                key={labelKey}
                 className="flex items-center gap-3 sm:justify-center"
               >
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-tint text-primary">
@@ -195,7 +152,9 @@ export function PricingSection() {
                 </span>
                 <div>
                   <p className="text-base font-semibold text-text">{value}</p>
-                  <p className="text-xs text-text-secondary">{label}</p>
+                  <p className="text-xs text-text-secondary">
+                    {t(`landing.pricing.stats.${labelKey}`)}
+                  </p>
                 </div>
               </div>
             ))}
@@ -213,11 +172,13 @@ function BillingToggle({
   value: BillingInterval;
   onChange: (next: BillingInterval) => void;
 }) {
+  const { t } = useI18n();
+
   return (
     <div className="mt-7 flex justify-center">
       <div
         role="group"
-        aria-label="Billing period"
+        aria-label={t("pricing.billingPeriodAria")}
         className="inline-flex items-center rounded-full border border-border bg-surface/90 p-1 shadow-sm"
       >
         <button
@@ -231,7 +192,7 @@ function BillingToggle({
               : "text-text-secondary hover:text-text"
           )}
         >
-          Monthly
+          {t("common.monthly")}
         </button>
         <button
           type="button"
@@ -244,9 +205,9 @@ function BillingToggle({
               : "text-text-secondary hover:text-text"
           )}
         >
-          Yearly
+          {t("common.yearly")}
           <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-            2 months free
+            {t("landing.pricing.twoMonthsFree")}
           </span>
         </button>
       </div>
@@ -261,15 +222,27 @@ function PlanCard({
   planId: SubscriptionPlan;
   interval: BillingInterval;
 }) {
+  const { t } = useI18n();
   const plan = PLAN_DEFINITIONS[planId];
-  const meta = PLAN_META[planId];
   const recommended = Boolean(plan.recommended);
   const price = getPlanPrice(plan, interval);
-  const period = interval === "year" ? "/ year" : "/ month";
+  const period =
+    interval === "year" ? t("pricing.perYear") : t("pricing.perMonth");
   const isFree = plan.priceMonthly === 0;
   const yearlyListPrice = getYearlyListPrice(plan);
   const showYearlyCompare =
     interval === "year" && !isFree && yearlyListPrice > price;
+
+  const features =
+    planId === "free"
+      ? FREE_FEATURE_KEYS.map((f) => ({
+          label: t(`landing.pricing.planMeta.free.features.${f.key}`),
+          included: f.included,
+        }))
+      : PAID_FEATURE_KEYS.map((f) => ({
+          label: t(`landing.pricing.planMeta.${planId}.features.${f.key}`),
+          included: planId === "pro" ? true : f.included,
+        }));
 
   return (
     <article
@@ -282,7 +255,7 @@ function PlanCard({
     >
       {recommended ? (
         <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-3 py-1 text-[11px] font-semibold text-white">
-          Most Popular
+          {t("common.mostPopular")}
         </span>
       ) : null}
 
@@ -290,7 +263,9 @@ function PlanCard({
         <h3 className="text-xl font-semibold tracking-tight text-text">
           {plan.name}
         </h3>
-        <p className="text-xs text-text-secondary">{meta.tagline}</p>
+        <p className="text-xs text-text-secondary">
+          {t(`landing.pricing.planMeta.${planId}.tagline`)}
+        </p>
       </div>
 
       <div className="mt-4">
@@ -309,7 +284,7 @@ function PlanCard({
       </div>
 
       <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-        {meta.blurb}
+        {t(`landing.pricing.planMeta.${planId}.blurb`)}
       </p>
 
       <Link
@@ -319,11 +294,11 @@ function PlanCard({
           recommended ? "btn-primary" : "btn-secondary"
         )}
       >
-        Start for free
+        {t("landing.nav.startForFree")}
       </Link>
 
       <ul className="mt-5 flex-1 space-y-2.5 border-t border-divider pt-5">
-        {meta.features.map((feature) => (
+        {features.map((feature) => (
           <li key={feature.label} className="flex items-start gap-2.5">
             <Check
               className={cx(

@@ -5,11 +5,13 @@ import type { Environments } from "@paddle/paddle-js";
  * Keep both sandbox + live client tokens; pick by hostname.
  *
  * - localhost / 127.0.0.1 / *.vercel.app → sandbox
- * - pintototrip.app / pintotrip.com → live (production)
+ * - pintototrip.app / pintotrip.com / Firebase Hosting & App Hosting → live
+ * - production SSR (empty hostname, e.g. Firebase App Hosting) → live
  *
  * Optional override: NEXT_PUBLIC_PADDLE_FORCE_ENVIRONMENT=sandbox|production
  *
  * IMPORTANT: Next.js only inlines NEXT_PUBLIC_* when accessed as static literals.
+ * Set NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_LIVE in Firebase App Hosting (BUILD + RUNTIME).
  */
 
 export type PaddlePublicEnv = {
@@ -34,9 +36,27 @@ const PRODUCTION_HOSTS = new Set([
   "www.pintotrip.com",
 ]);
 
+function isLocalOrPreviewHost(host: string): boolean {
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".vercel.app")
+  );
+}
+
+function isFirebaseHosted(host: string): boolean {
+  return (
+    host.endsWith(".hosted.app") ||
+    host.endsWith(".web.app") ||
+    host.endsWith(".firebaseapp.com")
+  );
+}
+
 /**
  * Resolve Paddle Billing environment from the browser hostname.
- * Defaults unknown hosts to sandbox to avoid accidental live charges.
+ * Local/preview stays sandbox. Firebase-uploaded production uses live.
  */
 export function resolvePaddleEnvironmentFromHost(
   hostname?: string | null
@@ -47,18 +67,16 @@ export function resolvePaddleEnvironmentFromHost(
   }
 
   const host = (hostname ?? "").trim().toLowerCase();
-  if (
-    !host ||
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "[::1]" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".vercel.app")
-  ) {
+  if (isLocalOrPreviewHost(host)) {
     return "sandbox";
   }
 
-  if (PRODUCTION_HOSTS.has(host)) {
+  if (PRODUCTION_HOSTS.has(host) || isFirebaseHosted(host)) {
+    return "production";
+  }
+
+  // SSR on Firebase App Hosting has no window hostname; use live in prod builds.
+  if (!host && process.env.NODE_ENV === "production") {
     return "production";
   }
 

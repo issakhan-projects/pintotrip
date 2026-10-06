@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Button, Switch, TextInput } from "@/components/ui";
+import { LanguageMenu } from "@/components/LanguageMenu";
+import { useI18n } from "@/i18n";
+import { normalizeUiLocale, type UiLocaleCode } from "@/i18n/locales";
 import { updateUserProfile } from "@/services/users";
 import type {
   DistanceUnit,
@@ -34,8 +37,9 @@ const TIME_FORMAT_OPTIONS: Array<{ value: TimeFormat; label: string }> = [
 ];
 
 export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
-  const [language, setLanguage] = useState(
-    profile.preferences?.language ?? "en"
+  const { t } = useI18n();
+  const [language, setLanguage] = useState<UiLocaleCode>(() =>
+    normalizeUiLocale(profile.preferences?.language)
   );
   const [timezone, setTimezone] = useState(
     profile.preferences?.timezone ??
@@ -58,7 +62,7 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setLanguage(profile.preferences?.language ?? "en");
+    setLanguage(normalizeUiLocale(profile.preferences?.language));
     setTimezone(
       profile.preferences?.timezone ??
         Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -76,7 +80,7 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
     try {
       await updateUserProfile(userId, {
         preferences: {
-          language: language.trim() || "en",
+          language,
           timezone: timezone.trim() || "UTC",
           emailSubscription,
           temperatureUnit,
@@ -88,7 +92,7 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
       onSaved();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not save settings."
+        err instanceof Error ? err.message : t("profile.settings.saveError")
       );
     } finally {
       setSaving(false);
@@ -97,11 +101,18 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
 
   return (
     <div className="space-y-5">
+      <LanguageMenu
+        variant="field"
+        onLocaleChange={setLanguage}
+      />
+
       <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3">
         <div>
-          <p className="text-sm font-medium text-text">Email notifications</p>
+          <p className="text-sm font-medium text-text">
+            {t("profile.settings.emailNotifications")}
+          </p>
           <p className="mt-0.5 text-xs text-text-secondary">
-            Occasional product updates and tips
+            {t("profile.settings.emailNotificationsHint")}
           </p>
         </div>
         <Switch
@@ -110,37 +121,39 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
         />
       </div>
 
-      <Field label="Timezone">
+      <Field label={t("profile.settings.timezone")}>
         <TextInput
           value={timezone}
           onChange={(e) => setTimezone(e.target.value)}
-          placeholder="Asia/Almaty"
+          placeholder={t("profile.settings.timezonePlaceholder")}
         />
       </Field>
 
       <UnitField
-        label="Temperature"
+        label={t("profile.settings.temperature")}
         options={TEMPERATURE_OPTIONS}
         value={temperatureUnit}
         onChange={setTemperatureUnit}
       />
 
       <UnitField
-        label="Distance"
+        label={t("profile.settings.distance")}
         options={DISTANCE_OPTIONS}
         value={distanceUnit}
         onChange={setDistanceUnit}
       />
 
       <UnitField
-        label="Time format"
+        label={t("profile.settings.timeFormat")}
         options={TIME_FORMAT_OPTIONS}
         value={timeFormat}
         onChange={setTimeFormat}
       />
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
-      {saved ? <p className="text-sm text-success">Settings saved.</p> : null}
+      {saved ? (
+        <p className="text-sm text-success">{t("profile.settings.saved")}</p>
+      ) : null}
 
       <Button
         color="primary"
@@ -149,7 +162,7 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
         onClick={() => void handleSave()}
         className="w-full"
       >
-        Save
+        {t("common.save")}
       </Button>
     </div>
   );

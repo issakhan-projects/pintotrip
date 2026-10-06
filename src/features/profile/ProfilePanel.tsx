@@ -22,7 +22,6 @@ import { useAnalytics } from "@/hooks/useAnalytics";
 import { AnalyticsEvents } from "@/types/analytics";
 import { computePlaceStats } from "@/features/places/groupLocations";
 import { AiCreditsCard } from "@/features/profile/AiCreditsCard";
-import { getPlanDefinition } from "@/features/profile/plans";
 import { ProfileMenuRow } from "@/features/profile/ProfileMenuRow";
 import { ProfileSubView } from "@/features/profile/ProfileSubView";
 import { TravelPreferencesView } from "@/features/profile/TravelPreferencesView";
@@ -37,6 +36,10 @@ import {
 import { LegalContent, LegalLinks } from "@/features/profile/LegalLinks";
 import { SupportView } from "@/features/profile/SupportView";
 import { InviteFriendsSheet } from "@/features/referral";
+import { LanguageMenu } from "@/components/LanguageMenu";
+import { useI18n } from "@/i18n";
+import type { UiLocaleCode } from "@/i18n/locales";
+import { updateUserProfile } from "@/services/users";
 import { REFERRAL_REWARD_AI_CREDITS } from "@/types/credits";
 import { cx } from "@/lib/utils";
 
@@ -72,10 +75,31 @@ export function ProfilePanel({
   onExploreMap,
 }: ProfilePanelProps) {
   const router = useRouter();
+  const { t } = useI18n();
   const { trackEvent, resetAnalytics } = useAnalytics();
   const { profile, loading: profileLoading } = useUserProfile(user);
   const [view, setView] = useState<ProfileView>("home");
   const [inviteOpen, setInviteOpen] = useState(false);
+
+  async function persistLocale(code: UiLocaleCode) {
+    if (!profile) return;
+    try {
+      await updateUserProfile(user.uid, {
+        preferences: {
+          emailSubscription: profile.preferences?.emailSubscription ?? true,
+          language: code,
+          timezone:
+            profile.preferences?.timezone ??
+            Intl.DateTimeFormat().resolvedOptions().timeZone,
+          temperatureUnit: profile.preferences?.temperatureUnit ?? "celsius",
+          distanceUnit: profile.preferences?.distanceUnit ?? "km",
+          timeFormat: profile.preferences?.timeFormat ?? "24h",
+        },
+      });
+    } catch {
+      // Locale already applied in UI; profile sync can retry later.
+    }
+  }
 
   const stats = useMemo(() => computePlaceStats(locations), [locations]);
   const visitedLocations = useMemo(
@@ -89,14 +113,14 @@ export function ProfilePanel({
 
   const displayName = profile
     ? [profile.name, profile.lastname].filter(Boolean).join(" ").trim()
-    : user.displayName || user.email?.split("@")[0] || "Traveler";
+    : user.displayName || user.email?.split("@")[0] || t("profile.travelerFallback");
   const email = profile?.email || user.email || "";
   const rawPhotoUrl = profile?.photoUrl || user.photoURL || "";
   const [photoFailed, setPhotoFailed] = useState(false);
   const photoUrl = photoFailed ? "" : rawPhotoUrl;
-  const initial = (displayName || "T").charAt(0).toUpperCase();
+  const initial = (displayName || t("profile.travelerFallback")).charAt(0).toUpperCase();
   const plan = profile?.subscription?.plan ?? "free";
-  const planName = getPlanDefinition(plan).name;
+  const planName = t(`profile.plans.${plan}.name`);
   const isPaidPlan = plan === "plus" || plan === "pro";
   const balance = profile?.aiCreditsBalance ?? 0;
 
@@ -126,17 +150,17 @@ export function ProfilePanel({
 
   if (view !== "home") {
     const titles: Record<Exclude<ProfileView, "home">, string> = {
-      countries: "Countries",
-      visited: "Visited",
-      travel: "Travel Preferences",
-      documents: "My Documents",
-      account: "Account",
-      subscription: "Subscription",
-      settings: "Settings",
-      help: "Help & Support",
-      privacy: "Privacy Policy",
-      terms: "Terms of Service",
-      about: "About",
+      countries: t("profile.titles.countries"),
+      visited: t("profile.titles.visited"),
+      travel: t("profile.titles.travel"),
+      documents: t("profile.titles.documents"),
+      account: t("profile.titles.account"),
+      subscription: t("profile.titles.subscription"),
+      settings: t("profile.titles.settings"),
+      help: t("profile.titles.help"),
+      privacy: t("profile.titles.privacy"),
+      terms: t("profile.titles.terms"),
+      about: t("profile.titles.about"),
     };
 
     return (
@@ -150,8 +174,8 @@ export function ProfilePanel({
         {view === "visited" ? (
           <PlacesFilterView
             locations={visitedLocations}
-            emptyTitle="No visited places yet"
-            emptyBody="Mark places as visited when you go — they’ll show up here."
+            emptyTitle={t("profile.visitedEmptyTitle")}
+            emptyBody={t("profile.visitedEmptyBody")}
             onExploreMap={onExploreMap}
           />
         ) : null}
@@ -193,7 +217,7 @@ export function ProfilePanel({
         !profile &&
         !profileLoading ? (
           <p className="text-sm text-text-secondary">
-            Could not load your profile. Try again later.
+            {t("profile.loadError")}
           </p>
         ) : null}
       </ProfileSubView>
@@ -247,7 +271,7 @@ export function ProfilePanel({
                     ) : null}
                   </div>
                   <p className="mt-4 max-w-[9rem] text-xs leading-snug text-text-muted">
-                    Explore more. Travel further.
+                    {t("profile.tagline")}
                   </p>
                 </div>
 
@@ -268,16 +292,22 @@ export function ProfilePanel({
                         </p>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openMenu("account", AnalyticsEvents.ACCOUNT_OPENED)
-                      }
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text"
-                    >
-                      <Pencil className="h-3 w-3" strokeWidth={2} aria-hidden />
-                      Edit
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <LanguageMenu
+                        variant="nav"
+                        onLocaleChange={(code) => void persistLocale(code)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openMenu("account", AnalyticsEvents.ACCOUNT_OPENED)
+                        }
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text"
+                      >
+                        <Pencil className="h-3 w-3" strokeWidth={2} aria-hidden />
+                        {t("profile.edit")}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-4">
@@ -290,28 +320,28 @@ export function ProfilePanel({
                           plan,
                           source: "ai_credits_card",
                         });
-                        router.push("/pricing");
+                        router.push("/pricing#credit-packs");
                       }}
                     />
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-2">
                     <StatButton
-                      label="Countries"
+                      label={t("profile.stat.countries")}
                       value={stats.countries}
                       iconTone="green"
                       icon={<Globe2 className="h-4 w-4" strokeWidth={2} />}
                       onClick={() => openStat("countries")}
                     />
                     <StatButton
-                      label="Places"
+                      label={t("profile.stat.places")}
                       value={stats.places}
                       iconTone="blue"
                       icon={<MapPin className="h-4 w-4" strokeWidth={2} />}
                       onClick={() => openStat("places")}
                     />
                     <StatButton
-                      label="Visited"
+                      label={t("profile.stat.visited")}
                       value={stats.visited}
                       iconTone="red"
                       icon={<Backpack className="h-4 w-4" strokeWidth={2} />}
@@ -323,7 +353,7 @@ export function ProfilePanel({
 
               <div className="flex items-center justify-between gap-3 border-t border-divider px-5 py-3.5">
                 <p className="text-xs italic text-text-muted">
-                  “Collect moments, not things.”
+                  {t("profile.quote")}
                 </p>
                 <div className="flex shrink-0 items-center gap-1.5 text-text-secondary">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -335,7 +365,7 @@ export function ProfilePanel({
                     className="h-4 w-4"
                   />
                   <span className="font-[family-name:var(--font-manrope)] text-[11px] font-semibold tracking-wide">
-                    PinToTrip
+                    {t("app.brand")}
                   </span>
                 </div>
               </div>
@@ -354,22 +384,24 @@ export function ProfilePanel({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-semibold text-text">
-                  Invite friends
+                  {t("profile.invite.title")}
                 </span>
                 <span className="mt-0.5 block text-xs text-text-secondary">
-                  Get {REFERRAL_REWARD_AI_CREDITS} AI credits when they join
+                  {t("profile.invite.subtitle", {
+                    n: REFERRAL_REWARD_AI_CREDITS,
+                  })}
                 </span>
               </span>
               <span className="shrink-0 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-white">
-                Invite
+                {t("profile.invite.cta")}
               </span>
             </button>
 
             <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-surface-elevated">
               <ProfileMenuRow
                 icon={<Globe2 className="h-4 w-4" />}
-                title="Travel Preferences"
-                description="Country, currency, language"
+                title={t("profile.menu.travel")}
+                description={t("profile.menu.travelDesc")}
                 onClick={() =>
                   openMenu(
                     "travel",
@@ -379,22 +411,22 @@ export function ProfilePanel({
               />
               <ProfileMenuRow
                 icon={<FileText className="h-4 w-4" />}
-                title="My Documents"
-                description="Stored only on this device"
+                title={t("profile.menu.documents")}
+                description={t("profile.menu.documentsDesc")}
                 onClick={() => setView("documents")}
               />
               <ProfileMenuRow
                 icon={<CreditCard className="h-4 w-4" />}
-                title="Subscription"
-                description="Current plan and billing"
+                title={t("profile.menu.subscription")}
+                description={t("profile.menu.subscriptionDesc")}
                 onClick={() =>
                   openMenu("subscription", AnalyticsEvents.SUBSCRIPTION_OPENED)
                 }
               />
               <ProfileMenuRow
                 icon={<Settings className="h-4 w-4" />}
-                title="Settings"
-                description="Language, notifications, timezone"
+                title={t("profile.menu.settings")}
+                description={t("profile.menu.settingsDesc")}
                 onClick={() =>
                   openMenu("settings", AnalyticsEvents.SETTINGS_OPENED)
                 }
@@ -411,7 +443,7 @@ export function ProfilePanel({
               onClick={() => void handleLogout()}
               className="mt-8 w-full"
             >
-              Log out
+              {t("profile.logOut")}
             </Button>
           </>
         )}

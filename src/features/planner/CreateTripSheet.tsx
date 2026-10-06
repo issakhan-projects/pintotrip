@@ -10,21 +10,39 @@ import {
   type DateRangeValue,
 } from "@/components/ui";
 import {
+  Baby,
   CalendarDays,
   CircleDollarSign,
+  Coins,
   Compass,
+  Gem,
+  Landmark,
+  Layers,
+  Leaf,
   MapPin,
+  Mosque,
+  MoonStar,
+  Mountain,
+  Palmtree,
+  PencilLine,
   Plane,
   Plus,
   Route,
+  ShoppingBag,
   Sparkles,
+  Star,
   Tag,
+  Trees,
   Utensils,
+  UtensilsCrossed,
   Wallet,
+  Wine,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { useI18n, type TranslateFn } from "@/i18n";
 import type { SavedLocation } from "@/hooks/useLocations";
 import { useTrips } from "@/hooks/useTrips";
 import type { UserProfile } from "@/types/user";
@@ -33,7 +51,9 @@ import {
   MAX_TRIP_DAYS,
   MAX_TRIP_DESTINATIONS,
   MEAL_CUSTOM_MAX_LENGTH,
+  MEAL_TYPES,
   MEAL_TYPE_OPTIONS,
+  SPEND_MONEY_LEVELS,
   SPEND_MONEY_OPTIONS,
   TRIP_STOP_TYPE_OPTIONS,
   type MealType,
@@ -104,29 +124,43 @@ type DestDraft = {
 
 const CREATE_MODE_TABS: Array<{
   id: TripCreateMode;
-  label: string;
-  hint: string;
   icon: typeof MapPin;
 }> = [
-  {
-    id: "ordinary",
-    label: "Ordinary",
-    hint: "One city",
-    icon: MapPin,
-  },
-  {
-    id: "advanced",
-    label: "Advanced",
-    hint: "Multi-stop",
-    icon: Route,
-  },
+  { id: "ordinary", icon: MapPin },
+  { id: "advanced", icon: Route },
 ];
 
-const SPEND_HINTS: Record<SpendMoneyLevel, string> = {
-  low: "Budget-friendly",
-  medium: "Balanced",
-  high: "Comfort first",
+const LEISURE_TYPE_ICONS: Record<LeisureType, LucideIcon> = {
+  sightseeing: Landmark,
+  food: UtensilsCrossed,
+  nature: Trees,
+  nightlife: Wine,
+  shopping: ShoppingBag,
+  relaxation: Palmtree,
+  adventure: Mountain,
+  family: Baby,
+  mixed: Layers,
+  custom: PencilLine,
+  umrah: Mosque,
 };
+
+const MEAL_TYPE_ICONS: Record<MealType, LucideIcon> = {
+  default: Utensils,
+  halal: MoonStar,
+  vegetarian: Leaf,
+  kosher: Star,
+  other: PencilLine,
+};
+
+const SPEND_MONEY_ICONS: Record<SpendMoneyLevel, LucideIcon> = {
+  low: Coins,
+  medium: CircleDollarSign,
+  high: Gem,
+};
+
+function intlLocale(locale: string): string {
+  return locale === "kz" ? "kk" : locale;
+}
 
 function newDestId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `d-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -148,23 +182,31 @@ function countryGroupKey(place: GeocodedPlace): string {
   return place.countryName.trim().toLowerCase();
 }
 
-function formatCityDates(range: DateRangeValue): string {
-  if (!range.from || !range.to) return "Dates not set";
-  const fmt = new Intl.DateTimeFormat("en-US", {
+function formatCityDates(
+  range: DateRangeValue,
+  locale: string,
+  t: TranslateFn
+): string {
+  if (!range.from || !range.to) return t("common.datesNotSet");
+  const fmt = new Intl.DateTimeFormat(intlLocale(locale), {
     month: "short",
     day: "numeric",
   });
   return `${fmt.format(range.from)} – ${fmt.format(range.to)}`;
 }
 
-function suggestTripName(places: GeocodedPlace[]): string {
+function suggestTripName(places: GeocodedPlace[], t: TranslateFn): string {
   if (places.length === 0) return "";
-  if (places.length === 1) return `${places[0]!.cityName} Trip`;
+  if (places.length === 1) {
+    return t("planner.create.nameFromPlace", { place: places[0]!.cityName });
+  }
   const countries = new Set(places.map((p) => countryGroupKey(p)));
   if (countries.size === 1) {
-    return `${places[0]!.countryName} Trip`;
+    return t("planner.create.nameFromPlace", {
+      place: places[0]!.countryName,
+    });
   }
-  return `${places[0]!.cityName} Trip`;
+  return t("planner.create.nameFromPlace", { place: places[0]!.cityName });
 }
 
 function groupDestinationsByCountry(items: DestDraft[]): Array<{
@@ -256,6 +298,7 @@ function CreateTripForm({
   onClose: () => void;
   onCreated?: (tripId: string) => void;
 }) {
+  const { t, locale } = useI18n();
   const router = useRouter();
   const { trips } = useTrips(userId);
   const busyRanges = useMemo<BusyDateRange[]>(
@@ -270,12 +313,12 @@ function CreateTripForm({
               trip.name?.trim() ||
               primary.cityName ||
               primary.countryName ||
-              "Trip",
+              t("planner.create.fallbackTrip"),
             from: startOfLocalDay(trip.startDate.toDate()),
             to: startOfLocalDay(trip.endDate.toDate()),
           };
         }),
-    [trips]
+    [trips, t]
   );
   const cityGroups = useMemo<CityGroupOption[]>(() => {
     const countries = groupLocationsByCountryCity(locations);
@@ -399,10 +442,33 @@ function CreateTripForm({
         (option) => option.value !== "umrah" || hasSaudiDestination
       ).map((option) => ({
         value: option.value,
-        label: option.label,
-        description: option.description,
+        label: t(`planner.create.leisure.${option.value}.label`),
+        description: t(`planner.create.leisure.${option.value}.description`),
+        icon: LEISURE_TYPE_ICONS[option.value],
       })),
-    [hasSaudiDestination]
+    [hasSaudiDestination, t]
+  );
+
+  const mealOptions = useMemo(
+    () =>
+      MEAL_TYPE_OPTIONS.map((option) => ({
+        value: option.id,
+        label: t(`planner.create.meal.${option.id}.label`),
+        description: t(`planner.create.meal.${option.id}.description`),
+        icon: MEAL_TYPE_ICONS[option.id],
+      })),
+    [t]
+  );
+
+  const spendOptions = useMemo(
+    () =>
+      SPEND_MONEY_OPTIONS.map((option) => ({
+        value: option.id,
+        label: t(`planner.create.spendLevel.${option.id}`),
+        description: t(`planner.create.spend.${option.id}`),
+        icon: SPEND_MONEY_ICONS[option.id],
+      })),
+    [t]
   );
 
   useEffect(() => {
@@ -421,7 +487,7 @@ function CreateTripForm({
     setSelectedSavedKey(savedKey ?? null);
     setSearchQuery(place.label);
     if (!nameTouched) {
-      setTripName(`${place.cityName} Trip`);
+      setTripName(t("planner.create.nameFromPlace", { place: place.cityName }));
     }
   }
 
@@ -448,19 +514,19 @@ function CreateTripForm({
 
   function addAdvancedDestination(place: GeocodedPlace, savedKey?: string | null) {
     if (!pendingStopType) {
-      setError("Choose Destination or Transit before adding a city.");
+      setError(t("planner.create.err.chooseStopType"));
       return;
     }
     if (destinations.length >= MAX_TRIP_DESTINATIONS) {
       setError(
-        `You can add up to ${MAX_TRIP_DESTINATIONS} cities (destinations and transit).`
+        t("planner.create.err.cityLimit", { max: MAX_TRIP_DESTINATIONS })
       );
       return;
     }
 
     const fingerprint = placeFingerprint(place);
     if (destinations.some((d) => placeFingerprint(d.place) === fingerprint)) {
-      setError("That city is already added.");
+      setError(t("planner.create.err.cityAlreadyAdded"));
       return;
     }
 
@@ -482,7 +548,7 @@ function CreateTripForm({
     setSearchResults([]);
     setError(null);
     if (!nameTouched) {
-      setTripName(suggestTripName(next.map((d) => d.place)));
+      setTripName(suggestTripName(next.map((d) => d.place), t));
     }
 
     if (!place.photos?.length && savedKey == null) {
@@ -533,7 +599,7 @@ function CreateTripForm({
     try {
       const place = await reverseGeocode(coords.lat, coords.lng);
       if (!place?.city && !place?.country) {
-        setError("Couldn’t identify that location. Try another spot.");
+        setError(t("planner.create.err.identifyLocation"));
         return;
       }
       const geocoded: GeocodedPlace = {
@@ -589,7 +655,7 @@ function CreateTripForm({
       const next = prev.filter((d) => d.id !== id);
       if (next.length === 0) setAddingDestination(true);
       if (!nameTouched) {
-        setTripName(suggestTripName(next.map((d) => d.place)));
+        setTripName(suggestTripName(next.map((d) => d.place), t));
       }
       return next;
     });
@@ -825,8 +891,8 @@ function CreateTripForm({
     if (selectedPlaces.length === 0) {
       setError(
         createMode === "advanced"
-          ? "Add at least one destination."
-          : "Choose a destination."
+          ? t("planner.create.err.needDestination")
+          : t("planner.create.err.chooseDestination")
       );
       return;
     }
@@ -835,7 +901,7 @@ function CreateTripForm({
       selectedPlaces.length > MAX_TRIP_DESTINATIONS
     ) {
       setError(
-        `You can add up to ${MAX_TRIP_DESTINATIONS} cities (destinations and transit).`
+        t("planner.create.err.cityLimit", { max: MAX_TRIP_DESTINATIONS })
       );
       return;
     }
@@ -843,15 +909,15 @@ function CreateTripForm({
       createMode === "advanced" &&
       selectedPlaces.some((item) => !item.stopType)
     ) {
-      setError("Each city needs a type: Destination or Transit.");
+      setError(t("planner.create.err.eachCityType"));
       return;
     }
     if (!dateRange.from || !dateRange.to) {
-      setError("Select start and end dates.");
+      setError(t("planner.create.err.selectDates"));
       return;
     }
     if (dateRange.to < dateRange.from) {
-      setError("End date must be after start date.");
+      setError(t("planner.create.err.endAfterStart"));
       return;
     }
     if (
@@ -860,7 +926,7 @@ function CreateTripForm({
         timestampFromDate(dateRange.to)
       ) > MAX_TRIP_DAYS
     ) {
-      setError(`Trip can be at most ${MAX_TRIP_DAYS} days.`);
+      setError(t("planner.create.err.maxDays", { max: MAX_TRIP_DAYS }));
       return;
     }
     {
@@ -871,21 +937,21 @@ function CreateTripForm({
       );
       if (overlap) {
         setError(
-          `Dates overlap with “${overlap.label}”. Choose dates that don’t conflict.`
+          t("planner.create.err.datesOverlap", { label: overlap.label })
         );
         return;
       }
     }
     if (!currencyCode) {
-      setError("Select a currency.");
+      setError(t("planner.create.err.selectCurrency"));
       return;
     }
     if (leisureType === "custom" && !leisureCustom.trim()) {
-      setError("Describe the activities you want for Custom leisure.");
+      setError(t("planner.create.err.customLeisure"));
       return;
     }
     if (mealType === "other" && !mealCustom.trim()) {
-      setError("Describe your meal preference for Other.");
+      setError(t("planner.create.err.customMeal"));
       return;
     }
 
@@ -894,18 +960,28 @@ function CreateTripForm({
     for (const item of selectedPlaces) {
       if (!item.dateRange.from && !item.dateRange.to) continue;
       if (!item.dateRange.from || !item.dateRange.to) {
-        setError(`Select both dates for ${item.place.cityName}, or leave them unset.`);
+        setError(
+          t("planner.create.err.cityDatesBoth", {
+            city: item.place.cityName,
+          })
+        );
         return;
       }
       const cityStart = startOfLocalDay(item.dateRange.from);
       const cityEnd = startOfLocalDay(item.dateRange.to);
       if (cityEnd < cityStart) {
-        setError(`End date must be after start date for ${item.place.cityName}.`);
+        setError(
+          t("planner.create.err.cityEndAfterStart", {
+            city: item.place.cityName,
+          })
+        );
         return;
       }
       if (cityStart < tripStart || cityEnd > tripEnd) {
         setError(
-          `Dates for ${item.place.cityName} must fall within the trip dates.`
+          t("planner.create.err.cityDatesInTrip", {
+            city: item.place.cityName,
+          })
         );
         return;
       }
@@ -913,13 +989,13 @@ function CreateTripForm({
 
     const { city: fromCity, country: fromCountry } = parseFrom(fromValue);
     if (!fromCountry) {
-      setError("Enter where you’re traveling from.");
+      setError(t("planner.create.err.enterFrom"));
       return;
     }
 
     const name =
       tripName.trim() ||
-      suggestTripName(selectedPlaces.map((d) => d.place));
+      suggestTripName(selectedPlaces.map((d) => d.place), t);
     const currencyMeta = CURRENCY_OPTIONS.find((c) => c.code === currencyCode);
     const startDate = timestampFromDate(dateRange.from);
     const endDate = timestampFromDate(dateRange.to);
@@ -947,9 +1023,7 @@ function CreateTripForm({
       );
 
       if (resolved.some((row) => !row.payload)) {
-        setError(
-          "Couldn’t resolve destination city/country ids. Try search again or pick on the map."
-        );
+        setError(t("planner.create.err.resolveDestIds"));
         return;
       }
 
@@ -968,14 +1042,14 @@ function CreateTripForm({
         createMode === "advanced" &&
         destinationStops.some((stop) => !stop.stopType)
       ) {
-        setError("Each city needs a type: Destination or Transit.");
+        setError(t("planner.create.err.eachCityType"));
         return;
       }
       if (
         createMode === "advanced" &&
         !destinationStops.some((stop) => stop.stopType === "destination")
       ) {
-        setError("Add at least one Destination city (not only Transit).");
+        setError(t("planner.create.err.needDestinationNotOnlyTransit"));
         return;
       }
       const primary =
@@ -1008,9 +1082,7 @@ function CreateTripForm({
         : undefined;
 
       if (!isAsciiId(fromCountryId)) {
-        setError(
-          "Couldn’t resolve where you’re traveling from. Use a city and country name."
-        );
+        setError(t("planner.create.err.resolveFrom"));
         return;
       }
 
@@ -1105,7 +1177,7 @@ function CreateTripForm({
       onClose();
       router.push(`/trip-planner/${tripId}?step=preparation&new=1`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create trip.");
+      setError(err instanceof Error ? err.message : t("planner.create.err.createFailed"));
     } finally {
       setSaving(false);
     }
@@ -1160,7 +1232,7 @@ function CreateTripForm({
         />
         <button
           type="button"
-          aria-label="Close"
+          aria-label={t("ui.sheet.closeAria")}
           onClick={onClose}
           className="absolute right-4 top-4 z-10 rounded-full p-1.5 text-text-muted transition-colors hover:bg-surface hover:text-text"
         >
@@ -1169,17 +1241,17 @@ function CreateTripForm({
         <div className="relative">
           <div className="inline-flex items-center gap-1.5 rounded-full bg-primary-tint px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-primary">
             <Sparkles className="h-3 w-3" aria-hidden />
-            New trip
+            {t("planner.create.title")}
           </div>
           <h2 className="mt-3 pr-10 font-[family-name:var(--font-lobster)] text-3xl tracking-tight text-text">
-            Where are you going?
+            {t("planner.create.subtitle")}
           </h2>
           <p className="mt-1.5 max-w-md text-sm leading-relaxed text-text-secondary">
-            Pick your places, dates, and style — then let planning begin.
+            {t("planner.create.body")}
           </p>
           <div
             role="tablist"
-            aria-label="Create trip mode"
+            aria-label={t("planner.create.modeAria")}
             className="mt-4 grid grid-cols-2 gap-2"
           >
             {CREATE_MODE_TABS.map((item) => {
@@ -1216,10 +1288,10 @@ function CreateTripForm({
                         selected ? "text-primary" : "text-text"
                       )}
                     >
-                      {item.label}
+                      {t(`planner.create.mode.${item.id}`)}
                     </span>
                     <span className="block text-[11px] text-text-muted">
-                      {item.hint}
+                      {t(`planner.create.mode.${item.id}Hint`)}
                     </span>
                   </span>
                 </button>
@@ -1233,7 +1305,7 @@ function CreateTripForm({
         <section className="space-y-4">
           <section>
             <FieldLabel icon={Tag} required>
-              Trip name
+              {t("trip.name")}
             </FieldLabel>
             <div className="relative mt-2">
               <TextInput
@@ -1242,13 +1314,13 @@ function CreateTripForm({
                   setNameTouched(true);
                   setTripName(e.target.value);
                 }}
-                placeholder="Istanbul Trip"
+                placeholder={t("planner.create.namePlaceholder")}
                 className="!pr-9"
               />
               {tripName ? (
                 <button
                   type="button"
-                  aria-label="Clear trip name"
+                  aria-label={t("planner.create.clearNameAria")}
                   onClick={() => {
                     setNameTouched(true);
                     setTripName("");
@@ -1262,19 +1334,19 @@ function CreateTripForm({
           </section>
 
           <section>
-            <FieldLabel icon={Plane}>From</FieldLabel>
+            <FieldLabel icon={Plane}>{t("trip.from")}</FieldLabel>
             <div className="relative mt-2">
-              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted p-2 border-1 border-accent" />
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
               <TextInput
                 value={fromValue}
                 onChange={(e) => setFromValue(e.target.value)}
-                placeholder="City, Country"
+                placeholder={t("planner.create.fromPlaceholder")}
                 className="!pl-9 !pr-9"
               />
               {fromValue ? (
                 <button
                   type="button"
-                  aria-label="Clear from"
+                  aria-label={t("planner.create.clearFromAria")}
                   onClick={() => setFromValue("")}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-text-muted hover:bg-surface hover:text-text"
                 >
@@ -1288,7 +1360,7 @@ function CreateTripForm({
         {createMode === "ordinary" ? (
           <section>
             <FieldLabel icon={MapPin} required>
-              Destination
+              {t("trip.destination")}
             </FieldLabel>
             {destination ? (
               <div className="relative mt-2 overflow-hidden rounded-2xl border border-border bg-surface-elevated shadow-sm">
@@ -1318,7 +1390,7 @@ function CreateTripForm({
                     </div>
                     <button
                       type="button"
-                      aria-label="Change destination"
+                      aria-label={t("planner.create.changeDestinationAria")}
                       onClick={() => {
                         setDestination(null);
                         setSelectedSavedKey(null);
@@ -1327,7 +1399,7 @@ function CreateTripForm({
                       }}
                       className="shrink-0 rounded-full bg-white/95 px-3 py-1.5 text-xs font-medium text-text shadow-sm backdrop-blur-sm hover:bg-white"
                     >
-                      Change
+                      {t("planner.create.changeDestination")}
                     </button>
                   </div>
                 </div>
@@ -1340,7 +1412,7 @@ function CreateTripForm({
           <section>
             <div className="flex items-end justify-between gap-3">
               <FieldLabel icon={MapPin} required>
-                Destinations
+                {t("trip.destinations")}
               </FieldLabel>
               {destinations.length > 0 ? (
                 <p className="text-[11px] font-medium text-text-muted">
@@ -1373,13 +1445,21 @@ function CreateTripForm({
                           {group.countryName}
                         </p>
                         <span className="ml-auto rounded-full bg-surface-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted ring-1 ring-border/70">
-                          {group.cities.length}{" "}
-                          {group.cities.length === 1 ? "city" : "cities"}
+                          {t(
+                            group.cities.length === 1
+                              ? "planner.create.cityCount_one"
+                              : "planner.create.cityCount_other",
+                            { count: group.cities.length }
+                          )}
                         </span>
                       </div>
                       <ul className="divide-y divide-divider">
                         {group.cities.map((city) => {
-                          const datesLabel = formatCityDates(city.dateRange);
+                          const datesLabel = formatCityDates(
+                            city.dateRange,
+                            locale,
+                            t
+                          );
                           const datesSet = Boolean(
                             city.dateRange.from && city.dateRange.to
                           );
@@ -1417,7 +1497,15 @@ function CreateTripForm({
                                         <button
                                           key={option.id}
                                           type="button"
-                                          aria-label={`${city.place.cityName}: ${option.label}`}
+                                          aria-label={t(
+                                            "planner.create.stopTypeAria",
+                                            {
+                                              city: city.place.cityName,
+                                              option: t(
+                                                `trip.stop.${option.id}`
+                                              ),
+                                            }
+                                          )}
                                           onClick={() =>
                                             setDestinations((prev) =>
                                               prev.map((d) =>
@@ -1439,7 +1527,7 @@ function CreateTripForm({
                                               : "bg-surface text-text-secondary hover:bg-divider hover:text-text"
                                           )}
                                         >
-                                          {option.label}
+                                          {t(`trip.stop.${option.id}`)}
                                         </button>
                                       );
                                     })}
@@ -1465,7 +1553,10 @@ function CreateTripForm({
                                     {datesSet ? (
                                       <button
                                         type="button"
-                                        aria-label={`Clear dates for ${city.place.cityName}`}
+                                        aria-label={t(
+                                          "planner.create.clearDatesAria",
+                                          { city: city.place.cityName }
+                                        )}
                                         onClick={() =>
                                           setDestinations((prev) =>
                                             prev.map((d) =>
@@ -1484,7 +1575,9 @@ function CreateTripForm({
                                 </div>
                                 <button
                                   type="button"
-                                  aria-label={`Remove ${city.place.cityName}`}
+                                  aria-label={t("common.removeNamed", {
+                                    name: city.place.cityName,
+                                  })}
                                   onClick={() => removeDestination(city.id)}
                                   className="rounded-full p-1.5 text-text-muted hover:bg-error-background hover:text-error"
                                 >
@@ -1533,7 +1626,7 @@ function CreateTripForm({
                 {destinations.length > 0 ? (
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-primary">
-                      Add another city
+                      {t("planner.create.addAnotherCity")}
                     </p>
                     <button
                       type="button"
@@ -1543,14 +1636,15 @@ function CreateTripForm({
                       }}
                       className="text-xs font-medium text-text-secondary hover:text-text"
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </div>
                 ) : null}
 
                 <div className="mb-3">
                   <p className="text-xs font-medium text-text-secondary">
-                    City type <span className="text-error">*</span>
+                    {t("planner.create.cityType")}{" "}
+                    <span className="text-error">*</span>
                   </p>
                   <div className="mt-1.5 grid grid-cols-2 gap-2">
                     {TRIP_STOP_TYPE_OPTIONS.map((option) => {
@@ -1571,7 +1665,7 @@ function CreateTripForm({
                           )}
                         >
                           <span className="block text-sm font-medium">
-                            {option.label}
+                            {t(`trip.stop.${option.id}`)}
                           </span>
                           <span
                             className={cx(
@@ -1579,7 +1673,7 @@ function CreateTripForm({
                               selected ? "text-primary/80" : "text-text-muted"
                             )}
                           >
-                            {option.description}
+                            {t(`planner.create.stopDesc.${option.id}`)}
                           </span>
                         </button>
                       );
@@ -1591,14 +1685,15 @@ function CreateTripForm({
                   picker
                 ) : (
                   <p className="rounded-xl border border-border/70 bg-surface-elevated px-3 py-3 text-sm text-text-secondary">
-                    Select Destination or Transit, then choose a city.
+                    {t("planner.create.selectStopThenCity")}
                   </p>
                 )}
               </div>
             ) : atDestinationLimit ? (
               <p className="mt-3 rounded-xl bg-surface px-3 py-2.5 text-center text-xs text-text-muted">
-                Maximum {MAX_TRIP_DESTINATIONS} cities (destinations and
-                transit).
+                {t("planner.create.maxCities", {
+                  max: MAX_TRIP_DESTINATIONS,
+                })}
               </p>
             ) : (
               <button
@@ -1612,14 +1707,14 @@ function CreateTripForm({
                 className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary/35 bg-primary-tint/30 px-3 py-3 text-sm font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary-tint"
               >
                 <Plus className="h-4 w-4" />
-                Add destination
+                {t("planner.create.addDestination")}
               </button>
             )}
           </section>
         )}
 
         <TripDateRangeField
-          label="Trip dates"
+          label={t("planner.create.tripDates")}
           value={dateRange}
           onChange={setDateRange}
           maxSpanDays={MAX_TRIP_DAYS}
@@ -1629,27 +1724,32 @@ function CreateTripForm({
 
         <section className="space-y-4 rounded-2xl border border-border bg-surface/50 p-4">
           <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-            Preferences
+            {t("planner.create.preferences")}
           </p>
 
-          <section>
-            <FieldLabel icon={Compass}>Type of leisure</FieldLabel>
-            <div className="mt-2">
-              <SearchableSelect
-                value={leisureType}
-                onChange={(value) => {
-                  if ((LEISURE_TYPES as readonly string[]).includes(value)) {
-                    setLeisureType(value as LeisureType);
-                  }
-                }}
-                options={leisureOptions}
-                placeholder="Select leisure type…"
-                searchPlaceholder="Search leisure types…"
-                clearable={false}
-              />
+          <section className="space-y-3">
+            <div className="flex items-center gap-3">
+              <FieldLabel icon={Compass} className="w-40 shrink-0">
+                {t("trip.typeOfLeisure")}
+              </FieldLabel>
+              <div className="min-w-0 flex-1">
+                <SearchableSelect
+                  value={leisureType}
+                  onChange={(value) => {
+                    if ((LEISURE_TYPES as readonly string[]).includes(value)) {
+                      setLeisureType(value as LeisureType);
+                    }
+                  }}
+                  options={leisureOptions}
+                  placeholder={t("planner.create.leisurePlaceholder")}
+                  searchPlaceholder={t("planner.create.leisureSearch")}
+                  clearable={false}
+                  listLayout="stacked"
+                />
+              </div>
             </div>
             {leisureType === "custom" ? (
-              <div className="mt-2">
+              <div className="pl-[10.75rem]">
                 <TextInput
                   value={leisureCustom}
                   onChange={(e) =>
@@ -1657,51 +1757,37 @@ function CreateTripForm({
                       e.target.value.slice(0, LEISURE_CUSTOM_MAX_LENGTH)
                     )
                   }
-                  placeholder="e.g. surfing, diving, parachute jump"
+                  placeholder={t("planner.create.customLeisurePlaceholder")}
                   maxLength={LEISURE_CUSTOM_MAX_LENGTH}
                   disabled={saving}
                 />
                 <p className="mt-1.5 text-xs text-text-muted">
-                  Tell us what you want to do — we’ll prioritize those activities.
+                  {t("planner.create.customLeisureHint")}
                 </p>
               </div>
             ) : null}
-          </section>
-
-          <section>
-            <FieldLabel icon={Utensils}>Meal type</FieldLabel>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {MEAL_TYPE_OPTIONS.map((option) => {
-                const selected = mealType === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setMealType(option.id)}
-                    className={cx(
-                      "rounded-xl border px-2.5 py-2.5 text-left transition-all",
-                      selected
-                        ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/15"
-                        : "border-border bg-surface-elevated text-text-secondary hover:border-primary/30 hover:text-text"
-                    )}
-                  >
-                    <span className="block text-sm font-semibold">
-                      {option.label}
-                    </span>
-                    <span
-                      className={cx(
-                        "mt-0.5 block text-[10px] leading-snug",
-                        selected ? "text-primary/75" : "text-text-muted"
-                      )}
-                    >
-                      {option.description}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-3">
+              <FieldLabel icon={Utensils} className="w-40 shrink-0">
+                {t("planner.create.mealType")}
+              </FieldLabel>
+              <div className="min-w-0 flex-1">
+                <SearchableSelect
+                  value={mealType}
+                  onChange={(value) => {
+                    if ((MEAL_TYPES as readonly string[]).includes(value)) {
+                      setMealType(value as MealType);
+                    }
+                  }}
+                  options={mealOptions}
+                  placeholder={t("planner.create.mealType")}
+                  clearable={false}
+                  searchable={false}
+                  listLayout="stacked"
+                />
+              </div>
             </div>
             {mealType === "other" ? (
-              <div className="mt-2">
+              <div className="pl-[10.75rem]">
                 <TextInput
                   value={mealCustom}
                   onChange={(e) =>
@@ -1709,60 +1795,46 @@ function CreateTripForm({
                       e.target.value.slice(0, MEAL_CUSTOM_MAX_LENGTH)
                     )
                   }
-                  placeholder="e.g. vegan, gluten-free, no seafood"
+                  placeholder={t("planner.create.mealCustomPlaceholder")}
                   maxLength={MEAL_CUSTOM_MAX_LENGTH}
                   disabled={saving}
                 />
                 <p className="mt-1.5 text-xs text-text-muted">
-                  We’ll prefer restaurants and food spots that match this.
+                  {t("planner.create.mealCustomHint")}
                 </p>
               </div>
             ) : null}
-          </section>
-
-          <section>
-            <FieldLabel icon={Wallet}>Spend money</FieldLabel>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {SPEND_MONEY_OPTIONS.map((option) => {
-                const selected = spendMoney === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setSpendMoney(option.id)}
-                    className={cx(
-                      "rounded-xl border px-2.5 py-2.5 text-center transition-all",
-                      selected
-                        ? "border-primary bg-primary-tint text-primary shadow-sm ring-1 ring-primary/15"
-                        : "border-border bg-surface-elevated text-text-secondary hover:border-primary/30 hover:text-text"
-                    )}
-                  >
-                    <span className="block text-sm font-semibold">
-                      {option.label}
-                    </span>
-                    <span
-                      className={cx(
-                        "mt-0.5 block text-[10px] leading-snug",
-                        selected ? "text-primary/75" : "text-text-muted"
-                      )}
-                    >
-                      {SPEND_HINTS[option.id]}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-3">
+              <FieldLabel icon={Wallet} className="w-40 shrink-0">
+                {t("trip.spendMoney")}
+              </FieldLabel>
+              <div className="min-w-0 flex-1">
+                <SearchableSelect
+                  value={spendMoney}
+                  onChange={(value) => {
+                    if ((SPEND_MONEY_LEVELS as readonly string[]).includes(value)) {
+                      setSpendMoney(value as SpendMoneyLevel);
+                    }
+                  }}
+                  options={spendOptions}
+                  placeholder={t("trip.spendMoney")}
+                  clearable={false}
+                  searchable={false}
+                  listLayout="stacked"
+                />
+              </div>
             </div>
           </section>
 
           <section>
-            <FieldLabel icon={CircleDollarSign}>Currency</FieldLabel>
+            <FieldLabel icon={CircleDollarSign}>{t("trip.currency")}</FieldLabel>
             <div className="mt-2">
               <SearchableSelect
                 value={currencyCode}
                 onChange={setCurrencyCode}
                 options={currencyOptions}
-                placeholder="Select currency…"
-                searchPlaceholder="Search currencies…"
+                placeholder={t("planner.create.currencyPlaceholder")}
+                searchPlaceholder={t("planner.create.currencySearch")}
               />
             </div>
           </section>
@@ -1778,14 +1850,14 @@ function CreateTripForm({
       <div className="shrink-0 border-t border-divider bg-surface-elevated/95 px-5 py-4 backdrop-blur-sm">
         <div className="grid grid-cols-2 gap-3">
           <Button variant="secondary" onClick={onClose} className="w-full">
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             loading={saving}
             onClick={() => void handleCreate()}
             className="w-full"
           >
-            Create trip
+            {t("planner.create.submit")}
           </Button>
         </div>
       </div>
@@ -1797,17 +1869,24 @@ function FieldLabel({
   icon: Icon,
   required,
   children,
+  className,
 }: {
   icon: typeof MapPin;
   required?: boolean;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center gap-1.5 text-sm font-medium text-text">
-      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-surface text-text-muted">
+    <div
+      className={cx(
+        "flex min-w-0 items-center gap-1.5 text-sm font-medium text-text",
+        className
+      )}
+    >
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-surface text-text-muted">
         <Icon className="h-3.5 w-3.5" aria-hidden />
       </span>
-      <span>{children}</span>
+      <span className="min-w-0 leading-snug">{children}</span>
       {required ? (
         <span className="text-error" aria-hidden>
           *

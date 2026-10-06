@@ -3,13 +3,15 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui";
 import { SearchableSelect } from "@/components/ui";
+import { LanguageMenu } from "@/components/LanguageMenu";
+import { useI18n } from "@/i18n";
+import { normalizeUiLocale, type UiLocaleCode } from "@/i18n/locales";
 import {
   COUNTRY_OPTIONS,
   countryNameFromCode,
   resolveCountryCode,
 } from "@/lib/countries";
 import { CURRENCY_OPTIONS, resolveCurrencyCode } from "@/lib/currencies";
-import { LANGUAGE_OPTIONS, resolveLanguageCode } from "@/lib/languages";
 import { updateUserProfile } from "@/services/users";
 import type { UserProfile } from "@/types/user";
 import { Save } from "lucide-react";
@@ -24,11 +26,6 @@ const CURRENCY_SELECT_OPTIONS = CURRENCY_OPTIONS.map((c) => ({
   label: c.label,
 }));
 
-const LANGUAGE_SELECT_OPTIONS = LANGUAGE_OPTIONS.map((l) => ({
-  value: l.code,
-  label: l.label,
-}));
-
 interface TravelPreferencesViewProps {
   userId: string;
   profile: UserProfile;
@@ -40,14 +37,15 @@ export function TravelPreferencesView({
   profile,
   onSaved,
 }: TravelPreferencesViewProps) {
+  const { t } = useI18n();
   const [countryCode, setCountryCode] = useState(() =>
     resolveCountryCode(profile.country)
   );
   const [currency, setCurrency] = useState(() =>
     resolveCurrencyCode(profile.currency)
   );
-  const [language, setLanguage] = useState(() =>
-    resolveLanguageCode(profile.preferences?.language)
+  const [language, setLanguage] = useState<UiLocaleCode>(() =>
+    normalizeUiLocale(profile.preferences?.language)
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +55,7 @@ export function TravelPreferencesView({
   useEffect(() => {
     setCountryCode(resolveCountryCode(profile.country));
     setCurrency(resolveCurrencyCode(profile.currency));
-    setLanguage(resolveLanguageCode(profile.preferences?.language));
+    setLanguage(normalizeUiLocale(profile.preferences?.language));
   }, [profile.country, profile.currency, profile.preferences?.language]);
 
   const countryOptions =
@@ -82,17 +80,6 @@ export function TravelPreferencesView({
         ]
       : CURRENCY_SELECT_OPTIONS;
 
-  const languageOptions =
-    language && !LANGUAGE_SELECT_OPTIONS.some((o) => o.value === language)
-      ? [
-          {
-            value: language,
-            label: profile.preferences?.language?.trim() || language,
-          },
-          ...LANGUAGE_SELECT_OPTIONS,
-        ]
-      : LANGUAGE_SELECT_OPTIONS;
-
   async function handleSave() {
     setSaving(true);
     setError(null);
@@ -103,7 +90,7 @@ export function TravelPreferencesView({
         currency: currency || undefined,
         preferences: {
           emailSubscription: profile.preferences?.emailSubscription ?? true,
-          language: language || "en",
+          language,
           timezone:
             profile.preferences?.timezone ??
             Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -116,7 +103,7 @@ export function TravelPreferencesView({
       onSaved();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not save preferences."
+        err instanceof Error ? err.message : t("profile.prefs.saveError")
       );
     } finally {
       setSaving(false);
@@ -125,46 +112,35 @@ export function TravelPreferencesView({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-text-secondary">
-        Home base details used to personalize your travel experience.
-      </p>
+      <p className="text-sm text-text-secondary">{t("profile.prefs.intro")}</p>
 
-      <Field label="Home country">
+      <Field label={t("profile.prefs.homeCountry")}>
         <SearchableSelect
           value={countryCode}
           onChange={setCountryCode}
           options={countryOptions}
-          placeholder="Select a country…"
-          searchPlaceholder="Search countries…"
+          placeholder={t("profile.prefs.selectCountry")}
+          searchPlaceholder={t("profile.prefs.searchCountries")}
           clearable
         />
       </Field>
 
-      <Field label="Currency">
+      <Field label={t("profile.prefs.currency")}>
         <SearchableSelect
           value={currency}
           onChange={setCurrency}
           options={currencyOptions}
-          placeholder="Select a currency…"
-          searchPlaceholder="Search currencies…"
+          placeholder={t("profile.prefs.selectCurrency")}
+          searchPlaceholder={t("profile.prefs.searchCurrencies")}
           clearable
         />
       </Field>
 
-      <Field label="Language">
-        <SearchableSelect
-          value={language}
-          onChange={setLanguage}
-          options={languageOptions}
-          placeholder="Select a language…"
-          searchPlaceholder="Search languages…"
-          clearable
-        />
-      </Field>
+      <LanguageMenu variant="field" onLocaleChange={setLanguage} />
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
       {saved ? (
-        <p className="text-sm text-success">Preferences saved.</p>
+        <p className="text-sm text-success">{t("profile.prefs.saved")}</p>
       ) : null}
 
       <Button
@@ -174,7 +150,7 @@ export function TravelPreferencesView({
         onClick={() => void handleSave()}
         className="w-full"
       >
-        Save
+        {t("common.save")}
       </Button>
     </div>
   );

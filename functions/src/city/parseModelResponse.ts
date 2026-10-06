@@ -5,6 +5,7 @@
 import {
   CITY_INTELLIGENCE_DISCLAIMER,
   type CityIntelligenceResult,
+  type InterestingPlace,
   type UsefulApp,
   type UsefulAppCategory,
   type UsefulAppPlatform,
@@ -81,6 +82,7 @@ export interface ModelCityIntelligence {
     tips?: string[];
   };
   usefulApps?: UsefulApp[];
+  interestingPlaces?: InterestingPlace[];
   lastCheckedAt?: string;
   warning?: string;
 }
@@ -205,6 +207,32 @@ function parseUsefulApps(value: unknown): UsefulApp[] | undefined {
   }
 
   return apps.length > 0 ? apps : undefined;
+}
+
+/**
+ * Parse 3–5 GPT visitor highlights. No place IDs or Maps URLs.
+ */
+function parseInterestingPlaces(value: unknown): InterestingPlace[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const places: InterestingPlace[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const title = optionalString(row.title);
+    const description = optionalString(row.description);
+    if (!title || !description) continue;
+    const highlight =
+      optionalString(row.highlight) ?? optionalString(row.info);
+    places.push({
+      title,
+      description,
+      ...(highlight ? { highlight } : {}),
+    });
+    if (places.length >= 5) break;
+  }
+
+  return places.length > 0 ? places : undefined;
 }
 
 function parseVisaRequired(value: unknown): VisaRequired {
@@ -357,6 +385,7 @@ export function parseModelCityIntelligence(
   }
 
   const usefulApps = parseUsefulApps(body.usefulApps);
+  const interestingPlaces = parseInterestingPlaces(body.interestingPlaces);
 
   return {
     city: {
@@ -374,6 +403,7 @@ export function parseModelCityIntelligence(
     climate,
     practicalInfo,
     usefulApps,
+    interestingPlaces,
     lastCheckedAt: optionalString(body.lastCheckedAt),
     warning: optionalString(body.warning),
   };
@@ -545,6 +575,7 @@ export function toSlowCityIntelligence(
     climate: full.climate,
     practicalInfo: full.practicalInfo,
     usefulApps: full.usefulApps,
+    interestingPlaces: full.interestingPlaces,
     lastCheckedAt: full.lastCheckedAt,
     warning: full.warning,
   };
@@ -647,6 +678,7 @@ export function toCityIntelligenceResult(
     safeRate,
     bestTimeToVisit,
     usefulApps: analysis.usefulApps,
+    interestingPlaces: analysis.interestingPlaces,
     disclaimer: CITY_INTELLIGENCE_DISCLAIMER,
     generatedAt: context.generatedAt,
     details: {

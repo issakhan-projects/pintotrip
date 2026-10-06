@@ -1,0 +1,23 @@
+export const map = {
+  legendAria: "Қала аймақтарының шартты белгілері",
+  legend: {
+  visited: "Барылған",
+  planned: "Жоспарланған",
+  },
+  noPhoto: "Әзірге фото жоқ",
+  status: "Мәртебесі",
+  tags: "Тегтер",
+  confidence: "Сенімділік",
+  saveNote: "Жазбаны сақтау",
+  shareAria: "Бөлісу",
+  moreAria: "Тағы",
+  addNote: "Жазба қосу",
+  editNote: "Жазбаны өзгерту",
+  viewOnMap: "Картадан көру",
+  myNote: "Менің жазбам",
+  notePlaceholder: "Күн батқан кезде жақсырақ…",
+  whyWeThinkThis: "Неліктен бұлай ойлаймыз:",
+  markVisited: "Барылған деп белгілеу",
+  visited: "Барылған",
+  deleteDesc: "{title} картадан және орындар тізімінен өшіріледі. Бұл әрекетті қайтару мүмкін емес.",
+  } as const;

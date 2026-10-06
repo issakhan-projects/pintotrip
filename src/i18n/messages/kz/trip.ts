@@ -1,0 +1,31 @@
+export const trip = {
+  create: "Сапар жасау",
+  edit: "Сапарды өңдеу",
+  delete: "Сапарды жою",
+  addRoute: "Маршрут қосу",
+  editRoute: "Маршрутты өңдеу",
+  addAccommodation: "Тұру орнын қосу",
+  destination: "Баратын жер",
+  destinations: "Баратын жерлер",
+  from: "Қайдан",
+  dates: "Күндер",
+  currency: "Валюта",
+  name: "Сапар атауы",
+  typeOfLeisure: "Демалыс түрі",
+  spendMoney: "Шығын деңгейі",
+  optionsAria: "Сапар опциялары",
+  stepsAria: "Сапар қадамдары",
+  spend: {
+    low: "Үнемді",
+    medium: "Орташа",
+    high: "Комфорт басым",
+  },
+  tickets: {
+    buy: "Билет сатып алу",
+    info: "Билеттер / ақпарат",
+  },
+  stop: {
+    destination: "Баратын жер",
+    transit: "Транзит",
+  },
+} as const;

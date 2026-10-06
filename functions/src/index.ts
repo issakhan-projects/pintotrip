@@ -9,7 +9,7 @@
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
  * onTripPlannerCreated (tripPlanner create → transport discovery + transportLocations).
  * HTTP: paddleWebhook (Paddle Billing notifications).
- * Callables: createPaddlePortalSession.
+ * Callables: createPaddlePortalSession, cancelPaddleSubscription.
  */
 import { setGlobalOptions } from "firebase-functions";
 import { DEFAULT_FUNCTIONS_REGION } from "./shared/config";
@@ -30,6 +30,7 @@ import { welcomeEmailOnUserCreated } from "./welcomeEmail";
 import {
   paddleWebhook,
   createPaddlePortalSession,
+  cancelPaddleSubscription,
 } from "./paddle";
 
 setGlobalOptions({
@@ -55,4 +56,5 @@ export {
   welcomeEmailOnUserCreated,
   paddleWebhook,
   createPaddlePortalSession,
+  cancelPaddleSubscription,
 };

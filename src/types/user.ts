@@ -45,6 +45,16 @@ export interface UserSubscription {
   productId?: string;
   priceId?: string;
   currentPeriodEnd?: Timestamp;
+  /**
+   * Idempotency key for plan AI-credit grants (`period:{subId}:{periodEndMs}`).
+   * Written only by Cloud Functions.
+   */
+  planCreditGrantKey?: string | null;
+  /** Paid plan whose credits were already granted for planCreditGrantKey. */
+  planCreditGrantPlan?: "plus" | "pro" | null;
+  /** True after Paddle schedules cancel at period end (webhook). */
+  cancelAtPeriodEnd?: boolean;
+  cancelEffectiveAt?: Timestamp | null;
   updatedAt?: Timestamp;
 }
 

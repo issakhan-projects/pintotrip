@@ -27,6 +27,7 @@ import {
   needsTripReviewPrompt,
   startOfToday,
 } from "./tripLifecycle";
+import { useI18n } from "@/i18n";
 
 function canShowRateTripCta(
   trip: TripPlannerDoc,
@@ -50,11 +51,14 @@ interface TripPlannerPanelProps {
 
 type TripFilterTab = "active" | "past";
 
-const TRIP_TABS: Array<{ id: TripFilterTab; label: string; icon: LucideIcon }> =
-  [
-    { id: "active", label: "Active", icon: PlaneTakeoff },
-    { id: "past", label: "Past", icon: History },
-  ];
+const TRIP_TABS: Array<{
+  id: TripFilterTab;
+  labelKey: "planner.panel.tab.active" | "planner.panel.tab.past";
+  icon: LucideIcon;
+}> = [
+  { id: "active", labelKey: "planner.panel.tab.active", icon: PlaneTakeoff },
+  { id: "past", labelKey: "planner.panel.tab.past", icon: History },
+];
 
 function filterTrips(
   trips: TripPlannerDoc[],
@@ -65,19 +69,6 @@ function filterTrips(
   return trips.filter((t) => !isPastTrip(t, today));
 }
 
-function emptyCopy(tab: TripFilterTab): { title: string; body: string } {
-  if (tab === "past") {
-    return {
-      title: "No past trips",
-      body: "Completed and past trips will appear here after you travel.",
-    };
-  }
-  return {
-    title: "Where to next?",
-    body: "No active trips yet. Create one and it will show up here.",
-  };
-}
-
 /**
  * Trip Planner list — shown as the Planner tab in AppShell.
  * Pro plan only; free/plus see an upgrade gate.
@@ -86,6 +77,7 @@ export function TripPlannerPanel({
   user,
   resyncOnMount = false,
 }: TripPlannerPanelProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const { trips, loading, error, refresh } = useTrips(user.uid);
   const { locations } = useLocations(user.uid);
@@ -225,24 +217,32 @@ export function TripPlannerPanel({
             <Lock className="h-6 w-6" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-text">
-            Trip Planner
+            {t("planner.panel.title")}
           </h1>
           <p className="mt-2 max-w-sm text-sm text-text-secondary">
-            Organize destinations into itineraries with Trip Planner. Available
-            on the Pro plan.
+            {t("planner.panel.gateBody")}
           </p>
           <Button
             onClick={() => router.push("/pricing")}
             className="mt-6 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
           >
-            Upgrade to Pro
+            {t("planner.panel.upgrade")}
           </Button>
         </div>
       </div>
     );
   }
 
-  const empty = emptyCopy(tab);
+  const empty =
+    tab === "past"
+      ? {
+          title: t("planner.panel.empty.pastTitle"),
+          body: t("planner.panel.empty.pastBody"),
+        }
+      : {
+          title: t("planner.panel.empty.title"),
+          body: t("planner.panel.empty.activeBody"),
+        };
 
   return (
     <div className="flex h-full flex-col overflow-auto px-4 pb-28 pt-20">
@@ -250,11 +250,16 @@ export function TripPlannerPanel({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-text">
-              Trip Planner
+              {t("planner.panel.title")}
             </h1>
             {!loading && trips.length > 0 ? (
               <p className="mt-1 text-sm text-text-secondary">
-                {trips.length} trip{trips.length === 1 ? "" : "s"}
+                {t(
+                  trips.length === 1
+                    ? "planner.panel.tripCount_one"
+                    : "planner.panel.tripCount_other",
+                  { count: trips.length }
+                )}
               </p>
             ) : null}
           </div>
@@ -263,13 +268,13 @@ export function TripPlannerPanel({
             onClick={() => setCreateOpen(true)}
             className="!bg-primary hover:!bg-primary-hover !border-primary !text-white"
           >
-            Create trip
+            {t("trip.create")}
           </Button>
         </div>
 
         <div
           role="tablist"
-          aria-label="Trip filters"
+          aria-label={t("planner.panel.filtersAria")}
           className="mt-5 flex gap-1 rounded-full bg-surface p-1"
         >
           {TRIP_TABS.map((item) => {
@@ -290,7 +295,7 @@ export function TripPlannerPanel({
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" aria-hidden />
-                {item.label}
+                {t(item.labelKey)}
               </button>
             );
           })}
@@ -340,7 +345,7 @@ export function TripPlannerPanel({
                       onClick={() => setCreateOpen(true)}
                       className="mt-4 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
                     >
-                      Create trip
+                      {t("trip.create")}
                     </Button>
                   ) : null}
                 </div>
@@ -423,7 +428,7 @@ export function TripPlannerPanel({
                 .filter(Boolean)
                 .join(" · ") ||
               shareTrip.name ||
-              "Trip"
+              t("planner.create.fallbackTrip")
             : ""
         }
         existingImageUrl={shareTrip?.storyImageUrl}

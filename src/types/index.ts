@@ -128,6 +128,7 @@ export type {
   CityIntelligenceResult,
   CityIntelligenceDetails,
   UsefulApp,
+  InterestingPlace,
   UsefulAppCategory,
   UsefulAppPlatform,
   ExchangeRateProvider,

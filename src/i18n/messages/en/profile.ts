@@ -5,6 +5,7 @@ export const profile = {
   edit: "Edit",
   logOut: "Log out",
   loadingProfile: "Loading your profile…",
+  loadError: "Could not load your profile. Try again later.",
   stat: {
     countries: "Countries",
     places: "Places",

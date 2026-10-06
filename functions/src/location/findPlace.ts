@@ -1,7 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/https";
 import { logger } from "firebase-functions";
 import { requireAuth, assertNonEmptyString } from "../shared/auth";
-import { DEFAULT_FUNCTIONS_REGION, openaiApiKey } from "../shared/config";
+import {
+  DEFAULT_FUNCTIONS_REGION,
+  googlePrivateApiKey,
+  openaiApiKey,
+} from "../shared/config";
 import { createOpenAILocationAnalyzer } from "../shared/openai";
 import { recordAIUsage } from "../shared/aiUsage";
 import {
@@ -22,6 +26,7 @@ import type {
   AnalyzeLocationRequest,
   AnalyzeLocationResult,
 } from "./types";
+import { resolveFindPlaceCoordinates } from "./resolveFindPlaceCoordinates";
 
 function parseRequest(data: unknown): AnalyzeLocationRequest {
   if (!data || typeof data !== "object") {
@@ -96,13 +101,14 @@ export type FindPlaceResponse =
  * 6. If photo has no travel place (people/things/etc.) → unidentified immediately
  *    (still billable — initial AI call ran)
  * 7. If uncertain place → web-search verification
- * 8. On success: deduct credits only when billable + record aiUsage
- * 9. On AI failure: do not deduct credits
+ * 8. Exact lat/lon: placesLocation cache → Google Places Text Search → save cache
+ * 9. On success: deduct credits only when billable + record aiUsage
+ * 10. On AI failure: do not deduct credits
  */
 export const findPlace = onCall(
   {
     region: DEFAULT_FUNCTIONS_REGION,
-    secrets: [openaiApiKey],
+    secrets: [openaiApiKey, googlePrivateApiKey],
     invoker: "public",
     cors: true,
     timeoutSeconds: 180,
@@ -179,14 +185,16 @@ export const findPlace = onCall(
         });
       }
 
+      const result = await resolveFindPlaceCoordinates(cachedOrLive.result);
+
       logger.info("findPlace completed", {
         uid,
         type: input.type,
         language,
-        identified: cachedOrLive.result.identified,
-        title: cachedOrLive.result.title,
-        confidence: cachedOrLive.result.confidence,
-        verificationPerformed: cachedOrLive.result.verificationPerformed,
+        identified: result.identified,
+        title: result.title,
+        confidence: result.confidence,
+        verificationPerformed: result.verificationPerformed,
         outcome: cachedOrLive.outcome,
         billable: cachedOrLive.billable,
         tokens: cachedOrLive.usage?.totalTokens ?? 0,
@@ -194,7 +202,7 @@ export const findPlace = onCall(
         durationMs: Date.now() - started,
       });
 
-      return cachedOrLive.result;
+      return result;
     } catch (err) {
       if (
         err &&

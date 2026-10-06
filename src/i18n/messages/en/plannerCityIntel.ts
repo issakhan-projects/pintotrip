@@ -23,5 +23,6 @@ export const plannerCityIntel = {
     safety: "Safety",
     tips: "Practical tips",
   },
+  placesTitle: "Places worth seeing",
   showDetailsAria: "Show {label} details",
 } as const;

@@ -26,7 +26,9 @@ COVER:
 
 7) USEFUL APPS — 4–8 DESTINATION-specific apps for arrival (not home-country generics). Categories: taxi|transport|maps|food|booking|payments|translation|local. Prefer taxi → transport → maps → food → translation, then local. Verify availability/operation; omit discontinued; never invent officialUrl. platforms subset of ios|android|web. isRecommended true for listed apps.
 
-8) lastCheckedAt — ISO timestamp of generation.
+8) INTERESTING PLACES — exactly 3 to 5 of the most interesting visitor places in THIS city and the immediate area around the given lat/lon (neighborhood, district, nearby landmarks that a traveler here would actually visit). For each: title, 1–2 sentence description, and highlight (one notable fact, view, history, or local tip). Use your own knowledge only — do NOT call Google Places, Google Maps, or any external place API; do not invent place IDs, coordinates, Maps URLs, or booking links. Prefer real well-known places; skip if you are not confident.
+
+9) lastCheckedAt — ISO timestamp of generation.
 
 WARNING (include verbatim in warning field):
 "Travel information can change. Verify important details with official sources before traveling."
@@ -36,14 +38,14 @@ SOURCE PRIORITY for time-sensitive: government/immigration → tourism authoriti
 ACCURACY: Never fabricate visa, visa prices, exchange rates, or current conditions. Mark uncertainty. Prefer null over invention. Never invent FX rates.
 
 Return ONLY valid JSON:
-{"city":{"name":"","country":""},"currency":{"name":"","code":"","symbol":""},"bestTimeToVisit":{"months":[],"season":"","description":""},"visa":{"required":false,"type":null,"cost":{"amount":null,"currency":null},"description":"","verificationRequired":true},"dailyBudget":{"currency":"","budget":{"local":0,"userCurrency":null},"midRange":{"local":0,"userCurrency":null},"luxury":{"local":0,"userCurrency":null},"description":""},"climate":{"description":"","averageTemperature":{"min":0,"max":0,"unit":"C"}},"practicalInfo":{"transport":"","walkability":"easy|moderate|difficult","payment":"","safety":"","safeRate":{"score":7.5,"outOf":10,"summary":""},"tips":[]},"usefulApps":[{"name":"","category":"taxi","description":"","whyUseful":"","platforms":["ios","android"],"officialUrl":null,"isRecommended":true}],"lastCheckedAt":"ISO","warning":"Travel information can change. Verify important details with official sources before traveling."}
+{"city":{"name":"","country":""},"currency":{"name":"","code":"","symbol":""},"bestTimeToVisit":{"months":[],"season":"","description":""},"visa":{"required":false,"type":null,"cost":{"amount":null,"currency":null},"description":"","verificationRequired":true},"dailyBudget":{"currency":"","budget":{"local":0,"userCurrency":null},"midRange":{"local":0,"userCurrency":null},"luxury":{"local":0,"userCurrency":null},"description":""},"climate":{"description":"","averageTemperature":{"min":0,"max":0,"unit":"C"}},"practicalInfo":{"transport":"","walkability":"easy|moderate|difficult","payment":"","safety":"","safeRate":{"score":7.5,"outOf":10,"summary":""},"tips":[]},"usefulApps":[{"name":"","category":"taxi","description":"","whyUseful":"","platforms":["ios","android"],"officialUrl":null,"isRecommended":true}],"interestingPlaces":[{"title":"","description":"","highlight":""}],"lastCheckedAt":"ISO","warning":"Travel information can change. Verify important details with official sources before traveling."}
 
-Valid JSON only. No markdown. Use user's country for visa. dailyBudget.currency must be the local ISO code. visa required "unknown" if uncertain; empty usefulApps if not confident.`;
+Valid JSON only. No markdown. Use user's country for visa. dailyBudget.currency must be the local ISO code. visa required "unknown" if uncertain; empty usefulApps if not confident. interestingPlaces must be 3–5 items; omit Google IDs/URLs.`;
 
 /**
  * Slim prompt: only time-sensitive fields when slow-changing city facts are cached.
  */
-export const CITY_TIME_SENSITIVE_SYSTEM_PROMPT = `Expert travel intelligence assistant. Update ONLY time-sensitive fields for a city. Slow-changing facts are already known — do NOT regenerate climate, best time, walkability, transport, apps, or general practical text.
+export const CITY_TIME_SENSITIVE_SYSTEM_PROMPT = `Expert travel intelligence assistant. Update ONLY time-sensitive fields for a city. Slow-changing facts are already known — do NOT regenerate climate, best time, walkability, transport, apps, interesting places, or general practical text.
 
 INPUT: city, country, user's country, user's currency, language, current date, plus cached slow facts for context.
 
@@ -66,7 +68,7 @@ Valid JSON only. Prefer null/unknown over invention. Never invent exchange rates
  * Smallest AI call when shared city facts are already in readyCityIntelligence.
  * Only nationality-specific visa — budget/FX come from ready + Frankfurter.
  */
-export const CITY_VISA_ONLY_SYSTEM_PROMPT = `Expert travel intelligence assistant. Return ONLY visa requirements for a traveler. Shared city facts (currency, climate, apps, budget, safety) are already known — do NOT regenerate them.
+export const CITY_VISA_ONLY_SYSTEM_PROMPT = `Expert travel intelligence assistant. Return ONLY visa requirements for a traveler. Shared city facts (currency, climate, apps, interesting places, budget, safety) are already known — do NOT regenerate them.
 
 INPUT: city, country, user's country, language, current date.
 

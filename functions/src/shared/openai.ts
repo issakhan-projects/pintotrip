@@ -74,9 +74,10 @@ export const LOCATION_MODEL = "gpt-6-luna";
 /** Text model for city travel intelligence synthesis. */
 const CITY_INTELLIGENCE_MODEL = "gpt-6-luna";
 
-/** Keep city intel snappy — full JSON does not need deep reasoning. */
-const CITY_INTELLIGENCE_REASONING: "minimal" | "low" = "low";
-const CITY_VISA_REASONING: "minimal" | "low" = "minimal";
+/** Keep city intel snappy — full JSON does not need deep reasoning.
+ * gpt-6-luna supports none | low | medium | high | xhigh (not "minimal"). */
+const CITY_INTELLIGENCE_REASONING: "none" | "low" = "low";
+const CITY_VISA_REASONING: "none" | "low" = "none";
 
 /** Text + web search model for AI trip day filling. */
 const PLAN_TRIP_MODEL = "gpt-6-luna";
@@ -84,7 +85,7 @@ const PLAN_TRIP_MODEL = "gpt-6-luna";
 /** Output caps — enough for required JSON, blocks runaway verbosity. */
 const LOCATION_MAX_TOKENS = 2200;
 const LOCATION_VERIFY_MAX_TOKENS = 2200;
-const CITY_MAX_TOKENS = 2800;
+const CITY_MAX_TOKENS = 3600;
 const CITY_TIME_SENSITIVE_MAX_TOKENS = 900;
 const CITY_VISA_ONLY_MAX_TOKENS = 500;
 const PLAN_TRIP_MAX_TOKENS = 4500;
@@ -821,7 +822,7 @@ export function createOpenAIPlacesFiller(): OpenAIPlacesFiller {
   };
 }
 
-type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 const PLACE_PRICES_MAX_TOKENS = 1800;
 
@@ -903,7 +904,7 @@ export async function completeTripPlannerAiJson(params: {
 
   if (!text) {
     const retryTokens = Math.min(params.maxCompletionTokens * 2, 24_000);
-    completion = await run(retryTokens, "minimal");
+    completion = await run(retryTokens, "none");
     text = completion.choices[0]?.message?.content?.trim() ?? "";
   }
 

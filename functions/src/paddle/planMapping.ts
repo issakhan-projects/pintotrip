@@ -13,6 +13,21 @@ import {
 
 export type AppPlan = "free" | "plus" | "pro";
 
+/** TEMP real-money Pro test prices (must match src/features/pricing/tiers.ts live). */
+const TEMP_LIVE_PRO_MONTH = "pri_01m486p0pbh5w5b2w5km6rjbfh";
+const TEMP_LIVE_PRO_YEAR = "pri_01m486pp12hcpfk3h54pyekmrx";
+
+/**
+ * Monthly AI credits granted on paid purchase / billing period (must match
+ * src/features/profile/plans.ts). Free is 0 here so leftover signup credits
+ * are not subtracted on upgrade.
+ */
+export const PLAN_AI_CREDITS_MONTHLY: Record<AppPlan, number> = {
+  free: 0,
+  plus: 200,
+  pro: 500,
+};
+
 /** App subscription statuses stored on users/{uid}.subscription.status */
 export type AppSubscriptionStatus =
   | "active"
@@ -44,7 +59,9 @@ export function buildPriceIdPlanMap(): Map<string, "plus" | "pro"> {
     paddlePriceProMonthSandbox.value(),
     paddlePriceProYearSandbox.value(),
     paddlePriceProMonthLive.value(),
-    paddlePriceProYearLive.value()
+    paddlePriceProYearLive.value(),
+    TEMP_LIVE_PRO_MONTH,
+    TEMP_LIVE_PRO_YEAR
   )) {
     map.set(id, "pro");
   }
@@ -69,7 +86,8 @@ export function buildPriceIdBillingPeriodMap(): Map<string, AppBillingPeriod> {
     paddlePricePlusMonthSandbox.value(),
     paddlePriceProMonthSandbox.value(),
     paddlePricePlusMonthLive.value(),
-    paddlePriceProMonthLive.value()
+    paddlePriceProMonthLive.value(),
+    TEMP_LIVE_PRO_MONTH
   )) {
     map.set(id, "month");
   }
@@ -77,7 +95,8 @@ export function buildPriceIdBillingPeriodMap(): Map<string, AppBillingPeriod> {
     paddlePricePlusYearSandbox.value(),
     paddlePriceProYearSandbox.value(),
     paddlePricePlusYearLive.value(),
-    paddlePriceProYearLive.value()
+    paddlePriceProYearLive.value(),
+    TEMP_LIVE_PRO_YEAR
   )) {
     map.set(id, "year");
   }

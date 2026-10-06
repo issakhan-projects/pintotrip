@@ -50,6 +50,7 @@ function readRawBody(req: RequestWithRawBody): string {
  *
  * Point both sandbox and live notification destinations at this URL.
  * Signature is verified against both destination secrets (pdl_ntfset_…).
+ * transaction.completed also grants one-time AI credit packs.
  */
 export const paddleWebhook = onRequest(
   {

@@ -8,26 +8,18 @@ import {
   type DateRangeValue,
 } from "@/components/ui";
 import { cx } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 import { Timestamp } from "firebase/firestore";
 import { tripDayCount } from "@/services/trip-planner";
 
 export type { BusyDateRange, DateRangeValue };
 
-function formatCompactDate(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
+function formatCompactDate(date: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale === "kz" ? "kk" : locale, {
     day: "numeric",
     month: "short",
     year: "numeric",
   }).format(date);
-}
-
-function dayCountLabel(range: DateRangeValue): string | null {
-  if (!range.from || !range.to) return null;
-  const days = tripDayCount(
-    Timestamp.fromDate(range.from),
-    Timestamp.fromDate(range.to)
-  );
-  return `${days} day${days === 1 ? "" : "s"}`;
 }
 
 export function defaultTripDateRange(): DateRangeValue {
@@ -69,12 +61,23 @@ export function TripDateRangeField({
   maxSpanDays,
   busyRanges,
 }: TripDateRangeFieldProps) {
+  const { t, locale } = useI18n();
   const [open, setOpen] = useState(defaultOpen);
-  const daysLabel = dayCountLabel(value);
+  const days =
+    value.from && value.to
+      ? tripDayCount(
+          Timestamp.fromDate(value.from),
+          Timestamp.fromDate(value.to)
+        )
+      : 0;
+  const daysLabel =
+    value.from && value.to
+      ? t(days === 1 ? "common.day_one" : "common.day_other", { count: days })
+      : null;
   const summary =
     value.from && value.to
-      ? `${formatCompactDate(value.from)} — ${formatCompactDate(value.to)}`
-      : "Select dates";
+      ? `${formatCompactDate(value.from, locale)} — ${formatCompactDate(value.to, locale)}`
+      : t("common.selectDates");
 
   return (
     <section className={className}>

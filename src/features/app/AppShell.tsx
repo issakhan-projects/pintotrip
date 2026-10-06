@@ -87,7 +87,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const needsTravelProfile = Boolean(profile) && !profile?.travelProfile;
 
   useEffect(() => {
-    const lang = profile?.preferences?.language;
+    const lang = profile?.preferences?.language?.trim();
     if (lang) setLocale(lang);
   }, [profile?.preferences?.language, setLocale]);
 

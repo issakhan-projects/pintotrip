@@ -4,19 +4,22 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
+import { LanguageMenu } from "@/components/LanguageMenu";
+import { useI18n } from "@/i18n";
 import { cx } from "@/lib/utils";
 
-const NAV_LINKS = [
-  { href: "#explore", label: "Explore" },
-  { href: "#trip-planner", label: "Trip Planner" },
-  { href: "#how-it-works", label: "How it works" },
-  { href: "#pricing", label: "Pricing" },
-  { href: "/journal", label: "Journal" },
-] as const;
-
 export function LandingNav() {
+  const { t } = useI18n();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+
+  const navLinks = [
+    { href: "#explore", label: t("landing.nav.explore") },
+    { href: "#trip-planner", label: t("landing.nav.tripPlanner") },
+    { href: "#how-it-works", label: t("landing.nav.howItWorks") },
+    { href: "#pricing", label: t("landing.nav.pricing") },
+    { href: "/journal", label: t("landing.nav.journal") },
+  ] as const;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -41,10 +44,10 @@ export function LandingNav() {
         scrolled || open ? "border-border shadow-sm" : "border-transparent"
       )}
     >
-      <nav className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+      <nav className="mx-auto grid h-14 max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 sm:px-6 md:gap-4">
         <Link
           href="/"
-          className="flex items-center gap-2.5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="flex shrink-0 items-center gap-2.5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <Image
             src="/icon.svg"
@@ -59,13 +62,13 @@ export function LandingNav() {
           </span>
         </Link>
 
-        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-1 md:flex">
-          {NAV_LINKS.map((link) =>
+        <div className="hidden min-w-0 items-center justify-center gap-0.5 overflow-x-auto md:flex lg:gap-1">
+          {navLinks.map((link) =>
             link.href.startsWith("#") ? (
               <a
                 key={link.href}
                 href={link.href}
-                className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+                className="shrink-0 rounded-md px-2 py-2 text-sm text-text-secondary transition-colors hover:text-text lg:px-3"
               >
                 {link.label}
               </a>
@@ -73,7 +76,7 @@ export function LandingNav() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+                className="shrink-0 rounded-md px-2 py-2 text-sm text-text-secondary transition-colors hover:text-text lg:px-3"
               >
                 {link.label}
               </Link>
@@ -81,28 +84,32 @@ export function LandingNav() {
           )}
         </div>
 
-        <div className="hidden items-center gap-1 md:flex">
-          <Link
-            href="/login"
-            className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+        <div className="col-start-3 flex items-center justify-end gap-1 sm:gap-2">
+          <LanguageMenu variant="nav" className="relative z-10" />
+          <div className="hidden items-center gap-1 md:flex">
+            <Link
+              href="/login"
+              className="rounded-md px-3 py-2 text-sm text-text-secondary transition-colors hover:text-text"
+            >
+              {t("landing.nav.logIn")}
+            </Link>
+            <Link href="/login" className="btn-primary ml-1 h-9 px-4">
+              {t("landing.nav.startForFree")}
+            </Link>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-text hover:bg-surface md:hidden"
+            aria-expanded={open}
+            aria-controls="landing-mobile-nav"
+            aria-label={
+              open ? t("landing.nav.closeMenu") : t("landing.nav.openMenu")
+            }
+            onClick={() => setOpen((v) => !v)}
           >
-            Log in
-          </Link>
-          <Link href="/login" className="btn-primary ml-1 h-9 px-4">
-            Start for free
-          </Link>
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
         </div>
-
-        <button
-          type="button"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-text md:hidden hover:bg-surface"
-          aria-expanded={open}
-          aria-controls="landing-mobile-nav"
-          aria-label={open ? "Close menu" : "Open menu"}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
       </nav>
 
       {open ? (
@@ -111,7 +118,7 @@ export function LandingNav() {
           className="border-t border-border bg-white px-4 py-3 md:hidden"
         >
           <div className="flex flex-col gap-0.5">
-            {NAV_LINKS.map((link) =>
+            {navLinks.map((link) =>
               link.href.startsWith("#") ? (
                 <a
                   key={link.href}
@@ -137,14 +144,14 @@ export function LandingNav() {
               onClick={() => setOpen(false)}
               className="rounded-lg px-3 py-2.5 text-sm font-medium text-text"
             >
-              Log in
+              {t("landing.nav.logIn")}
             </Link>
             <Link
               href="/login"
               onClick={() => setOpen(false)}
               className="btn-primary mt-2 w-full"
             >
-              Start for free
+              {t("landing.nav.startForFree")}
             </Link>
           </div>
         </div>

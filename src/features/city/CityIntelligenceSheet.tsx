@@ -12,7 +12,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { getCityIntelligenceForPlace } from "@/services/functions";
 import { createUserLocation, listUserLocations } from "@/services/locations";
 import { getUserProfile, updateUserProfile } from "@/services/users";
-import { resolveCountryCode } from "@/lib/countries";
+import { isSameCountry, resolveCountryCode } from "@/lib/countries";
 import { countryIdFromParts, isAsciiId, slugifyId } from "@/lib/utils";
 import { resolveEnglishPlaceIds, withCityGooglePlaceId, englishPlaceIdsFromNames } from "@/lib/maps";
 import { fetchPexelsCityPhoto } from "@/lib/pexels";
@@ -62,6 +62,7 @@ export function CityIntelligenceSheet({
   const [phase, setPhase] = useState<SheetPhase>("loading-profile");
   const [citizenship, setCitizenship] = useState("");
   const [citizenshipDraft, setCitizenshipDraft] = useState("");
+  const [userCountry, setUserCountry] = useState("");
   const [userCurrency, setUserCurrency] = useState<string | undefined>();
   const [language, setLanguage] = useState("en");
   const [data, setData] = useState<CityIntelligenceResult | null>(null);
@@ -139,6 +140,7 @@ export function CityIntelligenceSheet({
 
         const saved = profile?.citizenship?.trim() ?? "";
         setLanguage(profile?.preferences?.language || uiLanguage);
+        setUserCountry(profile?.country?.trim() ?? "");
         setUserCurrency(profile?.currency);
 
         if (saved) {
@@ -310,6 +312,10 @@ export function CityIntelligenceSheet({
 
   const showStandaloneDisclaimer =
     phase !== "ask-citizenship" && !(phase === "ready" && data);
+  const showCurrencyAndExchange = !isSameCountry(
+    city?.countryId || city?.countryName,
+    userCountry || citizenship
+  );
 
   return (
     <Sheet
@@ -464,6 +470,7 @@ export function CityIntelligenceSheet({
           citizenship={citizenship}
           onChangeCitizenship={changeCitizenship}
           showDisclaimer
+          showCurrencyAndExchange={showCurrencyAndExchange}
         />
       ) : null}
 

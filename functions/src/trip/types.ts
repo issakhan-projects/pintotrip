@@ -232,6 +232,11 @@ export type TripPlanningCityIntelligence = {
     category: string;
     whyUseful: string;
   }>;
+  interestingPlaces?: Array<{
+    title: string;
+    description: string;
+    highlight?: string;
+  }>;
   climate?: string;
   transport?: string;
   tips?: string[];

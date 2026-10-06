@@ -4,6 +4,7 @@ import { MapPin, Search } from "lucide-react";
 import { TextInput } from "@/components/ui";
 import { TravelMap } from "@/features/map/TravelMap";
 import { cx } from "@/lib/utils";
+import { useI18n } from "@/i18n";
 import type { GeocodedPlace } from "./destinationSearch";
 
 export type DestinationMode = "places" | "search" | "map";
@@ -51,6 +52,7 @@ export function CreateTripDestinationPicker({
   onPickSearch,
   onMapPick,
 }: CreateTripDestinationPickerProps) {
+  const { t } = useI18n();
   const visibleSearchResults =
     searchQuery.trim().length < 2 ? [] : searchResults;
 
@@ -71,7 +73,7 @@ export function CreateTripDestinationPicker({
               onDestinationModeChange("search");
             }
           }}
-          placeholder="Search a city, select from your places or choose on map"
+          placeholder={t("planner.destPicker.placeholder")}
           className="!pl-9"
         />
       </div>
@@ -79,9 +81,9 @@ export function CreateTripDestinationPicker({
       <div className="mt-3 flex gap-1 rounded-xl bg-surface p-1">
         {(
           [
-            { id: "places", label: "My places" },
-            { id: "search", label: "Search" },
-            { id: "map", label: "On map" },
+            { id: "places" as const, label: t("planner.destPicker.tab.places") },
+            { id: "search" as const, label: t("planner.destPicker.tab.search") },
+            { id: "map" as const, label: t("planner.destPicker.tab.map") },
           ] as const
         ).map((tab) => (
           <button
@@ -104,7 +106,7 @@ export function CreateTripDestinationPicker({
         {destinationMode === "places" ? (
           cityGroups.length === 0 ? (
             <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-6 text-center text-sm text-text-secondary">
-              No saved cities yet. Use Search or On map.
+              {t("planner.destPicker.emptyPlaces")}
             </p>
           ) : (
             <div className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1">
@@ -137,7 +139,7 @@ export function CreateTripDestinationPicker({
                       )}
                       {selected ? (
                         <span className="absolute right-2 top-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-                          Selected
+                          {t("planner.destPicker.selected")}
                         </span>
                       ) : null}
                     </div>
@@ -149,8 +151,12 @@ export function CreateTripDestinationPicker({
                         {city.countryName}
                       </p>
                       <p className="mt-1 text-[11px] text-text-muted">
-                        {city.count} saved place
-                        {city.count === 1 ? "" : "s"}
+                        {t(
+                          city.count === 1
+                            ? "planner.destPicker.savedPlaceCount_one"
+                            : "planner.destPicker.savedPlaceCount_other",
+                          { count: city.count }
+                        )}
                       </p>
                     </div>
                   </button>
@@ -163,13 +169,15 @@ export function CreateTripDestinationPicker({
         {destinationMode === "search" ? (
           <div className="space-y-1">
             {searching ? (
-              <p className="px-1 text-xs text-text-muted">Searching…</p>
+              <p className="px-1 text-xs text-text-muted">
+                {t("common.searching")}
+              </p>
             ) : null}
             {visibleSearchResults.length === 0 &&
             searchQuery.trim().length >= 2 &&
             !searching ? (
               <p className="rounded-2xl border border-dashed border-border bg-surface px-4 py-5 text-center text-sm text-text-secondary">
-                No cities found. Try another search.
+                {t("planner.destPicker.noResults")}
               </p>
             ) : null}
             <div className="max-h-48 space-y-1.5 overflow-y-auto">
@@ -205,9 +213,9 @@ export function CreateTripDestinationPicker({
         {destinationMode === "map" ? (
           <div className="overflow-hidden rounded-2xl border border-border shadow-sm">
             <div className="border-b border-divider bg-primary-tint px-3 py-2.5 text-xs font-medium text-primary">
-              {mapResolving
-                ? "Finding city…"
-                : "Tap the map to choose your destination"}
+                {mapResolving
+                  ? t("planner.destPicker.findingCity")
+                  : t("planner.destPicker.tapMap")}
             </div>
             <div className="h-48">
               <TravelMap

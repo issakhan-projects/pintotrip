@@ -5,6 +5,7 @@
 
 import type { Environments } from "@paddle/paddle-js";
 import { getPaddlePublicEnv } from "@/lib/paddle/env";
+import { listConfiguredCreditPackPriceIds } from "./creditPacks";
 
 export type TierName = "free" | "plus" | "pro";
 
@@ -88,8 +89,9 @@ export const TIERS: Tier[] = [
         year: "pri_01m2gdy1a8ktkr2gr0j2hcszdy",
       },
       live: {
-        month: "pri_01m28pr9bsse4r3grg6yhmznbf",
-        year: "pri_01m2gcbw6qv4gpj681nmbhmshz",
+        // TEMP real-money test prices — restore catalog IDs after the test
+        month: "pri_01m486p0pbh5w5b2w5km6rjbfh",
+        year: "pri_01m486pp12hcpfk3h54pyekmrx",
       },
     },
     ctaLabel: "Subscribe",
@@ -160,6 +162,7 @@ export function listConfiguredPriceIds(environment?: Environments): string[] {
       if (id) ids.push(id);
     }
   }
+  ids.push(...listConfiguredCreditPackPriceIds(env));
   return ids;
 }
 

@@ -4,6 +4,7 @@ export const landing = {
     tripPlanner: "Trip Planner",
     howItWorks: "How it works",
     pricing: "Pricing",
+    journal: "Journal",
     logIn: "Log in",
     startForFree: "Start for free",
     openMenu: "Open menu",
@@ -26,6 +27,7 @@ export const landing = {
     sub: "Every place you want to visit, in one map.",
     planned: "Planned",
     visited: "Visited",
+    alt: "Map with saved travel places around the world",
   },
   explore: {
     title: "More than a pin.",

@@ -21,7 +21,34 @@ export type SearchableSelectOption = {
   description?: string;
   /** Optional leading image (e.g. airline logo). Hidden if load fails. */
   iconUrl?: string;
+  /** Optional Lucide icon shown in the trigger and option list. */
+  icon?: LucideIcon;
 };
+
+function OptionLeading({
+  option,
+  size = "md",
+}: {
+  option: SearchableSelectOption;
+  size?: "sm" | "md";
+}) {
+  if (option.iconUrl) {
+    return <OptionIcon src={option.iconUrl} alt="" size={size} />;
+  }
+  if (option.icon) {
+    const Icon = option.icon;
+    return (
+      <Icon
+        className={cx(
+          "shrink-0 text-text-muted",
+          size === "sm" ? "h-4 w-4" : "h-4 w-4"
+        )}
+        aria-hidden
+      />
+    );
+  }
+  return null;
+}
 
 function OptionIcon({
   src,
@@ -69,6 +96,13 @@ interface SearchableSelectProps {
    * Default keeps a single-line label.
    */
   triggerLayout?: "single" | "stacked";
+  /**
+   * Layout for options inside the menu. Defaults to `triggerLayout`.
+   * Use `stacked` for long titles + descriptions (leisure type).
+   */
+  listLayout?: "single" | "stacked";
+  /** Hide the in-menu search field (useful for short option lists). */
+  searchable?: boolean;
 }
 
 const MENU_MAX_HEIGHT = 240;
@@ -85,6 +119,8 @@ export function SearchableSelect({
   className,
   leadingIcon: LeadingIcon,
   triggerLayout = "single",
+  listLayout,
+  searchable = true,
 }: SearchableSelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -126,16 +162,25 @@ export function SearchableSelect({
       const el = rootRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const estimatedHeight = Math.min(MENU_MAX_HEIGHT + 64, 320);
+      const estimatedHeight = Math.min(
+        MENU_MAX_HEIGHT + (searchable ? 64 : 8),
+        320
+      );
       const spaceBelow = window.innerHeight - rect.bottom - MENU_GAP;
       const spaceAbove = rect.top - MENU_GAP;
       const openUp =
         spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+      const preferredWidth = Math.max(rect.width, searchable ? 260 : 180);
+      const width = Math.min(preferredWidth, window.innerWidth - 16);
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - width - 8);
+      }
 
       setMenuStyle({
         position: "fixed",
-        left: rect.left,
-        width: Math.max(rect.width, 0),
+        left,
+        width,
         zIndex: 200,
         maxWidth: "min(100vw - 16px, 100%)",
         ...(openUp
@@ -158,7 +203,7 @@ export function SearchableSelect({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [open, filtered.length]);
+  }, [open, filtered.length, searchable]);
 
   useEffect(() => {
     if (!open) return;
@@ -181,9 +226,11 @@ export function SearchableSelect({
   useEffect(() => {
     if (open) {
       setFocusIndex(-1);
-      window.setTimeout(() => searchRef.current?.focus(), 0);
+      if (searchable) {
+        window.setTimeout(() => searchRef.current?.focus(), 0);
+      }
     }
-  }, [open]);
+  }, [open, searchable]);
 
   function close() {
     setOpen(false);
@@ -232,6 +279,7 @@ export function SearchableSelect({
   }
 
   const stacked = triggerLayout === "stacked";
+  const listStacked = (listLayout ?? triggerLayout) === "stacked";
 
   const menu =
     open && mounted && menuStyle
@@ -241,20 +289,22 @@ export function SearchableSelect({
             style={menuStyle}
             className="overflow-hidden rounded-xl border border-border bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)]"
           >
-            <div className="border-b border-divider p-2.5 pb-1.5">
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted" />
-                <input
-                  ref={searchRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={searchPlaceholder}
-                  aria-label={searchPlaceholder}
-                  className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-[13px] text-text outline-none placeholder:text-text-muted focus:border-primary"
-                />
+            {searchable ? (
+              <div className="border-b border-divider p-2.5 pb-1.5">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-text-muted" />
+                  <input
+                    ref={searchRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={searchPlaceholder}
+                    aria-label={searchPlaceholder}
+                    className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-[13px] text-text outline-none placeholder:text-text-muted focus:border-primary"
+                  />
+                </div>
               </div>
-            </div>
+            ) : null}
 
             <ul
               id={listId}
@@ -278,7 +328,8 @@ export function SearchableSelect({
                       <button
                         type="button"
                         className={cx(
-                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition",
+                          "flex w-full gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition",
+                          listStacked ? "items-start" : "items-center",
                           isSelected && "bg-primary-tint font-medium text-primary",
                           !isSelected && isFocused && "bg-surface",
                           !isSelected &&
@@ -288,18 +339,20 @@ export function SearchableSelect({
                         onMouseEnter={() => setFocusIndex(index)}
                         onClick={() => select(option.value)}
                       >
-                        {option.iconUrl ? (
-                          <OptionIcon src={option.iconUrl} alt="" size="sm" />
+                        {option.iconUrl || option.icon ? (
+                          <span className={cx("shrink-0", listStacked && "mt-0.5")}>
+                            <OptionLeading option={option} size="sm" />
+                          </span>
                         ) : null}
-                        {stacked ? (
+                        {listStacked ? (
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate font-semibold">
+                            <span className="block font-semibold leading-snug">
                               {option.label}
                             </span>
                             {option.description ? (
                               <span
                                 className={cx(
-                                  "mt-0.5 block truncate text-xs",
+                                  "mt-0.5 block text-xs leading-snug",
                                   isSelected
                                     ? "text-primary/80"
                                     : "text-text-secondary"
@@ -360,8 +413,8 @@ export function SearchableSelect({
           disabled && "cursor-not-allowed opacity-60"
         )}
       >
-        {selected?.iconUrl ? (
-          <OptionIcon src={selected.iconUrl} alt="" size="md" />
+        {selected && (selected.iconUrl || selected.icon) ? (
+          <OptionLeading option={selected} size="md" />
         ) : LeadingIcon ? (
           <LeadingIcon
             className="h-4 w-4 shrink-0 text-text-muted"
