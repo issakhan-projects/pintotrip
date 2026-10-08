@@ -711,6 +711,12 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         onClose={() => setAddOpen(false)}
         userId={user.uid}
         isPro={canSearchPlaces}
+        offerMoveMapToDetected={showMapSurface}
+        onMoveMapToDetected={(coords) => {
+          if (mapRef.current) {
+            centerMapOnCoords(mapRef.current, coords, 13);
+          }
+        }}
         onPickFromMap={() => {
           // Don't use goToTab — it clears pickMode via clearTransientUi.
           setAddOpen(false);

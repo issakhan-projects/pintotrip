@@ -76,6 +76,11 @@ interface AddPlaceSheetProps {
    * user tap the main map to drop a pin.
    */
   onPickFromMap?: () => void;
+  /**
+   * When true (map page), after saving a place pan the map to that location.
+   */
+  offerMoveMapToDetected?: boolean;
+  onMoveMapToDetected?: (coords: { lat: number; lon: number }) => void;
 }
 
 const ANALYZE_MESSAGE_KEYS = [
@@ -92,6 +97,8 @@ export function AddPlaceSheet({
   onSaved,
   isPro = false,
   onPickFromMap,
+  offerMoveMapToDetected = false,
+  onMoveMapToDetected,
 }: AddPlaceSheetProps) {
   const { t } = useI18n();
   const router = useRouter();
@@ -330,6 +337,13 @@ export function AddPlaceSheet({
           : { type: "link", url: link.trim() },
       };
       await createUserLocation(userId, input);
+      if (
+        offerMoveMapToDetected &&
+        Number.isFinite(result.lat) &&
+        Number.isFinite(result.lon)
+      ) {
+        onMoveMapToDetected?.({ lat: result.lat, lon: result.lon });
+      }
       onSaved();
       handleClose();
     } catch (err) {
@@ -444,6 +458,16 @@ export function AddPlaceSheet({
         },
         source: { type: "manual" },
       });
+      if (
+        offerMoveMapToDetected &&
+        Number.isFinite(selectedPlace.lat) &&
+        Number.isFinite(selectedPlace.lon)
+      ) {
+        onMoveMapToDetected?.({
+          lat: selectedPlace.lat,
+          lon: selectedPlace.lon,
+        });
+      }
       onSaved();
       handleClose();
     } catch (err) {
