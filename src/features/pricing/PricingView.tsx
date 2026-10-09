@@ -106,8 +106,11 @@ export function PricingView({ countryCode }: PricingViewProps) {
     credits: number;
     balance: number;
   } | null>(null);
+  const [fulfillingPlan, setFulfillingPlan] = useState(false);
+  const [planSuccess, setPlanSuccess] = useState<TierName | null>(null);
   const balanceBeforePackRef = useRef(0);
   const pendingPackCreditsRef = useRef(0);
+  const pendingSubscribeTierRef = useRef<TierName | null>(null);
 
   const configured = hasPaddlePublicEnvConfigured() && tiersHavePriceIds();
   const currentPlan: SubscriptionPlan | null = user
@@ -194,16 +197,21 @@ export function PricingView({ countryCode }: PricingViewProps) {
   useEffect(() => {
     return onCheckoutCompleted((event) => {
       const packId = readCheckoutCreditPackId(event);
-      if (!packId) return;
-      try {
-        pendingPackCreditsRef.current = getCreditPack(
-          packId as CreditPackId
-        ).credits;
-      } catch {
-        pendingPackCreditsRef.current = 0;
-      }
-      setFulfillingCredits(true);
       setCheckoutError(null);
+      if (packId) {
+        try {
+          pendingPackCreditsRef.current = getCreditPack(
+            packId as CreditPackId
+          ).credits;
+        } catch {
+          pendingPackCreditsRef.current = 0;
+        }
+        setFulfillingCredits(true);
+        return;
+      }
+      // Subscription overlay closed — stay on pricing and show activate modal.
+      setFulfillingPlan(true);
+      setPlanSuccess(null);
     });
   }, []);
 
@@ -231,6 +239,26 @@ export function PricingView({ countryCode }: PricingViewProps) {
     }, 45_000);
     return () => window.clearTimeout(timeout);
   }, [fulfillingCredits, t]);
+
+  useEffect(() => {
+    if (!fulfillingPlan) return;
+    const pending = pendingSubscribeTierRef.current;
+    if (!paidEntitled) return;
+    if (pending && currentPlan !== pending) return;
+    if (currentPlan !== "plus" && currentPlan !== "pro") return;
+    setPlanSuccess(currentPlan);
+    setFulfillingPlan(false);
+    pendingSubscribeTierRef.current = null;
+  }, [fulfillingPlan, paidEntitled, currentPlan]);
+
+  useEffect(() => {
+    if (!fulfillingPlan) return;
+    const timeout = window.setTimeout(() => {
+      setFulfillingPlan(false);
+      setCheckoutError(t("pricing.subscribe.fulfillError"));
+    }, 45_000);
+    return () => window.clearTimeout(timeout);
+  }, [fulfillingPlan, t]);
 
   useEffect(() => {
     if (!cancelWaiting) return;
@@ -277,15 +305,14 @@ export function PricingView({ countryCode }: PricingViewProps) {
 
     try {
       const priceId = getTierPriceId(tier, billingInterval);
-      const successUrl = `${window.location.origin}/welcome`;
       const email = user.email?.trim();
+      pendingSubscribeTierRef.current = tier.name;
 
       await openCheckout({
         items: [{ priceId, quantity: 1 }],
         settings: {
           displayMode: "overlay",
           variant: "one-page",
-          successUrl,
           theme: "light",
         },
         customData: {
@@ -563,6 +590,34 @@ export function PricingView({ countryCode }: PricingViewProps) {
         showCancel={false}
         onConfirm={() => setCreditSuccess(null)}
         onCancel={() => setCreditSuccess(null)}
+      />
+      <ConfirmModal
+        open={fulfillingPlan}
+        title={t("pricing.subscribe.fulfillTitle")}
+        description={t("pricing.subscribe.fulfillWait")}
+        confirmLabel={t("pricing.subscribe.successDone")}
+        showCancel={false}
+        loading
+        onConfirm={() => undefined}
+        onCancel={() => undefined}
+      />
+      <ConfirmModal
+        open={Boolean(planSuccess) && !fulfillingPlan}
+        title={
+          planSuccess
+            ? t("pricing.subscribe.successTitle", {
+                plan: t(`pricing.tiers.${planSuccess}.label`),
+              })
+            : t("pricing.subscribe.successTitleFallback")
+        }
+        description={t("pricing.subscribe.successBody")}
+        confirmLabel={t("pricing.subscribe.openMap")}
+        showCancel={false}
+        onConfirm={() => {
+          setPlanSuccess(null);
+          router.push("/map");
+        }}
+        onCancel={() => setPlanSuccess(null)}
       />
     </main>
   );

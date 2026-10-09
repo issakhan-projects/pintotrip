@@ -28,6 +28,8 @@ export type AppTransactionRecord = {
   provider: "paddle";
   promoCode: string | null;
   promoDiscountValue: number;
+  /** Paddle `dsc_…` when a discount was applied (even if code lookup failed). */
+  paddleDiscountId: string | null;
   paddleTransactionId: string;
   paddleEnvironment: PaddleBillingEnvironment;
 };
@@ -123,24 +125,65 @@ function primaryLine(tx: TransactionNotification): {
   };
 }
 
+function promoFromCustomData(
+  customData: Record<string, unknown> | null
+): string | null {
+  if (!customData) return null;
+  for (const key of ["promoCode", "discountCode", "discount_code"] as const) {
+    const raw = customData[key];
+    if (typeof raw === "string" && raw.trim()) {
+      return raw.trim().toUpperCase();
+    }
+  }
+  return null;
+}
+
+async function resolveDiscountId(
+  environment: PaddleBillingEnvironment,
+  tx: TransactionNotification
+): Promise<string | null> {
+  const fromTx = tx.discountId?.trim();
+  if (fromTx) return fromTx;
+
+  const transactionId = tx.id?.trim();
+  if (!transactionId) return null;
+
+  try {
+    const full = await getPaddleServer(environment).transactions.get(
+      transactionId
+    );
+    return full.discountId?.trim() || null;
+  } catch (err) {
+    logger.warn("paddle transaction: fetch for discountId failed", {
+      transactionId,
+      environment,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 async function resolvePromoCode(
   environment: PaddleBillingEnvironment,
-  discountId: string | null | undefined,
+  discountId: string | null,
   customData: Record<string, unknown> | null
 ): Promise<string | null> {
-  const fromCustom = customData?.promoCode;
-  if (typeof fromCustom === "string" && fromCustom.trim()) {
-    return fromCustom.trim().toUpperCase();
-  }
-  const id = discountId?.trim();
-  if (!id) return null;
+  const fromCustom = promoFromCustomData(customData);
+  if (fromCustom) return fromCustom;
+
+  if (!discountId) return null;
   try {
-    const discount = await getPaddleServer(environment).discounts.get(id);
+    const discount = await getPaddleServer(environment).discounts.get(
+      discountId
+    );
     const code = discount.code?.trim();
-    return code ? code.toUpperCase() : null;
+    if (code) return code.toUpperCase();
+    // Automatic / code-less discounts still have a description.
+    const description = discount.description?.trim();
+    return description || null;
   } catch (err) {
     logger.warn("paddle transaction: discount lookup failed", {
-      discountId: id,
+      discountId,
       environment,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -217,9 +260,13 @@ export async function savePaddleTransaction(input: {
       ? localeRaw.trim()
       : null;
 
+  const paddleDiscountId = await resolveDiscountId(
+    input.environment,
+    tx
+  );
   const promoCode = await resolvePromoCode(
     input.environment,
-    tx.discountId,
+    paddleDiscountId,
     customData
   );
 
@@ -243,6 +290,7 @@ export async function savePaddleTransaction(input: {
     provider: "paddle",
     promoCode,
     promoDiscountValue: discountAmount,
+    paddleDiscountId,
     paddleTransactionId: transactionId,
     paddleEnvironment: input.environment,
   };
@@ -268,6 +316,9 @@ export async function savePaddleTransaction(input: {
     planId,
     amount,
     currency,
+    promoCode,
+    promoDiscountValue: discountAmount,
+    paddleDiscountId,
     environment: input.environment,
   });
 }

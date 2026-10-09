@@ -18,6 +18,7 @@ import {
   grantCreditPacksIfNeeded,
   grantPlanAiCreditsIfNeeded,
   markEventProcessed,
+  periodEndTimestamp,
   resolveFirebaseUserId,
   syncSubscriptionFromPaddle,
   wasEventProcessed,
@@ -165,7 +166,9 @@ async function handleSubscriptionEvent(
 
 /**
  * transaction.completed — link customer + persist transactions/{txnId}.
- * Plan entitlement is driven by subscription.* events (source of truth).
+ * When line items map to Plus/Pro, unlock the plan immediately (don't wait for
+ * subscription.* which can lag 30–60s). Later subscription.* events refine
+ * status / period / cancel fields.
  * One-time AI credit packs are granted here (idempotent on txn id).
  */
 async function handleTransactionCompleted(
@@ -194,12 +197,23 @@ async function handleTransactionCompleted(
       }
     | undefined;
 
+  const lineIds = primaryItemIds(tx);
+  const paidPlan = resolvePlanFromCatalogIds(lineIds);
+  const subscriptionId =
+    transactionSubscriptionId(tx) ?? existing?.paddleSubscriptionId;
+  const periodEnd = transactionPeriodEndsAt(tx);
+
   await writeUserSubscription(userId, {
-    plan: existing?.plan ?? "free",
-    status: existing?.status ?? "active",
+    plan: paidPlan ?? existing?.plan ?? "free",
+    status: paidPlan ? "active" : (existing?.status ?? "active"),
     paddleCustomerId: customerId ?? undefined,
-    paddleSubscriptionId: existing?.paddleSubscriptionId,
+    paddleSubscriptionId: subscriptionId,
     paddleEnvironment: environment,
+    ...(lineIds.priceId ? { priceId: lineIds.priceId } : {}),
+    ...(lineIds.productId ? { productId: lineIds.productId } : {}),
+    ...(periodEnd
+      ? { currentPeriodEnd: periodEndTimestamp(periodEnd) }
+      : {}),
   });
 
   await savePaddleTransaction({
@@ -209,15 +223,12 @@ async function handleTransactionCompleted(
     environment,
   });
 
-  const lineIds = primaryItemIds(tx);
-  const paidPlan = resolvePlanFromCatalogIds(lineIds);
   if (paidPlan) {
     await grantPlanAiCreditsIfNeeded({
       userId,
       plan: paidPlan,
-      paddleSubscriptionId:
-        transactionSubscriptionId(tx) ?? existing?.paddleSubscriptionId,
-      currentPeriodEnd: transactionPeriodEndsAt(tx),
+      paddleSubscriptionId: subscriptionId,
+      currentPeriodEnd: periodEnd,
       priceId: lineIds.priceId,
     });
   }

@@ -11,6 +11,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+/** Legacy landing kept for bookmarks; checkout success now uses an in-page modal. */
 export default function WelcomePage() {
   return (
     <main className="relative min-h-dvh overflow-hidden" data-theme="light">
@@ -60,9 +61,7 @@ export default function WelcomePage() {
             className="landing-fade-up mt-3 max-w-sm text-sm leading-relaxed text-white/85 sm:text-base"
             style={{ animationDelay: "260ms" }}
           >
-            Your checkout completed successfully. Paid plan access appears after
-            Paddle confirms the subscription (usually within a few seconds). Open
-            your map and start planning.
+            Open your map and start planning.
           </p>
 
           <div

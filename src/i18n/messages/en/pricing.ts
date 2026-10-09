@@ -46,7 +46,7 @@ export const pricing = {
     },
     afterPay: {
       q: "What happens after I pay?",
-      a: "You'll be redirected to a welcome page. Access is provisioned once Paddle confirms the payment (webhooks).",
+      a: "Checkout closes and a confirmation appears on this page. Access unlocks once Paddle confirms the payment (usually within a few seconds).",
     },
     whatAreCredits: {
       q: "What are AI credits?",
@@ -124,6 +124,18 @@ export const pricing = {
       },
       cta: "Subscribe",
     },
+  },
+  subscribe: {
+    fulfillTitle: "Activating your plan",
+    fulfillWait:
+      "Payment received. Unlocking access when Paddle confirms the purchase.",
+    fulfillError:
+      "Payment succeeded, but your plan is not active yet. It updates after Paddle’s webhook confirms the sale — refresh in a moment.",
+    successTitle: "You're on {plan}",
+    successTitleFallback: "Subscription active",
+    successBody: "Your subscription is active. Open the map and start planning.",
+    successDone: "Done",
+    openMap: "Open map",
   },
   packs: {
     heading: "Need more AI credits?",
