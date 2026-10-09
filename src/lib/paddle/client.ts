@@ -34,9 +34,10 @@ function beginPostCheckoutProfileSync() {
   const uid = getFirebaseAuth().currentUser?.uid;
   if (uid) {
     void getUserProfile(uid, { hard: true });
+    // Poll aggressively — prod webhooks can land within a few seconds once warm.
     postCheckoutPollTimer = setInterval(() => {
       void getUserProfile(uid, { hard: true });
-    }, 2_000);
+    }, 750);
   }
 
   postCheckoutSyncTimer = setTimeout(() => {
@@ -46,7 +47,7 @@ function beginPostCheckoutProfileSync() {
     }
     setRealtimeSyncEnabled(null);
     postCheckoutSyncTimer = null;
-  }, 60_000);
+  }, 90_000);
 }
 
 /**

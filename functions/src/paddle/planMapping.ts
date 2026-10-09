@@ -13,9 +13,25 @@ import {
 
 export type AppPlan = "free" | "plus" | "pro";
 
-/** TEMP real-money Pro test prices (must match src/features/pricing/tiers.ts live). */
-const TEMP_LIVE_PRO_MONTH = "pri_01m486p0pbh5w5b2w5km6rjbfh";
-const TEMP_LIVE_PRO_YEAR = "pri_01m486pp12hcpfk3h54pyekmrx";
+/**
+ * Hardcoded catalog fallbacks (must match src/features/pricing/tiers.ts).
+ * Ensures transaction.completed can unlock Plus/Pro even if Cloud Functions
+ * params were not set at deploy time.
+ */
+const CATALOG_FALLBACK = {
+  plusMonthSandbox: "pri_01m2gdwzw7dtbr5eeqt66ra9eq",
+  plusYearSandbox: "pri_01m2gdydnzqpj26ma4k90xm80y",
+  proMonthSandbox: "pri_01m2gdwjrrdfxqgdy9awh406cb",
+  proYearSandbox: "pri_01m2gdy1a8ktkr2gr0j2hcszdy",
+  plusMonthLive: "pri_01m28pq2s9q9b0zn0w2zm20jw1",
+  plusYearLive: "pri_01m2gccyge9q7f76pbn539tcms",
+  /** Catalog live Pro (functions/.env + tiers.ts) */
+  proMonthLive: "pri_01m28pr9bsse4r3grg6yhmznbf",
+  proYearLive: "pri_01m2gcbw6qv4gpj681nmbhmshz",
+  /** Legacy TEMP test prices — keep for webhook mapping of past checkouts */
+  tempProMonthLive: "pri_01m486p0pbh5w5b2w5km6rjbfh",
+  tempProYearLive: "pri_01m486pp12hcpfk3h54pyekmrx",
+} as const;
 
 /**
  * Monthly AI credits granted on paid purchase / billing period (must match
@@ -51,7 +67,11 @@ export function buildPriceIdPlanMap(): Map<string, "plus" | "pro"> {
     paddlePricePlusMonthSandbox.value(),
     paddlePricePlusYearSandbox.value(),
     paddlePricePlusMonthLive.value(),
-    paddlePricePlusYearLive.value()
+    paddlePricePlusYearLive.value(),
+    CATALOG_FALLBACK.plusMonthSandbox,
+    CATALOG_FALLBACK.plusYearSandbox,
+    CATALOG_FALLBACK.plusMonthLive,
+    CATALOG_FALLBACK.plusYearLive
   )) {
     map.set(id, "plus");
   }
@@ -60,8 +80,12 @@ export function buildPriceIdPlanMap(): Map<string, "plus" | "pro"> {
     paddlePriceProYearSandbox.value(),
     paddlePriceProMonthLive.value(),
     paddlePriceProYearLive.value(),
-    TEMP_LIVE_PRO_MONTH,
-    TEMP_LIVE_PRO_YEAR
+    CATALOG_FALLBACK.proMonthSandbox,
+    CATALOG_FALLBACK.proYearSandbox,
+    CATALOG_FALLBACK.proMonthLive,
+    CATALOG_FALLBACK.proYearLive,
+    CATALOG_FALLBACK.tempProMonthLive,
+    CATALOG_FALLBACK.tempProYearLive
   )) {
     map.set(id, "pro");
   }
@@ -87,7 +111,11 @@ export function buildPriceIdBillingPeriodMap(): Map<string, AppBillingPeriod> {
     paddlePriceProMonthSandbox.value(),
     paddlePricePlusMonthLive.value(),
     paddlePriceProMonthLive.value(),
-    TEMP_LIVE_PRO_MONTH
+    CATALOG_FALLBACK.plusMonthSandbox,
+    CATALOG_FALLBACK.proMonthSandbox,
+    CATALOG_FALLBACK.plusMonthLive,
+    CATALOG_FALLBACK.proMonthLive,
+    CATALOG_FALLBACK.tempProMonthLive
   )) {
     map.set(id, "month");
   }
@@ -96,7 +124,11 @@ export function buildPriceIdBillingPeriodMap(): Map<string, AppBillingPeriod> {
     paddlePriceProYearSandbox.value(),
     paddlePricePlusYearLive.value(),
     paddlePriceProYearLive.value(),
-    TEMP_LIVE_PRO_YEAR
+    CATALOG_FALLBACK.plusYearSandbox,
+    CATALOG_FALLBACK.proYearSandbox,
+    CATALOG_FALLBACK.plusYearLive,
+    CATALOG_FALLBACK.proYearLive,
+    CATALOG_FALLBACK.tempProYearLive
   )) {
     map.set(id, "year");
   }

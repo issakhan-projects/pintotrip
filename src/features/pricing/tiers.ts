@@ -89,9 +89,8 @@ export const TIERS: Tier[] = [
         year: "pri_01m2gdy1a8ktkr2gr0j2hcszdy",
       },
       live: {
-        // TEMP real-money test prices — restore catalog IDs after the test
-        month: "pri_01m486p0pbh5w5b2w5km6rjbfh",
-        year: "pri_01m486pp12hcpfk3h54pyekmrx",
+        month: "pri_01m28pr9bsse4r3grg6yhmznbf",
+        year: "pri_01m2gcbw6qv4gpj681nmbhmshz",
       },
     },
     ctaLabel: "Subscribe",

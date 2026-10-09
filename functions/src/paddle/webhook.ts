@@ -58,10 +58,14 @@ export const paddleWebhook = onRequest(
     secrets: [...paddleSecrets],
     invoker: "public",
     cors: false,
-    memory: "256MiB",
+    // Keep one warm instance — cold starts with Secret Manager often take
+    // 30–60s and delay live plan unlock vs sandbox (where the instance is hot).
+    minInstances: 1,
+    memory: "512MiB",
     timeoutSeconds: 60,
   },
   async (request, response) => {
+    const startedAt = Date.now();
     initAdmin();
 
     const req = request as unknown as RequestWithRawBody;
@@ -94,10 +98,18 @@ export const paddleWebhook = onRequest(
 
       await processPaddleEvent(event, environment);
 
+      logger.info("paddleWebhook ok", {
+        environment,
+        eventType: event.eventType,
+        eventId: event.eventId,
+        ms: Date.now() - startedAt,
+      });
+
       response.status(200).json({ received: true, environment });
     } catch (err) {
       logger.error("paddleWebhook failed", {
         error: err instanceof Error ? err.message : String(err),
+        ms: Date.now() - startedAt,
       });
       // Non-2xx → Paddle retries (rotated secret, transient failure, etc.).
       response.status(500).json({ error: "Internal error" });

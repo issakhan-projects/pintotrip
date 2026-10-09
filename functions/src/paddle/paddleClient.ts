@@ -73,15 +73,15 @@ export type UnmarshaledPaddleEvent = {
 };
 
 /**
- * Verify webhook signature against sandbox then live secrets.
+ * Verify webhook signature against live + sandbox secrets in parallel.
  * Uses the matching API key / environment for the destination that signed it.
  */
 export async function unmarshalPaddleWebhook(input: {
   rawBody: string;
   signature: string;
 }): Promise<UnmarshaledPaddleEvent> {
-  const attempts: PaddleBillingEnvironment[] = ["sandbox", "production"];
-  const errors: string[] = [];
+  // Prefer production first — most traffic is live; sandbox still tried in parallel.
+  const attempts: PaddleBillingEnvironment[] = ["production", "sandbox"];
 
   logger.info("paddle webhook verify attempt", {
     bodyBytes: Buffer.byteLength(input.rawBody, "utf8"),
@@ -91,35 +91,56 @@ export async function unmarshalPaddleWebhook(input: {
     liveSecret: describeSecret(webhookSecretFor("production")),
   });
 
-  for (const environment of attempts) {
-    const secret = webhookSecretFor(environment);
-    if (!secret) {
-      errors.push(`${environment}: secret not configured`);
-      continue;
-    }
-    if (!secret.startsWith("pdl_ntfset_")) {
-      errors.push(
-        `${environment}: secret must be the notification endpoint secret (pdl_ntfset_…), not the API key`
-      );
-      continue;
-    }
-    try {
-      const paddle = getPaddleServer(environment);
-      const event = await paddle.webhooks.unmarshal(
-        input.rawBody,
-        secret,
-        input.signature
-      );
-      if (event) {
-        return { event, environment };
+  const results = await Promise.all(
+    attempts.map(async (environment) => {
+      const secret = webhookSecretFor(environment);
+      if (!secret) {
+        return {
+          environment,
+          error: `${environment}: secret not configured`,
+        } as const;
       }
-    } catch (err) {
-      errors.push(
-        `${environment}: ${err instanceof Error ? err.message : String(err)}`
-      );
+      if (!secret.startsWith("pdl_ntfset_")) {
+        return {
+          environment,
+          error: `${environment}: secret must be the notification endpoint secret (pdl_ntfset_…), not the API key`,
+        } as const;
+      }
+      try {
+        const paddle = getPaddleServer(environment);
+        const event = await paddle.webhooks.unmarshal(
+          input.rawBody,
+          secret,
+          input.signature
+        );
+        if (event) {
+          return { environment, event } as const;
+        }
+        return {
+          environment,
+          error: `${environment}: unmarshal returned empty`,
+        } as const;
+      } catch (err) {
+        return {
+          environment,
+          error: `${environment}: ${err instanceof Error ? err.message : String(err)}`,
+        } as const;
+      }
+    })
+  );
+
+  for (const environment of attempts) {
+    const hit = results.find(
+      (r) => r.environment === environment && "event" in r && r.event
+    );
+    if (hit && "event" in hit && hit.event) {
+      return { event: hit.event, environment: hit.environment };
     }
   }
 
+  const errors = results.map((r) =>
+    "error" in r ? r.error : `${r.environment}: unknown`
+  );
   throw new Error(
     `Paddle webhook signature verification failed (${errors.join("; ")})`
   );
