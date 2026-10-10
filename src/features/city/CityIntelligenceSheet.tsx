@@ -516,7 +516,7 @@ export function CityIntelligenceSheet({
           <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
             <span className="inline-flex items-center gap-1.5">
               <Coins className="h-3.5 w-3.5 text-warning" aria-hidden />
-              Uses {creditCost} AI credit{creditCost === 1 ? "" : "s"}
+              Uses {creditCost} AI credits
             </span>
             {aiCreditsBalance !== null ? (
               <span className="tabular-nums">
