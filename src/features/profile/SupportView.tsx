@@ -13,15 +13,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui";
 import { SUPPORT_EMAIL } from "@/features/legal/constants";
+import { useI18n } from "@/i18n";
 import { cx } from "@/lib/utils";
 
 const SUPPORT_TYPES = [
-  { id: "bug", label: "Bug report", icon: Bug },
-  { id: "account", label: "Account", icon: UserRound },
-  { id: "billing", label: "Billing", icon: CreditCard },
-  { id: "places", label: "Places & map", icon: MapPin },
-  { id: "trips", label: "Trip planner", icon: Route },
-  { id: "other", label: "Other", icon: HelpCircle },
+  { id: "bug", icon: Bug },
+  { id: "account", icon: UserRound },
+  { id: "billing", icon: CreditCard },
+  { id: "places", icon: MapPin },
+  { id: "planner", icon: Route },
+  { id: "other", icon: HelpCircle },
 ] as const;
 
 type SupportTypeId = (typeof SUPPORT_TYPES)[number]["id"];
@@ -35,6 +36,7 @@ interface SupportViewProps {
 }
 
 export function SupportView({ userEmail }: SupportViewProps) {
+  const { t } = useI18n();
   const [type, setType] = useState<SupportTypeId | null>(null);
   const [question, setQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -46,26 +48,35 @@ export function SupportView({ userEmail }: SupportViewProps) {
     trimmed.length >= MIN_QUESTION_LENGTH &&
     trimmed.length <= MAX_QUESTION_LENGTH;
 
+  function topicLabel(id: SupportTypeId): string {
+    return t(`profile.support.topics.${id}`);
+  }
+
   function handleSubmit() {
     if (!type) {
-      setError("Please select a topic.");
+      setError(t("profile.support.selectTopic"));
       return;
     }
     if (trimmed.length < MIN_QUESTION_LENGTH) {
-      setError(`Please write at least ${MIN_QUESTION_LENGTH} characters.`);
+      setError(
+        t("profile.support.minChars", { n: MIN_QUESTION_LENGTH })
+      );
       return;
     }
     if (trimmed.length > MAX_QUESTION_LENGTH) {
-      setError(`Please keep your question under ${MAX_QUESTION_LENGTH} characters.`);
+      setError(
+        t("profile.support.maxChars", { n: MAX_QUESTION_LENGTH })
+      );
       return;
     }
 
-    const typeLabel =
-      SUPPORT_TYPES.find((t) => t.id === type)?.label ?? "Support";
+    const typeLabel = topicLabel(type) || t("profile.support.fallbackTitle");
     const subject = encodeURIComponent(`[PinToTrip] ${typeLabel}`);
     const bodyLines = [
-      `Topic: ${typeLabel}`,
-      userEmail ? `From: ${userEmail}` : null,
+      t("profile.support.emailTopic", { topic: typeLabel }),
+      userEmail
+        ? t("profile.support.emailFrom", { email: userEmail })
+        : null,
       "",
       trimmed,
     ].filter((line): line is string => line !== null);
@@ -79,11 +90,11 @@ export function SupportView({ userEmail }: SupportViewProps) {
   if (sent) {
     return (
       <div className="space-y-4">
-        <h3 className="text-base font-semibold text-text">Message ready</h3>
+        <h3 className="text-base font-semibold text-text">
+          {t("profile.support.messageReady")}
+        </h3>
         <p className="text-sm leading-relaxed text-text-secondary">
-          Your email app should open with your question to{" "}
-          <span className="font-medium text-text">{SUPPORT_EMAIL}</span>. Send
-          it from there and we’ll get back to you as soon as we can.
+          {t("profile.support.messageReadyBody", { email: SUPPORT_EMAIL })}
         </p>
         <Button
           variant="secondary"
@@ -94,7 +105,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
             setType(null);
           }}
         >
-          Ask another question
+          {t("profile.support.askAnother")}
         </Button>
       </div>
     );
@@ -103,16 +114,15 @@ export function SupportView({ userEmail }: SupportViewProps) {
   return (
     <div className="space-y-5">
       <p className="text-sm leading-relaxed text-text-secondary">
-        Choose a topic, write your question, and we’ll open an email to{" "}
-        {SUPPORT_EMAIL}.
+        {t("profile.support.intro", { email: SUPPORT_EMAIL })}
       </p>
 
-      <Field label="Topic">
+      <Field label={t("profile.support.topic")}>
         <div className="grid grid-cols-2 gap-2">
           {SUPPORT_TYPES.map((item) => (
             <TypeChip
               key={item.id}
-              label={item.label}
+              label={topicLabel(item.id)}
               icon={item.icon}
               selected={type === item.id}
               onSelect={() => setType(item.id)}
@@ -121,7 +131,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
         </div>
       </Field>
 
-      <Field label="Your question">
+      <Field label={t("profile.support.question")}>
         <textarea
           value={question}
           onChange={(e) => {
@@ -131,7 +141,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
           }}
           rows={6}
           maxLength={MAX_QUESTION_LENGTH}
-          placeholder="Describe what you need help with…"
+          placeholder={t("profile.support.placeholder")}
           className={cx(
             "block w-full rounded-xl border border-border bg-surface-elevated",
             "px-3 py-2.5 text-sm text-text placeholder:text-text-muted",
@@ -143,7 +153,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
         <p className="mt-1.5 text-xs text-text-muted">
           {trimmed.length}/{MAX_QUESTION_LENGTH}
           {trimmed.length > 0 && trimmed.length < MIN_QUESTION_LENGTH
-            ? ` · at least ${MIN_QUESTION_LENGTH} characters`
+            ? ` ${t("profile.support.minCharsHint", { n: MIN_QUESTION_LENGTH })}`
             : null}
         </p>
       </Field>
@@ -157,7 +167,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
         onClick={handleSubmit}
         className="w-full"
       >
-        Continue to email
+        {t("profile.support.continueEmail")}
       </Button>
     </div>
   );

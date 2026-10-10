@@ -128,7 +128,7 @@ export function ManualPlaceSheet({
         lon: coords.lng,
         country: countryData,
         city: cityData,
-        status: "planned",
+        status: "want_to_visit",
         images: [],
         confidence: 1,
         ai: {

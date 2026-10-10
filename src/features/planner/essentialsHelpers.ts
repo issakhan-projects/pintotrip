@@ -7,6 +7,8 @@ import type {
   TripPlannerDoc,
   TripPreparation,
 } from "@/types/trip-planner";
+import type { TimeFormat } from "@/types/user";
+import { clockIntlOptions } from "@/lib/time/formatClock";
 import {
   listTripDestinations,
   primaryTripDestination,
@@ -220,12 +222,17 @@ export function flightAirportCode(
   ).toUpperCase();
 }
 
-export function formatFlightWhen(iso: string): string {
+export function formatFlightWhen(
+  iso: string,
+  timeFormat?: TimeFormat | null
+): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    ...clockIntlOptions(timeFormat),
   }).format(date);
 }
 

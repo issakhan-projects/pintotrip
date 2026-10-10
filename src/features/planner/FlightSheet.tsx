@@ -42,28 +42,8 @@ import {
   listFlightRouteCities,
 } from "./tripDestinations";
 
-function formatDatetimeLocalDisplay(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return trimmed;
-  const date = new Date(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5])
-  );
-  if (Number.isNaN(date.getTime())) return trimmed;
-  return new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
+import { formatDatetimeLocalDisplay } from "@/lib/time/formatClock";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 
 type FlightKind = "outbound" | "return" | "leg";
 
@@ -155,7 +135,8 @@ function FlightDatetimeField({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const display = formatDatetimeLocalDisplay(value);
+  const timeFormat = useTimeFormat();
+  const display = formatDatetimeLocalDisplay(value, timeFormat);
 
   return (
     <EssentialsField label={label} htmlFor={id}>
@@ -212,6 +193,7 @@ export function FlightSheet({
     key: string
   ) => Promise<void>;
 }) {
+  const timeFormat = useTimeFormat();
   const [view, setView] = useState<"list" | "form">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [departureCode, setDepartureCode] = useState("");
@@ -540,7 +522,7 @@ export function FlightSheet({
                   flightAirportCode(flight, "arrival"),
                 ].filter(Boolean);
                 const when = flight.departureAt?.trim()
-                  ? formatFlightWhen(flight.departureAt)
+                  ? formatFlightWhen(flight.departureAt, timeFormat)
                   : "";
                 const detail = [codes.join(" → "), when]
                   .filter(Boolean)

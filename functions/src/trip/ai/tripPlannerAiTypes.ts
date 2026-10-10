@@ -208,7 +208,7 @@ export type TripPlannerAiResponseLocationPlace = {
   description: string;
   note?: string;
   cityId: string;
-  status: "planned" | "visited" | "cancelled";
+  status: "want_to_visit" | "planned" | "visited" | "cancelled";
   category?: PlaceCategory;
   location: { lat: number; lon: number };
   city: { id: string; name: string };

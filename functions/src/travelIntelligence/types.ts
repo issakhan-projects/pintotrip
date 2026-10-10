@@ -5,7 +5,11 @@
 
 import type { Timestamp } from "firebase-admin/firestore";
 
-export type LocationStatus = "planned" | "visited" | "cancelled";
+export type LocationStatus =
+  | "want_to_visit"
+  | "planned"
+  | "visited"
+  | "cancelled";
 
 export interface LocationIntelligenceContribution {
   placeId: string;

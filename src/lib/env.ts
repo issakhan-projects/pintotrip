@@ -116,3 +116,8 @@ export function hasPostHogConfigured(): boolean {
 export function hasGoogleMapsConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
 }
+
+/** Web Push VAPID key for FCM getToken (optional until push is enabled). */
+export function hasFirebaseVapidConfigured(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY?.trim());
+}

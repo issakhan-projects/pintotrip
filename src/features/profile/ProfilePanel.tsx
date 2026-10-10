@@ -197,7 +197,7 @@ export function ProfilePanel({
           />
         ) : null}
         {view === "subscription" && profile ? (
-          <SubscriptionView profile={profile} />
+          <SubscriptionView userId={user.uid} profile={profile} />
         ) : null}
         {view === "settings" && profile ? (
           <SettingsView

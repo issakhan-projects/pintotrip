@@ -42,8 +42,9 @@ export type {
   LocationIntelligenceContribution,
   UserLocationCreateInput,
   UserLocationUpdateInput,
+  LocationStatusUpdateOptions,
 } from "./location";
-export { LOCATION_AGGREGATION_FIELDS } from "./location";
+export { LOCATION_AGGREGATION_FIELDS, LOCATION_STATUSES } from "./location";
 export type {
   FavoriteCity,
   FavoriteCityCreateInput,
@@ -111,6 +112,21 @@ export {
 } from "./referral";
 export type { AppNotification } from "./notification";
 export type {
+  BillingTransaction,
+  BillingTransactionStatus,
+  BillingPeriod,
+  SavedBillingTransaction,
+} from "./transaction";
+export type {
+  PlanTripBlockedError,
+  PlanTripInProgressError,
+  PlanTripReadyPendingError,
+} from "./plan-trip-errors";
+export {
+  isPlanTripBlockedError,
+  formatPlanTripBlockedMessage,
+} from "./plan-trip-errors";
+export type {
   AnalyzeLocationRequest,
   AnalyzeLocationResult,
   AnalyzeLocationInputType,
@@ -166,6 +182,8 @@ export type {
   TripItinerary,
   TripPlanner,
   TripPlannerDoc,
+  TripAiPlan,
+  TripAiPlanStatus,
   TripPlannerCreateInput,
   TripPlannerUpdateInput,
   RoutePoint,
@@ -206,8 +224,11 @@ export type {
   TripPlannerAiResponse,
   FillTripPlannerAiPlacesRequest,
   FillTripPlannerAiPlacesResult,
+  PlanTripAiResult,
+  PlanTripAiAsyncAccepted,
   BuildTripPlannerAiRequestInput,
 } from "./trip-planner-ai-request";
+export { isPlanTripAiAsyncAccepted } from "./trip-planner-ai-request";
 export {
   SPEND_MONEY_LEVELS,
   SPEND_MONEY_OPTIONS,

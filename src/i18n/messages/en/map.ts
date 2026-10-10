@@ -3,6 +3,7 @@ export const map = {
   legend: {
     visited: "Visited",
     planned: "Planned",
+    wantToVisit: "Want to visit",
   },
   noPhoto: "No photo yet",
   status: "Status",

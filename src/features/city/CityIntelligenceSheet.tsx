@@ -5,8 +5,10 @@ import { Button, TextInput } from "@/components/ui";
 import {
   AlertTriangle,
   Bookmark,
+  Coins,
   Loader2,
   MapPin,
+  Sparkles,
 } from "lucide-react";
 import { Sheet } from "@/components/ui/Sheet";
 import { getCityIntelligenceForPlace } from "@/services/functions";
@@ -22,6 +24,7 @@ import {
   type CityIntelligenceResult,
 } from "@/types/city-intelligence";
 import {
+  AI_CREDIT_COSTS,
   formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
@@ -46,9 +49,16 @@ interface CityIntelligenceSheetProps {
   onToggleFavorite?: () => Promise<void> | void;
   /** Called after a city is written to users/{uid}/locations. */
   onPlaceSaved?: () => void;
+  /** Current AI credit balance for the cost button affordance. */
+  aiCreditsBalance?: number | null;
 }
 
-type SheetPhase = "loading-profile" | "ask-citizenship" | "loading" | "ready";
+type SheetPhase =
+  | "loading-profile"
+  | "ask-citizenship"
+  | "confirm"
+  | "loading"
+  | "ready";
 
 export function CityIntelligenceSheet({
   open,
@@ -58,6 +68,7 @@ export function CityIntelligenceSheet({
   isFavorite = false,
   onToggleFavorite,
   onPlaceSaved,
+  aiCreditsBalance = null,
 }: CityIntelligenceSheetProps) {
   const [phase, setPhase] = useState<SheetPhase>("loading-profile");
   const [citizenship, setCitizenship] = useState("");
@@ -146,7 +157,7 @@ export function CityIntelligenceSheet({
         if (saved) {
           setCitizenship(saved);
           setCitizenshipDraft(saved);
-          setPhase("loading");
+          setPhase("confirm");
         } else {
           setPhase("ask-citizenship");
         }
@@ -161,7 +172,7 @@ export function CityIntelligenceSheet({
     };
   }, [open, city, userId]);
 
-  // Fetch intelligence only after citizenship is known.
+  // Fetch intelligence only after the user confirms (cost shown first).
   useEffect(() => {
     if (!open || !city || phase !== "loading" || !citizenship.trim()) return;
 
@@ -266,7 +277,7 @@ export function CityIntelligenceSheet({
     try {
       await updateUserProfile(userId, { citizenship: value });
       setCitizenship(value);
-      setPhase("loading");
+      setPhase("confirm");
     } catch (err) {
       setError(
         err instanceof Error
@@ -283,6 +294,22 @@ export function CityIntelligenceSheet({
     setError(null);
     setCitizenshipDraft(citizenship);
     setPhase("ask-citizenship");
+  }
+
+  const creditCost = AI_CREDIT_COSTS.getCityIntelligence;
+  const canAfford =
+    aiCreditsBalance === null || aiCreditsBalance >= creditCost;
+
+  function startCityIntelligence() {
+    if (!canAfford) {
+      setError(
+        `Not enough AI credits. Need ${creditCost}, you have ${aiCreditsBalance ?? 0}.`
+      );
+      return;
+    }
+    setError(null);
+    setData(null);
+    setPhase("loading");
   }
 
   async function handleToggleFavorite() {
@@ -311,7 +338,9 @@ export function CityIntelligenceSheet({
   }
 
   const showStandaloneDisclaimer =
-    phase !== "ask-citizenship" && !(phase === "ready" && data);
+    phase !== "ask-citizenship" &&
+    phase !== "confirm" &&
+    !(phase === "ready" && data);
   const showCurrencyAndExchange = !isSameCountry(
     city?.countryId || city?.countryName,
     userCountry || citizenship
@@ -458,9 +487,89 @@ export function CityIntelligenceSheet({
         </div>
       ) : null}
 
+      {phase === "confirm" && city ? (
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border bg-surface px-4 py-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              Location
+            </p>
+            <div className="mt-2 flex items-start gap-3">
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-tint text-primary">
+                <MapPin className="h-4 w-4" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-text">
+                  {city.cityName}
+                </p>
+                <p className="mt-0.5 text-sm text-text-secondary">
+                  {city.countryName}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-sm leading-relaxed text-text-secondary">
+            Get travel info for this city — visas, money, safety tips, and more
+            personalized for your citizenship.
+          </p>
+
+          <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
+            <span className="inline-flex items-center gap-1.5">
+              <Coins className="h-3.5 w-3.5 text-warning" aria-hidden />
+              Uses {creditCost} AI credit{creditCost === 1 ? "" : "s"}
+            </span>
+            {aiCreditsBalance !== null ? (
+              <span className="tabular-nums">
+                Balance {aiCreditsBalance}
+              </span>
+            ) : null}
+          </div>
+
+          {!canAfford ? (
+            <p className="text-center text-xs text-error">
+              Not enough AI credits. Need {creditCost}, you have{" "}
+              {aiCreditsBalance ?? 0}.
+            </p>
+          ) : null}
+
+          {error ? (
+            <div className="rounded-2xl bg-error-background px-4 py-3 text-sm text-error">
+              {error}
+            </div>
+          ) : null}
+
+          <Button
+            icon={Sparkles}
+            disabled={!canAfford}
+            onClick={startCityIntelligence}
+            className="w-full !h-11 !bg-primary hover:!bg-primary-hover !border-primary !text-white disabled:!opacity-40"
+          >
+            <span className="inline-flex items-center gap-2">
+              Get travel info
+              <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
+                <Coins className="h-3 w-3" aria-hidden />
+                {creditCost}
+              </span>
+            </span>
+          </Button>
+        </div>
+      ) : null}
+
       {phase === "ready" && error ? (
-        <div className="rounded-2xl bg-error-background px-4 py-3 text-sm text-error">
-          {error}
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-error-background px-4 py-3 text-sm text-error">
+            {error}
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setError(null);
+              setPhase("confirm");
+            }}
+            className="w-full"
+          >
+            Try again
+          </Button>
         </div>
       ) : null}
 

@@ -65,6 +65,7 @@ export {
 } from "./placesApiUsage";
 export {
   getCityStatuses,
+  pickHighlightStatusByRatio,
   type CityHighlightStatus,
   type CityStatusEntry,
   type CityStatusLocation,

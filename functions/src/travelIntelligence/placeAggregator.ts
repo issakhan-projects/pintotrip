@@ -19,7 +19,9 @@ export function statusCountDelta(
   sign: 1 | -1
 ): { plannedCount: number; visitedCount: number; cancelledCount: number } {
   return {
-    plannedCount: status === "planned" ? sign : 0,
+    // want_to_visit counts with planned so existing aggregate docs stay valid.
+    plannedCount:
+      status === "planned" || status === "want_to_visit" ? sign : 0,
     visitedCount: status === "visited" ? sign : 0,
     cancelledCount: status === "cancelled" ? sign : 0,
   };

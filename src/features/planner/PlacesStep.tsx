@@ -36,6 +36,9 @@ import { TravelMap } from "@/features/map/TravelMap";
 import { PlacePreviewSheet } from "@/features/map/PlacePreviewSheet";
 import { Sheet } from "@/components/ui/Sheet";
 import type { SavedLocation } from "@/hooks/useLocations";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
+import { formatHhMmDisplay } from "@/lib/time/formatClock";
+import type { TimeFormat } from "@/types/user";
 import type {
   ItineraryDay,
   ItineraryDayWeather,
@@ -51,6 +54,7 @@ import type {
   LocationImage,
   LocationPrice,
   LocationStatus,
+  LocationStatusUpdateOptions,
 } from "@/types/location";
 import {
   getBrowserCoords,
@@ -111,6 +115,16 @@ import {
 } from "@/services/locations";
 import { Timestamp } from "firebase/firestore";
 import { resolveCountryCode } from "@/lib/countries";
+import {
+  clearTripAiPlan,
+  markTripAiPlanQueued,
+  subscribeTripDocLive,
+} from "@/services/trip-planner";
+import type {
+  PlanTripAiResult,
+  TripPlannerAiResponseDay,
+} from "@/types/trip-planner-ai-request";
+import { devLog } from "@/lib/devLog";
 
 type Coords = { lat: number; lon: number };
 
@@ -376,7 +390,8 @@ interface PlacesStepProps {
   }) => Promise<void>;
   onMarkPlaceStatus: (
     locationId: string,
-    status: LocationStatus
+    status: LocationStatus,
+    options?: LocationStatusUpdateOptions
   ) => Promise<void>;
   onSavePlaceNote: (locationId: string, note: string) => Promise<void>;
   onSavePlaceTravelInfo?: (
@@ -393,6 +408,11 @@ interface PlacesStepProps {
   ) => Promise<void>;
   /** Pro: allow Google Place Photos in the preview sheet. */
   allowGooglePlacePhotos?: boolean;
+  /**
+   * Immediate local trip patch (React state) — needed because trip detail
+   * does not always re-render from the memory cache alone.
+   */
+  onPatchTripLocal?: (patch: Partial<TripPlannerDoc>) => void;
 }
 
 export function PlacesStep({
@@ -410,6 +430,7 @@ export function PlacesStep({
   onSavePlaceTravelInfo,
   onSavePlaceImages,
   allowGooglePlacePhotos = false,
+  onPatchTripLocal,
 }: PlacesStepProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [addTab, setAddTab] = useState<AddPlaceTab>("list");
@@ -431,9 +452,23 @@ export function PlacesStep({
     "generate"
   );
   const [planSetupConfirmOpen, setPlanSetupConfirmOpen] = useState(false);
+  const [planBlockedOpen, setPlanBlockedOpen] = useState(false);
+  const [planBlockedKind, setPlanBlockedKind] = useState<"busy" | "ready">(
+    "busy"
+  );
   const [pendingPlanIntent, setPendingPlanIntent] = useState<
     "generate" | "regenerate"
   >("generate");
+  /** Review async planTrip result in PlanTripSheet (not PlacePreviewSheet). */
+  const [reviewAiResult, setReviewAiResult] = useState<PlanTripAiResult | null>(
+    null
+  );
+  const autoOpenedAiPlanAtRef = useRef<number | null>(null);
+  /**
+   * Local busy flag so the in-progress banner shows immediately after the
+   * plan sheet closes — even if parent `trip` props lag behind Firestore.
+   */
+  const [forcePlanBusy, setForcePlanBusy] = useState(false);
   const [preview, setPreview] = useState<SavedLocation | null>(null);
   /** Active itinerary day for the shared map (one map instance for all days). */
   const [activeDayIndex, setActiveDayIndex] = useState(0);
@@ -442,6 +477,77 @@ export function PlacesStep({
   const [mapFitToken, setMapFitToken] = useState(0);
   const placeRowRefs = useRef<Map<string, HTMLElement>>(new Map());
   const recreateCost = planTripRegenerateCost(trip.createMode);
+  const aiPlan = trip.aiPlan;
+  const aiPlanBusy =
+    forcePlanBusy ||
+    aiPlan?.status === "queued" ||
+    aiPlan?.status === "running";
+  const aiPlanReady =
+    !forcePlanBusy &&
+    aiPlan?.status === "ready" &&
+    Array.isArray(aiPlan.itinerary) &&
+    aiPlan.itinerary.length > 0;
+
+  function buildReviewAiResultFromTrip(): PlanTripAiResult | null {
+    if (!aiPlanReady || !aiPlan?.itinerary) return null;
+    return {
+      success: true,
+      itinerary: aiPlan.itinerary as TripPlannerAiResponseDay[],
+      model: aiPlan.model ?? "unknown",
+      creditsCharged: aiPlan.creditsCharged ?? 0,
+      remainingCredits: aiPlan.remainingCredits ?? aiCreditsBalance,
+      stages: aiPlan.stages ?? [],
+      ...(aiPlan.warning ? { warning: aiPlan.warning } : {}),
+    };
+  }
+
+  async function clearAiPlan() {
+    setForcePlanBusy(false);
+    onPatchTripLocal?.({ aiPlan: undefined });
+    try {
+      await clearTripAiPlan(userId, trip.id);
+    } catch {
+      // Best-effort; trip subscription will eventually refresh.
+    }
+  }
+
+  function openReadyAiPlanReview() {
+    const result = buildReviewAiResultFromTrip();
+    if (!result) return;
+    setReviewAiResult(result);
+    setPlanIntent(aiPlan?.mode === "regenerate" ? "regenerate" : "generate");
+    setPlanOpen(true);
+  }
+
+  // Clear local busy once Firestore reports a terminal aiPlan status.
+  useEffect(() => {
+    const status = aiPlan?.status;
+    if (status === "ready" || status === "error") {
+      setForcePlanBusy(false);
+    }
+    if (!status && forcePlanBusy === false) {
+      // no-op — keep local busy until live sync resolves
+    }
+  }, [aiPlan?.status, forcePlanBusy]);
+
+  // When async planTrip finishes, open review in PlacesStep via PlanTripSheet
+  // (never PlacePreviewSheet).
+  useEffect(() => {
+    if (!aiPlanReady || !aiPlan?.completedAt) return;
+    if (autoOpenedAiPlanAtRef.current === aiPlan.completedAt) return;
+    autoOpenedAiPlanAtRef.current = aiPlan.completedAt;
+    openReadyAiPlanReview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once per completedAt
+  }, [aiPlanReady, aiPlan?.completedAt]);
+
+  // Live-sync trip while planTrip is in progress so queued → running → ready
+  // updates the in-progress / ready banners without a manual refresh.
+  useEffect(() => {
+    if (!aiPlanBusy) return;
+    return subscribeTripDocLive(userId, trip.id, (err) => {
+      devLog.warn("[PlacesStep] aiPlan live sync", err);
+    });
+  }, [aiPlanBusy, userId, trip.id]);
 
   const [tripRoutes, setTripRoutes] = useState<TripRoute[]>([]);
   useEffect(() => {
@@ -620,6 +726,13 @@ export function PlacesStep({
     let nextItinerary: TripItinerary | null = null;
     if (addDayIndex !== null && trip.itinerary.days.length > 0) {
       const day = trip.itinerary.days[addDayIndex];
+      const locationStatus = byId.get(locationId)?.status;
+      const slotStatus: LocationStatus =
+        locationStatus === "visited" ||
+        locationStatus === "want_to_visit" ||
+        locationStatus === "cancelled"
+          ? locationStatus
+          : "planned";
       if (day && !day.places.some((p) => p.locationId === locationId)) {
         nextItinerary = {
           status: "edited",
@@ -632,7 +745,7 @@ export function PlacesStep({
                 {
                   locationId,
                   order: d.places.length,
-                  status: "planned" as const,
+                  status: slotStatus,
                 },
               ],
             };
@@ -823,6 +936,7 @@ export function PlacesStep({
   }
 
   function openPlanSheet(intent: "generate" | "regenerate" = "generate") {
+    setReviewAiResult(null);
     setPlanIntent(intent);
     setPlanOpen(true);
   }
@@ -832,6 +946,18 @@ export function PlacesStep({
   const missingSetupDetails = !hasRoutes || !hasAccommodation;
 
   function requestPlanSheet(intent: "generate" | "regenerate" = "generate") {
+    if (aiPlanBusy) {
+      setPendingPlanIntent(intent);
+      setPlanBlockedKind("busy");
+      setPlanBlockedOpen(true);
+      return;
+    }
+    if (aiPlanReady) {
+      setPendingPlanIntent(intent);
+      setPlanBlockedKind("ready");
+      setPlanBlockedOpen(true);
+      return;
+    }
     if (missingSetupDetails) {
       setPendingPlanIntent(intent);
       setPlanSetupConfirmOpen(true);
@@ -993,6 +1119,80 @@ export function PlacesStep({
           </Button>
         ) : null}
       </div>
+
+      {aiPlanBusy || aiPlanReady || aiPlan?.status === "error" ? (
+        <div
+          className={cx(
+            "flex flex-col gap-3 rounded-2xl border px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between",
+            aiPlan?.status === "error"
+              ? "border-error/25 bg-error-background"
+              : "border-primary/20 bg-primary-tint/40"
+          )}
+        >
+          <div className="min-w-0">
+            <p
+              className={cx(
+                "inline-flex items-center gap-2 text-sm font-semibold",
+                aiPlan?.status === "error" ? "text-error" : "text-text"
+              )}
+            >
+              {aiPlanBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              ) : aiPlanReady ? (
+                <Sparkles className="h-4 w-4 text-primary" />
+              ) : null}
+              {aiPlanBusy
+                ? "AI is planning your trip…"
+                : aiPlanReady
+                  ? "AI itinerary is ready"
+                  : "Trip planning failed"}
+            </p>
+            <p
+              className={cx(
+                "mt-1 text-xs leading-relaxed",
+                aiPlan?.status === "error"
+                  ? "text-error/90"
+                  : "text-text-secondary"
+              )}
+            >
+              {aiPlanBusy
+                ? "You can keep editing — we’ll send a system notification when it’s done. You can’t start another plan until this one finishes."
+                : aiPlanReady
+                  ? "Review and save before generating again — or dismiss to start over."
+                  : aiPlan?.error || "Something went wrong. Try again."}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {aiPlanReady ? (
+              <>
+                <Button
+                  icon={Sparkles}
+                  onClick={() => openReadyAiPlanReview()}
+                  className="h-10 !bg-primary hover:!bg-primary-hover !border-primary !text-white"
+                >
+                  Review plan
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => void clearAiPlan()}
+                  className="h-10"
+                >
+                  Dismiss
+                </Button>
+              </>
+            ) : null}
+            {aiPlan?.status === "error" ? (
+              <Button
+                variant="secondary"
+                onClick={() => void clearAiPlan()}
+                className="h-10"
+              >
+                Dismiss
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {hasItinerary ? (
         <div className="relative lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(280px,1fr)] lg:items-start lg:gap-5">
@@ -1348,15 +1548,40 @@ export function PlacesStep({
 
       <PlanTripSheet
         open={planOpen}
-        onClose={() => setPlanOpen(false)}
+        onClose={() => {
+          setPlanOpen(false);
+          setReviewAiResult(null);
+        }}
         userId={userId}
         trip={trip}
         locations={locations}
         aiCreditsBalance={aiCreditsBalance}
         language={language}
         intent={planIntent}
+        initialAiResult={reviewAiResult}
+        onAsyncQueued={() => {
+          const queuedAiPlan = {
+            status: "queued" as const,
+            mode: planIntent,
+            ...(language ? { language } : {}),
+            requestedAt: Date.now(),
+          };
+          // 1) Local React flag — banner shows this frame.
+          setForcePlanBusy(true);
+          // 2) Parent trip state — PlacesStep props update immediately.
+          onPatchTripLocal?.({ aiPlan: queuedAiPlan });
+          // 3) Shared memory cache — other subscribers / re-entry stay in sync.
+          markTripAiPlanQueued(userId, trip.id, {
+            mode: planIntent,
+            language,
+          });
+          setPlanOpen(false);
+          setReviewAiResult(null);
+        }}
         onSaved={async (payload) => {
           await onSavePlan(payload);
+          setReviewAiResult(null);
+          await clearAiPlan();
         }}
       />
 
@@ -1370,6 +1595,46 @@ export function PlacesStep({
         onConfirm={() => {
           setPlanSetupConfirmOpen(false);
           openPlanSheet(pendingPlanIntent);
+        }}
+      />
+
+      <ConfirmModal
+        open={planBlockedOpen}
+        title={
+          planBlockedKind === "busy"
+            ? "Plan already in progress"
+            : "AI plan already ready"
+        }
+        description={
+          planBlockedKind === "busy"
+            ? "A trip plan is already being generated. Please wait until it finishes — you’ll get a system notification when it’s ready."
+            : "An AI itinerary is waiting for review. Review it, or dismiss it to generate a new plan."
+        }
+        confirmLabel={
+          planBlockedKind === "busy" ? "Got it" : "Review plan"
+        }
+        cancelLabel={
+          planBlockedKind === "ready" ? "Dismiss & start over" : undefined
+        }
+        showCancel={planBlockedKind === "ready"}
+        onCancel={() => {
+          setPlanBlockedOpen(false);
+          if (planBlockedKind === "ready") {
+            void (async () => {
+              await clearAiPlan();
+              if (missingSetupDetails) {
+                setPlanSetupConfirmOpen(true);
+                return;
+              }
+              openPlanSheet(pendingPlanIntent);
+            })();
+          }
+        }}
+        onConfirm={() => {
+          setPlanBlockedOpen(false);
+          if (planBlockedKind === "ready") {
+            openReadyAiPlanReview();
+          }
         }}
       />
 
@@ -1401,10 +1666,14 @@ export function PlacesStep({
         userId={userId}
         allowGooglePlacePhotos={allowGooglePlacePhotos}
         onClose={() => setPreview(null)}
-        onUpdateStatus={async (status) => {
+        onUpdateStatus={async (status, options) => {
           if (!preview) return;
-          await onMarkPlaceStatus(preview.id, status);
-          setPreview({ ...preview, status });
+          await onMarkPlaceStatus(preview.id, status, options);
+          const visitedAt =
+            status === "visited"
+              ? (options?.visitedAt ?? null)
+              : null;
+          setPreview({ ...preview, status, visitedAt });
         }}
         onSaveNote={async (note) => {
           if (!preview) return;
@@ -1506,6 +1775,7 @@ function ItineraryList({
   onAddPlaces: () => void;
   onUpdateItinerary: (itinerary: TripItinerary) => Promise<void>;
 }) {
+  const timeFormat = useTimeFormat();
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
   const [userCoords, setUserCoords] = useState<Coords | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
@@ -2134,14 +2404,16 @@ function ItineraryList({
                         ? formatRouteClock(
                             route.departure?.datetime,
                             route.departure?.timezone,
-                            route.departure?.timeKnown
+                            route.departure?.timeKnown,
+                            timeFormat
                           )
                         : null;
                       const arrClock = route
                         ? formatRouteClock(
                             route.arrival?.datetime,
                             route.arrival?.timezone,
-                            route.arrival?.timeKnown
+                            route.arrival?.timeKnown,
+                            timeFormat
                           )
                         : null;
                       const routeTimeLabel =
@@ -2379,6 +2651,7 @@ function ItineraryList({
                               from={slot.bestVisitTime?.from}
                               to={slot.bestVisitTime?.to}
                               durationMinutes={slot.durationMinutes}
+                              timeFormat={timeFormat}
                               onChange={(next) =>
                                 updatePlaceVisitTime(
                                   dayIndex,
@@ -2467,11 +2740,13 @@ function PlaceVisitTimeEditor({
   from,
   to,
   durationMinutes,
+  timeFormat = "24h",
   onChange,
 }: {
   from?: string;
   to?: string;
   durationMinutes?: number;
+  timeFormat?: TimeFormat;
   onChange: (next: { from: string; to: string } | null) => Promise<void> | void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2550,7 +2825,8 @@ function PlaceVisitTimeEditor({
         />
         {hasWindow ? (
           <span className="font-medium text-text">
-            {from} – {to}
+            {formatHhMmDisplay(from, timeFormat)} –{" "}
+            {formatHhMmDisplay(to, timeFormat)}
             {durationLabel ? ` · ~${durationLabel}` : ""}
             <span className="ml-1.5 font-normal text-text-muted">Edit</span>
           </span>
@@ -2588,6 +2864,7 @@ function PlaceVisitTimeEditor({
             value={draftFrom}
             max={draftTo || undefined}
             stepMinutes={5}
+            timeFormat={timeFormat}
             placeholder="Start"
             onChange={(value) => {
               setDraftFrom(value);
@@ -2611,6 +2888,7 @@ function PlaceVisitTimeEditor({
             value={draftTo}
             min={draftFrom || undefined}
             stepMinutes={5}
+            timeFormat={timeFormat}
             placeholder="End"
             onChange={(value) => setDraftTo(value)}
           />

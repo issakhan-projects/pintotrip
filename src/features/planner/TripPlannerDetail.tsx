@@ -48,7 +48,11 @@ import type {
   TripPlannerStep,
   TripRoute,
 } from "@/types/trip-planner";
-import type { LocationImage, LocationStatus } from "@/types/location";
+import type {
+  LocationImage,
+  LocationStatus,
+  LocationStatusUpdateOptions,
+} from "@/types/location";
 import { tripDayCount } from "@/services/trip-planner";
 import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import { getPublicEnv } from "@/lib/env";
@@ -261,9 +265,12 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
   /** Mark a saved location visited/planned and mirror status onto itinerary slots. */
   async function markPlaceStatus(
     locationId: string,
-    status: LocationStatus
+    status: LocationStatus,
+    options?: LocationStatusUpdateOptions
   ) {
-    await patchLocation(locationId, { status });
+    const visitedAt =
+      status === "visited" ? (options?.visitedAt ?? null) : null;
+    await patchLocation(locationId, { status, visitedAt });
 
     const latest =
       tripDetailStore.get(tripDetailKey(user.uid, tripId)) ?? trip;
@@ -1047,6 +1054,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
               canSearchPlaces={canUsePlaceNameSearch(profile?.subscription)}
               allowGooglePlacePhotos={isProEntitled(profile?.subscription)}
               language={profile?.preferences?.language}
+              onPatchTripLocal={(patch) => {
+                setTrip((prev) => (prev ? { ...prev, ...patch } : prev));
+              }}
               onUpdateSavedPlaces={async (ids) => {
                 await patchTrip({ savedPlaceIds: ids });
               }}

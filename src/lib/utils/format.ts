@@ -47,6 +47,8 @@ export function resolveAsciiId(
 
 export function statusLabel(status: LocationStatus): string {
   switch (status) {
+    case "want_to_visit":
+      return "Want to visit";
     case "planned":
       return "Planned";
     case "visited":
@@ -58,6 +60,8 @@ export function statusLabel(status: LocationStatus): string {
 
 export function statusColorVar(status: LocationStatus): string {
   switch (status) {
+    case "want_to_visit":
+      return "var(--color-want-to-visit)";
     case "planned":
       return "var(--color-planned)";
     case "visited":

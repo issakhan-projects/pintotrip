@@ -59,7 +59,7 @@ export function TermsOfServiceContent({
           <li>Use AI to identify locations</li>
           <li>Save identified locations to a personal map</li>
           <li>Organize places by status</li>
-          <li>Mark places as planned or visited</li>
+          <li>Mark places as want to visit, planned, or visited</li>
           <li>View travel-related information about cities and destinations</li>
           <li>Use AI-powered travel features</li>
           <li>Access additional functionality through paid subscriptions</li>

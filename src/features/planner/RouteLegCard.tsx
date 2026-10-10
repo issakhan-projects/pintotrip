@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cx } from "@/lib/utils";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 import type {
   RoutePoint,
   TripRoute,
@@ -328,6 +329,7 @@ export function RouteLegCard({
   actions?: ReactNode;
   className?: string;
 }) {
+  const timeFormat = useTimeFormat();
   const done = route.status === "done";
   const status = ROUTE_STATUS_UI[route.status];
   const StatusIcon = status.Icon;
@@ -336,12 +338,14 @@ export function RouteLegCard({
   const depTime = formatRouteClock(
     route.departure?.datetime,
     route.departure?.timezone,
-    route.departure?.timeKnown
+    route.departure?.timeKnown,
+    timeFormat
   );
   const arrTime = formatRouteClock(
     route.arrival?.datetime,
     route.arrival?.timezone,
-    route.arrival?.timeKnown
+    route.arrival?.timeKnown,
+    timeFormat
   );
   const dateLabel = formatRouteDateLabel(
     route.departure?.datetime,

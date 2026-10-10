@@ -3,6 +3,7 @@ import { Lobster, Montserrat, Manrope } from "next/font/google";
 import { APP_NAME, SITE_URL, SUPPORT_EMAIL } from "@/features/legal";
 import { AppProviders } from "@/components/AppProviders";
 import { PwaRegister } from "@/components/PwaRegister";
+import { PushNotifications } from "@/components/PushNotifications";
 import "./globals.css";
 
 const montserrat = Montserrat({
@@ -128,6 +129,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         />
         <AppProviders>{children}</AppProviders>
         <PwaRegister />
+        <PushNotifications />
       </body>
     </html>
   );

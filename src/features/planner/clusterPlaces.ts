@@ -179,7 +179,12 @@ export function planItineraryFromPlaces(input: {
       day.places.push({
         locationId: place.id,
         order: day.places.length,
-        status: place.status === "visited" ? "visited" : "planned",
+        status:
+          place.status === "visited"
+            ? "visited"
+            : place.status === "want_to_visit"
+              ? "want_to_visit"
+              : "planned",
       });
     }
   });

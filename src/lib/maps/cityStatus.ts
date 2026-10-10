@@ -2,8 +2,11 @@ import type { LocationCity, LocationCountry, LocationStatus } from "@/types/loca
 import { looksLikeGooglePlaceId } from "./cityPlaceId";
 import { hasUsableMapCoords } from "./geocode";
 
-/** Highlightable city status — cancelled-only cities are omitted. */
-export type CityHighlightStatus = "visited" | "planned";
+/**
+ * Highlightable city status — cancelled-only cities are omitted.
+ * Color is chosen by majority status ratio among places in the city.
+ */
+export type CityHighlightStatus = "visited" | "planned" | "want_to_visit";
 
 export interface CityStatusLocation {
   id?: string;
@@ -32,10 +35,51 @@ export interface CityStatusEntry {
   points: Array<{ lat: number; lon: number }>;
 }
 
+/** Tie-break when two statuses share the same count (higher wins). */
+const HIGHLIGHT_TIEBREAK: Record<CityHighlightStatus, number> = {
+  visited: 3,
+  planned: 2,
+  want_to_visit: 1,
+};
+
+/**
+ * Pick the city/country highlight from status counts (majority ratio).
+ * Ties break: visited > planned > want_to_visit.
+ */
+export function pickHighlightStatusByRatio(counts: {
+  visited: number;
+  planned: number;
+  want_to_visit: number;
+}): CityHighlightStatus | null {
+  const candidates: CityHighlightStatus[] = [
+    "visited",
+    "planned",
+    "want_to_visit",
+  ];
+  let best: CityHighlightStatus | null = null;
+  let bestCount = 0;
+
+  for (const status of candidates) {
+    const count = counts[status];
+    if (count <= 0) continue;
+    if (
+      best == null ||
+      count > bestCount ||
+      (count === bestCount &&
+        HIGHLIGHT_TIEBREAK[status] > HIGHLIGHT_TIEBREAK[best])
+    ) {
+      best = status;
+      bestCount = count;
+    }
+  }
+
+  return best;
+}
+
 /**
  * Group locations by countryId + cityId (city slug alone collides across countries).
  * Fall back to country + city name when ids are missing.
- * Priority: visited > planned > cancelled (cancelled-only → no entry).
+ * Highlight status = majority of visited / planned / want_to_visit (cancelled ignored).
  */
 export function getCityStatuses(
   locations: CityStatusLocation[]
@@ -48,8 +92,9 @@ export function getCityStatuses(
     countryName: string;
     googlePlaceId?: string;
     locationIdsMissingPlaceId: string[];
-    hasVisited: boolean;
-    hasPlanned: boolean;
+    visitedCount: number;
+    plannedCount: number;
+    wantToVisitCount: number;
     lat?: number;
     lon?: number;
     points: Array<{ lat: number; lon: number }>;
@@ -82,15 +127,17 @@ export function getCityStatuses(
         countryId,
         countryName,
         locationIdsMissingPlaceId: [],
-        hasVisited: false,
-        hasPlanned: false,
+        visitedCount: 0,
+        plannedCount: 0,
+        wantToVisitCount: 0,
         points: [],
       };
       byKey.set(key, entry);
     }
 
-    if (loc.status === "visited") entry.hasVisited = true;
-    if (loc.status === "planned") entry.hasPlanned = true;
+    if (loc.status === "visited") entry.visitedCount += 1;
+    if (loc.status === "planned") entry.plannedCount += 1;
+    if (loc.status === "want_to_visit") entry.wantToVisitCount += 1;
 
     const stored = loc.city.googlePlaceId?.trim();
     if (looksLikeGooglePlaceId(stored)) {
@@ -123,8 +170,16 @@ export function getCityStatuses(
         entry.points.reduce((sum, p) => sum + p.lon, 0) / entry.points.length;
     }
 
-    const base = {
+    const status = pickHighlightStatusByRatio({
+      visited: entry.visitedCount,
+      planned: entry.plannedCount,
+      want_to_visit: entry.wantToVisitCount,
+    });
+    if (!status) continue; // cancelled-only → no highlight
+
+    results.push({
       key: entry.key,
+      status,
       cityId: entry.cityId,
       cityName: entry.cityName,
       countryId: entry.countryId,
@@ -134,14 +189,7 @@ export function getCityStatuses(
       lat,
       lon,
       points: entry.points,
-    };
-
-    if (entry.hasVisited) {
-      results.push({ ...base, status: "visited" });
-    } else if (entry.hasPlanned) {
-      results.push({ ...base, status: "planned" });
-    }
-    // cancelled-only → no highlight
+    });
   }
 
   return results;

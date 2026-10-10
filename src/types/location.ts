@@ -1,7 +1,19 @@
 import type { Timestamp } from "firebase/firestore";
 import type { PlaceCategory } from "./trip-plan";
 
-export type LocationStatus = "planned" | "visited" | "cancelled";
+export type LocationStatus =
+  | "want_to_visit"
+  | "planned"
+  | "visited"
+  | "cancelled";
+
+/** Display order for status selectors and filters. */
+export const LOCATION_STATUSES: readonly LocationStatus[] = [
+  "want_to_visit",
+  "planned",
+  "visited",
+  "cancelled",
+] as const;
 
 export type LocationImageSource = "user" | "external";
 
@@ -107,6 +119,13 @@ export interface UserLocation extends LocationConfidenceBreakdown {
 
   status: LocationStatus;
 
+  /**
+   * When the place was visited (user-picked date/time).
+   * Optional — user may mark visited without a timestamp.
+   * Cleared when status leaves `visited`.
+   */
+  visitedAt?: Timestamp | null;
+
   /** Place type from AI plan / classification (beach, attraction, …). */
   category?: PlaceCategory;
 
@@ -158,6 +177,11 @@ export type UserLocationUpdateInput = Partial<
     | "intelligenceContribution"
   >
 >;
+
+/** Optional payload when changing location status (e.g. visited timestamp). */
+export type LocationStatusUpdateOptions = {
+  visitedAt?: Timestamp | null;
+};
 
 /** Fields that affect Travel Intelligence aggregates when changed. */
 export const LOCATION_AGGREGATION_FIELDS = [

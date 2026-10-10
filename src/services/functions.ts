@@ -19,6 +19,10 @@ import {
   isInsufficientAICreditsError,
   type InsufficientAICreditsError,
 } from "@/types/credits";
+import {
+  isPlanTripBlockedError,
+  type PlanTripBlockedError,
+} from "@/types/plan-trip-errors";
 import type {
   SubmitReviewRequest,
   SubmitReviewResult,
@@ -32,6 +36,7 @@ import type { PlanTripRequest } from "@/types/trip-plan";
 import type {
   FillTripPlannerAiPlacesRequest,
   FillTripPlannerAiPlacesResult,
+  PlanTripAiAsyncAccepted,
   PlanTripAiResult,
 } from "@/types/trip-planner-ai-request";
 import type {
@@ -70,7 +75,11 @@ export type GetCityIntelligenceResponse =
   | GetCityIntelligenceBatchResult
   | InsufficientAICreditsError;
 
-export type PlanTripResponse = PlanTripAiResult | InsufficientAICreditsError;
+export type PlanTripResponse =
+  | PlanTripAiResult
+  | PlanTripAiAsyncAccepted
+  | PlanTripBlockedError
+  | InsufficientAICreditsError;
 
 export type ResolveCityAirportsResponse =
   | ResolveCityAirportsResult
@@ -125,7 +134,7 @@ export const analyzeLocation = findPlace;
 
 /**
  * Around Me — Google Nearby Search (max 10) + GPT enrichment.
- * Costs findAroundMe credits (50). Returns locations-shaped places to save.
+ * Costs findAroundMe credits (25). Returns locations-shaped places to save.
  */
 export async function findAroundMe(
   request: FindAroundMeRequest
@@ -190,18 +199,22 @@ export async function getCityIntelligenceForPlace(input: {
 }
 
 /**
- * Trip Planner AI — server builds request + fills routes/places.
- * Client sends only tripId, language, temperatureType.
+ * Trip Planner AI — queues async itinerary generation.
+ * Returns immediately with `{ async: true }`; result lands on trip.aiPlan.
+ * Client sends only tripId, language, temperatureType, mode.
  */
 export async function planTrip(
   request: PlanTripRequest
-): Promise<PlanTripAiResult> {
+): Promise<PlanTripAiResult | PlanTripAiAsyncAccepted> {
   const callable = httpsCallable<PlanTripRequest, PlanTripResponse>(
     getCloudFunctions(),
     "planTrip"
   );
   const result = await callable(request);
   if (isInsufficientAICreditsError(result.data)) {
+    throw Object.assign(new Error(result.data.message), result.data);
+  }
+  if (isPlanTripBlockedError(result.data)) {
     throw Object.assign(new Error(result.data.message), result.data);
   }
   return result.data;

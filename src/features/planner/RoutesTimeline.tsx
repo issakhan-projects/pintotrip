@@ -40,6 +40,7 @@ import type {
 import type { PlaceCategory } from "@/types/trip-plan";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import type { SavedLocation } from "@/hooks/useLocations";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 import { AccommodationSheet } from "./AccommodationSheet";
 import { listTripAccommodations } from "./essentialsHelpers";
 import { RoutesTimelineMap } from "./RoutesTimelineMap";
@@ -694,14 +695,15 @@ export function RoutesTimeline({
     () => listTripAccommodations(trip),
     [trip]
   );
+  const timeFormat = useTimeFormat();
   const placeLookup = useMemo(
     () => locationsToPlaceLookup(locations),
     [locations]
   );
 
   const days = useMemo(
-    () => buildRouteTimeline(routes, trip, placeLookup),
-    [routes, trip, placeLookup]
+    () => buildRouteTimeline(routes, trip, placeLookup, timeFormat),
+    [routes, trip, placeLookup, timeFormat]
   );
   const flatEvents = useMemo(() => {
     const events = days.flatMap((day) => day.events);

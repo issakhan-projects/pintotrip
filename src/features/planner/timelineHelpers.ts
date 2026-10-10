@@ -14,6 +14,11 @@ import type {
 } from "@/types/trip-planner";
 import type { LocationStatus } from "@/types/location";
 import type { PlaceCategory } from "@/types/trip-plan";
+import type { TimeFormat } from "@/types/user";
+import {
+  clockIntlOptions,
+  formatClockParts,
+} from "@/lib/time/formatClock";
 import { listTripAccommodations } from "./essentialsHelpers";
 import { listTripDestinations, toIsoDate } from "./tripDestinations";
 import {
@@ -184,20 +189,21 @@ export function dateKeyFromIso(iso?: string): string | null {
 
 export function formatTimelineTime(
   iso?: string,
-  timeKnown?: boolean
+  timeKnown?: boolean,
+  timeFormat?: TimeFormat | null
 ): string | null {
   if (!iso?.trim()) return null;
   // Date-only placeholder — do not show 00:00 as a real clock time.
   if (timeKnown === false) return null;
   const match = iso.trim().match(/T(\d{2}):(\d{2})/);
-  if (match) return `${match[1]}:${match[2]}`;
+  if (match) {
+    return formatClockParts(Number(match[1]), Number(match[2]), timeFormat);
+  }
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+  return new Intl.DateTimeFormat(undefined, clockIntlOptions(timeFormat)).format(
+    date
+  );
 }
 
 export function formatTimelineDateLabel(dateKey: string): string {
@@ -626,7 +632,8 @@ function appendItineraryPlaceEvents(
 export function buildRouteTimeline(
   routes: TripRoute[],
   trip: TripPlannerDoc,
-  places: TimelinePlaceLookup[] = []
+  places: TimelinePlaceLookup[] = [],
+  timeFormat?: TimeFormat | null
 ): TimelineDay[] {
   const ordered = [...routes].sort((a, b) => a.order - b.order);
   const itineraryGaps = listItineraryGaps(trip);
@@ -647,7 +654,11 @@ export function buildRouteTimeline(
       id: `route:${route.id}`,
       route,
       instantMs: instantMs(depIso) ?? instantMs(arrIso),
-      timeLabel: formatTimelineTime(depIso, route.departure?.timeKnown),
+      timeLabel: formatTimelineTime(
+        depIso,
+        route.departure?.timeKnown,
+        timeFormat
+      ),
       dateKey: depKey ?? arrKey,
     });
 
@@ -685,7 +696,11 @@ export function buildRouteTimeline(
         route,
         cityName: arrivalCity,
         instantMs: instantMs(arrIso),
-        timeLabel: formatTimelineTime(arrIso, route.arrival?.timeKnown),
+        timeLabel: formatTimelineTime(
+          arrIso,
+          route.arrival?.timeKnown,
+          timeFormat
+        ),
         dateKey: arrKey ?? depKey,
       });
     }

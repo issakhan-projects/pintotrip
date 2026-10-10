@@ -12,6 +12,7 @@ import {
   startAfter,
   Timestamp,
   getDocsFromCache,
+  onSnapshot,
   type DocumentReference,
   type CollectionReference,
   type QueryDocumentSnapshot,
@@ -40,6 +41,7 @@ import {
 import { normalizeTripDoc } from "@/lib/planner/normalize-trip";
 import { deleteAllTripRoutes } from "@/services/trip-routes";
 import type {
+  TripAiPlan,
   TripDestination,
   TripPlanner,
   TripPlannerCreateInput,
@@ -439,6 +441,115 @@ export async function createTrip(
   }
 
   return ref.id;
+}
+
+/**
+ * Optimistically mark planTrip as queued in the local trip cache.
+ * The callable writes the same field server-side; the detail page does not
+ * use a live trip onSnapshot by default, so without this the in-progress
+ * banner never appears after the sheet closes.
+ */
+export function markTripAiPlanQueued(
+  userId: string,
+  tripId: string,
+  input: {
+    mode: "generate" | "regenerate";
+    language?: string;
+    temperatureType?: "celsius" | "fahrenheit";
+  }
+): void {
+  const aiPlan: TripAiPlan = {
+    status: "queued",
+    mode: input.mode,
+    ...(input.language ? { language: input.language } : {}),
+    ...(input.temperatureType
+      ? { temperatureType: input.temperatureType }
+      : {}),
+    requestedAt: Date.now(),
+  };
+  const detailKey = tripDetailKey(userId, tripId);
+  let patched = patchTripInCache(userId, tripId, {
+    aiPlan,
+    updatedAt: approxNowTimestamp(),
+  } as Partial<TripPlannerDoc>);
+  if (!patched) {
+    const fallback =
+      loadOfflineTrip(userId, tripId) ??
+      tripsStore.get(tripsKey(userId))?.items.find((t) => t.id === tripId) ??
+      null;
+    if (fallback) {
+      const next = normalizeTripDoc(tripId, {
+        ...fallback,
+        aiPlan,
+        updatedAt: approxNowTimestamp(),
+      } as TripPlanner & { destination?: TripDestination });
+      tripDetailStore.set(detailKey, next);
+      upsertTripInListCache(userId, next);
+      saveOfflineTrip(userId, next);
+      patched = next;
+    }
+  }
+  if (patched) saveOfflineTrip(userId, patched);
+}
+
+/**
+ * Live trip doc listener — used while aiPlan is queued/running so the UI
+ * picks up running → ready/error without a full page refresh.
+ */
+export function subscribeTripDocLive(
+  userId: string,
+  tripId: string,
+  onError?: (err: Error) => void
+): () => void {
+  return onSnapshot(
+    tripRef(userId, tripId),
+    (snap) => {
+      if (!snap.exists()) return;
+      const normalized = normalizeTripDoc(
+        tripId,
+        snap.data() as TripPlanner & { destination?: TripDestination }
+      );
+      tripDetailStore.set(tripDetailKey(userId, tripId), normalized);
+      upsertTripInListCache(userId, normalized);
+      saveOfflineTrip(userId, normalized);
+    },
+    (err) => {
+      onError?.(err);
+    }
+  );
+}
+
+/** Remove async planTrip job state after save/dismiss. */
+export async function clearTripAiPlan(
+  userId: string,
+  tripId: string
+): Promise<void> {
+  const dropAiPlanFromCache = () => {
+    const existing =
+      tripDetailStore.get(tripDetailKey(userId, tripId)) ?? null;
+    if (!existing) return null;
+    const { aiPlan: _removed, ...rest } = existing;
+    const next = {
+      ...rest,
+      updatedAt: approxNowTimestamp(),
+    } as TripPlannerDoc;
+    tripDetailStore.set(tripDetailKey(userId, tripId), next);
+    upsertTripInListCache(userId, next);
+    saveOfflineTrip(userId, next);
+    return next;
+  };
+
+  try {
+    await updateDoc(tripRef(userId, tripId), {
+      aiPlan: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    if (dropAiPlanFromCache()) return;
+    throw err;
+  }
+
+  dropAiPlanFromCache();
 }
 
 export async function updateTrip(

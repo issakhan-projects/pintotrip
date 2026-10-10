@@ -28,6 +28,7 @@ import { Button, TextInput } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { listTravelDocuments } from "@/lib/documents";
 import { cx } from "@/lib/utils";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 import {
   TRAVEL_DOCUMENT_KIND_LABELS,
   type TravelDocument,
@@ -323,6 +324,7 @@ function FlightsSummary({
   items: TripFlightEssential[];
   trip: TripPlannerDoc;
 }) {
+  const timeFormat = useTimeFormat();
   const routeCities = listFlightRouteCities(trip);
   const fallbackRoute = flightRouteLabel(routeCities);
   const visible = items.slice(0, 2);
@@ -343,7 +345,9 @@ function FlightsSummary({
             {route ? <p className="font-medium text-text">{route}</p> : null}
             {codes.length > 0 ? <p>{codes.join(" → ")}</p> : null}
             {flight.departureAt?.trim() ? (
-              <p className="truncate">{formatFlightWhen(flight.departureAt)}</p>
+              <p className="truncate">
+                {formatFlightWhen(flight.departureAt, timeFormat)}
+              </p>
             ) : null}
             {flight.bookingLink ? (
               <p className="inline-flex items-center gap-1 text-primary">

@@ -22,6 +22,8 @@ import { Sheet } from "@/components/ui/Sheet";
 import { TravelMap } from "@/features/map/TravelMap";
 import { reverseGeocode } from "@/lib/maps";
 import { cx } from "@/lib/utils";
+import { formatHhMmDisplay } from "@/lib/time/formatClock";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 import type { TripAccommodation, TripPlannerDoc } from "@/types/trip-planner";
 import { primaryTripDestination } from "./tripDestinations";
 import {
@@ -150,6 +152,7 @@ export function AccommodationSheet({
   onSaveAll: (items: TripAccommodation[]) => Promise<void>;
   startInForm?: boolean;
 }) {
+  const timeFormat = useTimeFormat();
   const [view, setView] = useState<"list" | "form">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [mode, setMode] = useState<AccommodationMode>("link");
@@ -703,7 +706,10 @@ export function AccommodationSheet({
                                 </p>
                                 <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-secondary">
                                   <Clock className="h-3 w-3" aria-hidden />
-                                  {stayCheckInTime}
+                                  {formatHhMmDisplay(
+                                    stayCheckInTime,
+                                    timeFormat
+                                  )}
                                 </p>
                               </div>
                               <div className="min-w-0">
@@ -719,7 +725,10 @@ export function AccommodationSheet({
                                 </p>
                                 <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-text-secondary">
                                   <Clock className="h-3 w-3" aria-hidden />
-                                  {stayCheckOutTime}
+                                  {formatHhMmDisplay(
+                                    stayCheckOutTime,
+                                    timeFormat
+                                  )}
                                 </p>
                               </div>
                             </div>

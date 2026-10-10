@@ -1,4 +1,9 @@
 /** Helpers for trip route cards, duration, and timezone-aware datetimes. */
+import type { TimeFormat } from "@/types/user";
+import {
+  clockIntlOptions,
+  formatClockParts,
+} from "@/lib/time/formatClock";
 
 import type {
   RoutePoint,
@@ -277,7 +282,8 @@ function wallPartsToDate(
 export function formatRouteWhen(
   iso?: string,
   timeZone?: string,
-  timeKnown?: boolean
+  timeKnown?: boolean,
+  timeFormat?: TimeFormat | null
 ): string | null {
   if (!iso?.trim()) return null;
   const date = new Date(iso);
@@ -293,9 +299,7 @@ export function formatRouteWhen(
     : {
         day: "numeric",
         month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
+        ...clockIntlOptions(timeFormat),
       };
 
   const parts = routeWallParts(iso, timeZone);
@@ -308,16 +312,17 @@ export function formatRouteWhen(
   return new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
-/** Clock only (`19:40`). Null when time is unknown / date-only. */
+/** Clock only. Null when time is unknown / date-only. */
 export function formatRouteClock(
   iso?: string,
   timeZone?: string,
-  timeKnown?: boolean
+  timeKnown?: boolean,
+  timeFormat?: TimeFormat | null
 ): string | null {
   if (!iso?.trim() || timeKnown === false) return null;
   const parts = routeWallParts(iso, timeZone);
   if (!parts) return null;
-  return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
+  return formatClockParts(parts.hour, parts.minute, timeFormat);
 }
 
 /** Header date like `Mon, 12 Oct 2026`. */

@@ -6,7 +6,7 @@ export const AI_CREDIT_COSTS = {
   findPlace: 10,
   getCityIntelligence: 5,
   /** Nearby search + GPT enrichment for Around Me (max 10 places). */
-  findAroundMe: 50,
+  findAroundMe: 25,
   /** First AI itinerary fill — Ordinary trip. */
   planTrip: 50,
   /** First AI itinerary fill — Advanced trip. */

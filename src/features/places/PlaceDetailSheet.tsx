@@ -15,7 +15,11 @@ import {
 import { Sheet } from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { SavedLocation } from "@/hooks/useLocations";
-import type { LocationStatus } from "@/types/location";
+import {
+  LOCATION_STATUSES,
+  type LocationStatus,
+  type LocationStatusUpdateOptions,
+} from "@/types/location";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { formatConfidenceCopy, cx } from "@/lib/utils";
 
@@ -23,7 +27,10 @@ interface PlaceDetailSheetProps {
   place: SavedLocation | null;
   open: boolean;
   onClose: () => void;
-  onUpdateStatus: (status: LocationStatus) => Promise<void>;
+  onUpdateStatus: (
+    status: LocationStatus,
+    options?: LocationStatusUpdateOptions
+  ) => Promise<void>;
   onSaveNote: (note: string) => Promise<void>;
   onDelete?: () => Promise<void>;
   onViewOnMap?: (place: SavedLocation) => void;
@@ -58,7 +65,7 @@ function isGoogleMapsPhotoUrl(url: string): boolean {
   }
 }
 
-const STATUSES: LocationStatus[] = ["planned", "visited", "cancelled"];
+const STATUSES: LocationStatus[] = [...LOCATION_STATUSES];
 
 export function PlaceDetailSheet({
   place,
@@ -151,7 +158,7 @@ export function PlaceDetailSheet({
     setStatusBusy(true);
     setStatusMenuOpen(false);
     try {
-      await onUpdateStatus(status);
+      await onUpdateStatus(status, { visitedAt: null });
     } finally {
       setStatusBusy(false);
     }
@@ -411,7 +418,13 @@ export function PlaceDetailSheet({
                 </span>
               ) : null}
             </div>
-            <div ref={statusMenuRef} className="relative shrink-0">
+            <div
+              ref={statusMenuRef}
+              className={cx(
+                "relative shrink-0",
+                statusMenuOpen && "z-50"
+              )}
+            >
               <button
                 type="button"
                 disabled={statusBusy}
@@ -435,7 +448,8 @@ export function PlaceDetailSheet({
               {statusMenuOpen ? (
                 <div
                   role="menu"
-                  className="absolute right-0 z-20 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  className="absolute right-0 z-50 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
                 >
                   {STATUSES.map((status) => {
                     const selected = current.status === status;
@@ -478,7 +492,8 @@ export function PlaceDetailSheet({
           </p>
         </div>
 
-        {current.status === "planned" ? (
+        {current.status === "planned" ||
+        current.status === "want_to_visit" ? (
           <Button
             color="primary"
             icon={Check}

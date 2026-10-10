@@ -223,6 +223,18 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
     return [...cityMarkers, ...placeMarkers];
   }, [locations, favoriteCities]);
 
+  const legendCounts = useMemo(() => {
+    let visited = 0;
+    let planned = 0;
+    let wantToVisit = 0;
+    for (const place of locations) {
+      if (place.status === "visited") visited += 1;
+      else if (place.status === "planned") planned += 1;
+      else if (place.status === "want_to_visit") wantToVisit += 1;
+    }
+    return { visited, planned, wantToVisit };
+  }, [locations]);
+
   const livingRoutes = useMemo(
     () => buildLivingRoutesFromTrips(trips),
     [trips]
@@ -394,7 +406,9 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             void handleMapClick(coords);
           }}
         />
-        {showMapSurface && isPro ? <MapCityLegend /> : null}
+        {showMapSurface && isPro ? (
+          <MapCityLegend counts={legendCounts} />
+        ) : null}
       </div>
 
       {showListSurface ? (
@@ -615,6 +629,22 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       <NotificationBanner
         userId={user.uid}
         onOpenProfile={() => goToTab("profile")}
+        onOpenLink={(link, type) => {
+          if (link?.startsWith("/trip-planner/")) {
+            router.push(link);
+            return;
+          }
+          if (
+            type === "plan_trip_ready" ||
+            type === "plan_trip_error"
+          ) {
+            goToTab("planner");
+            return;
+          }
+          if (link?.includes("profile") || type === "referral_reward") {
+            goToTab("profile");
+          }
+        }}
       />
 
       {pickMode ? (
@@ -765,10 +795,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         userId={user.uid}
         allowGooglePlacePhotos={isPro}
         onClose={() => setPreview(null)}
-        onUpdateStatus={async (status: LocationStatus) => {
+        onUpdateStatus={async (status: LocationStatus, options) => {
           if (!preview) return;
-          await patchLocation(preview.id, { status });
-          setPreview({ ...preview, status });
+          const visitedAt =
+            status === "visited"
+              ? (options?.visitedAt ?? null)
+              : null;
+          await patchLocation(preview.id, { status, visitedAt });
+          setPreview({ ...preview, status, visitedAt });
         }}
         onSaveNote={async (note: string) => {
           if (!preview) return;
@@ -808,10 +842,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         open={Boolean(detail)}
         allowGooglePlacePhotos={isPro}
         onClose={() => setDetail(null)}
-        onUpdateStatus={async (status: LocationStatus) => {
+        onUpdateStatus={async (status: LocationStatus, options) => {
           if (!detail) return;
-          await patchLocation(detail.id, { status });
-          setDetail({ ...detail, status });
+          const visitedAt =
+            status === "visited"
+              ? (options?.visitedAt ?? null)
+              : null;
+          await patchLocation(detail.id, { status, visitedAt });
+          setDetail({ ...detail, status, visitedAt });
         }}
         onSaveNote={async (note: string) => {
           if (!detail) return;
@@ -869,6 +907,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         onClose={() => setCityInfo(null)}
         userId={user.uid}
         city={cityInfo}
+        aiCreditsBalance={aiCreditsBalance}
         isFavorite={
           cityInfo
             ? isFavorite(cityInfo.cityName, cityInfo.countryName, {
@@ -916,6 +955,17 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         userId={user.uid}
         onClose={() => setNotificationsOpen(false)}
         onOpenLink={(link, type) => {
+          if (link?.startsWith("/trip-planner/")) {
+            router.push(link);
+            return;
+          }
+          if (
+            type === "plan_trip_ready" ||
+            type === "plan_trip_error"
+          ) {
+            goToTab("planner");
+            return;
+          }
           if (link?.includes("profile") || type === "referral_reward") {
             goToTab("profile");
           }

@@ -127,7 +127,7 @@ export type TripPlannerAiRequestDestination = {
    */
   cityIntelligence?: CityIntelligenceResult;
   /**
-   * Trip saved places for this city with status === "planned" only.
+   * Trip saved places for this city with status planned or want_to_visit.
    * Always `[]` for transit/destination cities (even when empty).
    */
   savedPlaces?: TripPlannerAiSavedPlace[];
@@ -364,8 +364,8 @@ export type FillTripPlannerAiPlacesResult = {
 };
 
 /**
- * planTrip callable success — full AI itinerary built server-side.
- * Client sends only tripId + language + temperatureType.
+ * planTrip callable success — full AI itinerary (legacy sync shape).
+ * Async path returns {@link PlanTripAiAsyncAccepted}; result lands on trip.aiPlan.
  */
 export type PlanTripAiResult = {
   success: true;
@@ -378,6 +378,24 @@ export type PlanTripAiResult = {
   /** Aggregated request (debug). */
   request?: TripPlannerAiRequest;
 };
+
+/** planTrip callable accepted the job — pipeline runs in the background. */
+export type PlanTripAiAsyncAccepted = {
+  success: true;
+  async: true;
+  status: "queued" | "running";
+};
+
+export function isPlanTripAiAsyncAccepted(
+  value: unknown
+): value is PlanTripAiAsyncAccepted {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { success?: unknown }).success === true &&
+    (value as { async?: unknown }).async === true
+  );
+}
 
 /** Inputs already loaded from the app / Firestore — builder does not fetch. */
 export type BuildTripPlannerAiRequestInput = {

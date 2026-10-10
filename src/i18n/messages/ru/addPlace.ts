@@ -81,6 +81,14 @@ export const addPlace = {
   searching: "Поиск…",
   noMatches: "Пока нет совпадений. Уточните название.",
   possibleMatches: "Возможные совпадения",
+  selectPossibleMatch: "Нажмите на совпадение, если оно верное",
+  confirmPossibleMatchTitle: "Использовать это место?",
+  confirmPossibleMatchBody:
+    "Вы уверены, что «{title}» — это место на фото?",
+  confirmPossibleMatch: "Да, это место",
+  resolveMatchFailed:
+    "Не удалось найти это место на карте. Выберите другое совпадение или фото.",
+  selectedFromMatchesWhy: "Выбрано из предложенных возможных совпадений.",
   fields: {
     title: "Название места",
     city: "Город",

@@ -24,6 +24,13 @@ export const places = {
   whyWeThinkThis: "Неліктен бұлай ойлаймыз:",
   markVisited: "Барылған деп белгілеу",
   visited: "Барылған",
+  visitedWhen: "Қашан бардыңыз?",
+  visitedAtLabel: "Барылған",
+  visitedDateTime: "Күні мен уақыты",
+  confirmVisited: "Растау",
+  skipVisitedTime: "Өткізіп жіберу",
+  cancelVisitedTime: "Болдырмау",
+  statusUpdateFailed: "Статусты жаңарту мүмкін болмады. Қайта көріңіз.",
   deleteDesc: "{title} картадан және орындар тізімінен өшіріледі. Бұл әрекетті қайтару мүмкін емес.",
   confidence: {
   found: "Табылды",

@@ -104,6 +104,10 @@ export const FirestorePaths = {
   notifications: (userId: string) => `users/${userId}/notifications`,
   notification: (userId: string, notificationId: string) =>
     `users/${userId}/notifications/${notificationId}`,
+  /** Web push tokens: users/{userId}/fcmTokens/{tokenId} */
+  fcmTokens: (userId: string) => `users/${userId}/fcmTokens`,
+  fcmToken: (userId: string, tokenId: string) =>
+    `users/${userId}/fcmTokens/${tokenId}`,
   /** Per-user trips: users/{userId}/tripPlanner/{tripId} */
   tripPlanner: (userId: string) => `users/${userId}/tripPlanner`,
   trip: (userId: string, tripId: string) =>

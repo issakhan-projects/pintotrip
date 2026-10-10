@@ -23,6 +23,13 @@ const STYLES: Record<CityHighlightStatus, CityBoundaryStyle> = {
     strokeOpacity: 0.8,
     strokeWeight: 2,
   },
+  want_to_visit: {
+    fillColor: "#CA8A04",
+    fillOpacity: 0.3,
+    strokeColor: "#CA8A04",
+    strokeOpacity: 0.8,
+    strokeWeight: 2,
+  },
 };
 
 export function getCityBoundaryStyle(

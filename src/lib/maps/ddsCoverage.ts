@@ -51,6 +51,18 @@ const NO_ADMIN1_COUNTRIES = new Set([
   "va",
   "ps",
   "ss",
+  // Country-only in Google DDS (no Admin1 polygons)
+  "ck", // Cook Islands — Aitutaki etc.
+  "cv", // Cape Verde
+  "cx", // Christmas Island
+  "fk", // Falkland Islands
+  "gi", // Gibraltar
+  "io", // British Indian Ocean Territory
+  "ml", // Mali
+  "nf", // Norfolk Island
+  "pn", // Pitcairn Islands
+  "tf", // French Southern Territories
+  "um", // U.S. Outlying Islands
 ]);
 
 const NO_ADMIN2_COUNTRIES = new Set([

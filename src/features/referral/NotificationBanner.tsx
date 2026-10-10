@@ -13,6 +13,7 @@ import { useI18n } from "@/i18n";
 interface NotificationBannerProps {
   userId: string;
   onOpenProfile: () => void;
+  onOpenLink?: (link: string | null, type: string) => void;
 }
 
 /**
@@ -21,6 +22,7 @@ interface NotificationBannerProps {
 export function NotificationBanner({
   userId,
   onOpenProfile,
+  onOpenLink,
 }: NotificationBannerProps) {
   const { t } = useI18n();
   const [latest, setLatest] = useState<SavedNotification | null>(null);
@@ -50,6 +52,10 @@ export function NotificationBanner({
 
   function handleOpen() {
     void dismiss();
+    if (onOpenLink) {
+      onOpenLink(latest?.link ?? null, latest?.type ?? "");
+      return;
+    }
     if (latest?.link?.includes("profile") || latest?.type === "referral_reward") {
       onOpenProfile();
     }

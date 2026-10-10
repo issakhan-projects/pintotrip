@@ -192,7 +192,9 @@ function plannedSavedPlacesForCity(
   return locations
     .filter((loc) => {
       if (!allowed.has(loc.id)) return false;
-      if (loc.status !== "planned") return false;
+      if (loc.status !== "planned" && loc.status !== "want_to_visit") {
+        return false;
+      }
       return normalizeCityId(loc.city?.id) === cityId;
     })
     .map(slimSavedPlace);

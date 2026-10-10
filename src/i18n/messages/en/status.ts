@@ -1,5 +1,6 @@
 export const status = {
   planning: "Planning",
+  wantToVisit: "Want to visit",
   planned: "Planned",
   ongoing: "Ongoing",
   completed: "Completed",

@@ -51,7 +51,9 @@ export function addLocationStatusToCity(
   sign: 1 | -1
 ): void {
   delta.savedPlacesCount += sign;
-  if (status === "planned") delta.plannedCount += sign;
+  if (status === "planned" || status === "want_to_visit") {
+    delta.plannedCount += sign;
+  }
   if (status === "visited") delta.visitedCount += sign;
   if (sign > 0) delta.bumpActivity = true;
 }

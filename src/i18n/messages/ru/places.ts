@@ -24,6 +24,13 @@ export const places = {
   whyWeThinkThis: "Почему мы так считаем:",
   markVisited: "Отметить как посещённое",
   visited: "Посещено",
+  visitedWhen: "Когда вы посетили?",
+  visitedAtLabel: "Посещено",
+  visitedDateTime: "Дата и время",
+  confirmVisited: "Подтвердить",
+  skipVisitedTime: "Пропустить",
+  cancelVisitedTime: "Отмена",
+  statusUpdateFailed: "Не удалось обновить статус. Попробуйте ещё раз.",
   deleteDesc: "{title} будет удалено с карты и из списка мест. Это нельзя отменить.",
   confidence: {
     found: "Нашли",

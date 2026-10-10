@@ -5,6 +5,7 @@ import {
   Binoculars,
   Building2,
   Check,
+  ChevronDown,
   CircleDot,
   Coffee,
   Coins,
@@ -40,11 +41,17 @@ import { Button, DeleteConfirmModal, TextInput } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import type { SavedLocation } from "@/hooks/useLocations";
-import type {
-  LocationAiMetadata,
-  LocationImage,
-  LocationStatus,
+import {
+  LOCATION_STATUSES,
+  type LocationAiMetadata,
+  type LocationImage,
+  type LocationStatus,
+  type LocationStatusUpdateOptions,
 } from "@/types/location";
+import { useI18n } from "@/i18n";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
+import { clockIntlOptions } from "@/lib/time/formatClock";
+import type { TimeFormat } from "@/types/user";
 import {
   PLACE_CATEGORY_LABELS,
   type PlaceCategory,
@@ -101,6 +108,40 @@ const PLACE_CATEGORY_ICONS: Record<PlaceCategory, LucideIcon> = {
 };
 
 const CITY_INTEL_CREDITS = AI_CREDIT_COSTS.getCityIntelligence;
+const STATUSES: LocationStatus[] = [...LOCATION_STATUSES];
+
+function toDatetimeLocalValue(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
+}
+
+function fromDatetimeLocalValue(value: string): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const date = new Date(trimmed);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatVisitedAt(
+  value: Timestamp | null | undefined,
+  locale: string,
+  timeFormat: TimeFormat
+): string | null {
+  if (!value || typeof value.toDate !== "function") return null;
+  const date = value.toDate();
+  if (Number.isNaN(date.getTime())) return null;
+  const bcp47 = locale === "kz" ? "kk" : locale;
+  return date.toLocaleString(bcp47, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    ...clockIntlOptions(timeFormat),
+  });
+}
 
 interface PlacePreviewSheetProps {
   place: SavedLocation | null;
@@ -108,7 +149,10 @@ interface PlacePreviewSheetProps {
   onClose: () => void;
   /** Required to call City Intelligence and fill location info. */
   userId?: string;
-  onUpdateStatus?: (status: LocationStatus) => Promise<void>;
+  onUpdateStatus?: (
+    status: LocationStatus,
+    options?: LocationStatusUpdateOptions
+  ) => Promise<void>;
   onSaveNote?: (note: string) => Promise<void>;
   /**
    * Persist City Intelligence summary onto this location
@@ -161,11 +205,17 @@ export function PlacePreviewSheet({
   onViewOnMap,
   allowGooglePlacePhotos = false,
 }: PlacePreviewSheetProps) {
+  const { t, locale } = useI18n();
+  const timeFormat = useTimeFormat();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [visitedPickerOpen, setVisitedPickerOpen] = useState(false);
+  const [visitedLocal, setVisitedLocal] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -182,6 +232,7 @@ export function PlacePreviewSheet({
   const [removingPhotoUrl, setRemovingPhotoUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const photoBusy = uploadingPhoto || addingStockPhoto;
 
@@ -191,6 +242,10 @@ export function PlacePreviewSheet({
 
   useEffect(() => {
     setMenuOpen(false);
+    setStatusMenuOpen(false);
+    setVisitedPickerOpen(false);
+    setVisitedLocal("");
+    setStatusError(null);
     setNoteOpen(false);
     setConfirmDeleteOpen(false);
     setDeleting(false);
@@ -288,6 +343,17 @@ export function PlacePreviewSheet({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!statusMenuRef.current?.contains(event.target as Node)) {
+        setStatusMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [statusMenuOpen]);
 
   if (!place) return null;
 
@@ -450,14 +516,60 @@ export function PlacePreviewSheet({
     }
   }
 
-  async function handleStatus(status: LocationStatus) {
-    if (!onUpdateStatus || status === current.status) return;
+  function openVisitedPicker() {
+    setMenuOpen(false);
+    setStatusMenuOpen(false);
+    setNoteOpen(false);
+    const existing =
+      current.status === "visited" && current.visitedAt
+        ? current.visitedAt.toDate()
+        : new Date();
+    setVisitedLocal(toDatetimeLocalValue(existing));
+    setVisitedPickerOpen(true);
+  }
+
+  async function applyStatus(
+    status: LocationStatus,
+    options?: LocationStatusUpdateOptions
+  ) {
+    if (!onUpdateStatus) return;
     setStatusBusy(true);
+    setStatusError(null);
+    setStatusMenuOpen(false);
+    setVisitedPickerOpen(false);
     try {
-      await onUpdateStatus(status);
+      await onUpdateStatus(status, options);
+    } catch (err) {
+      setStatusError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : t("places.statusUpdateFailed")
+      );
     } finally {
       setStatusBusy(false);
     }
+  }
+
+  async function handleStatus(status: LocationStatus) {
+    if (!onUpdateStatus) return;
+    if (status === current.status) {
+      setStatusMenuOpen(false);
+      return;
+    }
+    if (status === "visited") {
+      openVisitedPicker();
+      return;
+    }
+    await applyStatus(status, { visitedAt: null });
+  }
+
+  async function confirmVisitedWithTime() {
+    const date = fromDatetimeLocalValue(visitedLocal) ?? new Date();
+    await applyStatus("visited", { visitedAt: Timestamp.fromDate(date) });
+  }
+
+  async function confirmVisitedSkipTime() {
+    await applyStatus("visited", { visitedAt: null });
   }
 
   async function handleConfirmDelete() {
@@ -569,6 +681,7 @@ export function PlacePreviewSheet({
           aria-expanded={menuOpen}
           onClick={() => {
             setNoteOpen(false);
+            setStatusMenuOpen(false);
             setMenuOpen((v) => !v);
           }}
           className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-surface hover:text-text"
@@ -843,8 +956,74 @@ export function PlacePreviewSheet({
                   />
                   Status
                 </span>
-                <StatusBadge status={current.status} />
+                {onUpdateStatus ? (
+                  <div
+                    ref={statusMenuRef}
+                    className={cx(
+                      "relative",
+                      // Above Tags / Confidence rows — otherwise the menu paints
+                      // under them and the first option (want_to_visit) is unclickable.
+                      statusMenuOpen && "z-50"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      disabled={statusBusy}
+                      aria-haspopup="menu"
+                      aria-expanded={statusMenuOpen}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setNoteOpen(false);
+                        setVisitedPickerOpen(false);
+                        setStatusMenuOpen((v) => !v);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1.5 transition-colors hover:bg-surface disabled:opacity-60"
+                    >
+                      <StatusBadge status={current.status} />
+                      <ChevronDown
+                        className={cx(
+                          "h-3.5 w-3.5 text-text-muted transition-transform",
+                          statusMenuOpen && "rotate-180"
+                        )}
+                      />
+                    </button>
+                    {statusMenuOpen ? (
+                      <div
+                        role="menu"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        className="absolute left-0 z-50 mt-1.5 min-w-[10.5rem] overflow-hidden rounded-xl border border-border bg-surface-elevated py-1 shadow-lg"
+                      >
+                        {STATUSES.map((status) => {
+                          const selected = current.status === status;
+                          return (
+                            <button
+                              key={status}
+                              type="button"
+                              role="menuitem"
+                              disabled={statusBusy}
+                              onClick={() => void handleStatus(status)}
+                              className={cx(
+                                "flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                                selected ? "bg-primary-tint" : "hover:bg-surface"
+                              )}
+                            >
+                              <StatusBadge status={status} />
+                              {selected ? (
+                                <Check className="h-3.5 w-3.5 text-primary" />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <StatusBadge status={current.status} />
+                )}
               </div>
+              {statusError ? (
+                <p className="mt-1.5 text-xs text-error">{statusError}</p>
+              ) : null}
               {current.category && CategoryIcon ? (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <span className="inline-flex w-24 shrink-0 items-center gap-1.5 text-sm font-medium text-text-secondary">
@@ -904,20 +1083,90 @@ export function PlacePreviewSheet({
               </div>
             ) : null}
 
-            {onUpdateStatus && current.status === "planned" ? (
+            {visitedPickerOpen && onUpdateStatus ? (
+              <div className="rounded-xl border border-border bg-surface p-3">
+                <p className="text-sm font-medium text-text">
+                  {t("places.visitedWhen")}
+                </p>
+                <label className="mt-3 block text-xs font-medium text-text-secondary">
+                  {t("places.visitedDateTime")}
+                  <input
+                    type="datetime-local"
+                    value={visitedLocal}
+                    onChange={(e) => setVisitedLocal(e.target.value)}
+                    className={cx(
+                      "mt-1.5 block w-full min-h-11 rounded-xl border border-border bg-surface-elevated",
+                      "px-3 py-2.5 text-sm text-text outline-none transition-colors",
+                      "focus:border-primary focus:ring-2 focus:ring-primary/20",
+                      "[color-scheme:light]"
+                    )}
+                  />
+                </label>
+                <div className="mt-3 flex flex-col gap-2">
+                  <Button
+                    color="primary"
+                    icon={Check}
+                    disabled={statusBusy}
+                    loading={statusBusy}
+                    onClick={() => void confirmVisitedWithTime()}
+                    className="w-full"
+                  >
+                    {t("places.confirmVisited")}
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={statusBusy}
+                      onClick={() => {
+                        setVisitedPickerOpen(false);
+                        setVisitedLocal("");
+                      }}
+                      className="flex-1"
+                    >
+                      {t("places.cancelVisitedTime")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={statusBusy}
+                      loading={statusBusy}
+                      onClick={() => void confirmVisitedSkipTime()}
+                      className="flex-1"
+                    >
+                      {t("places.skipVisitedTime")}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : onUpdateStatus &&
+              (current.status === "planned" ||
+                current.status === "want_to_visit") ? (
               <Button
                 color="primary"
                 icon={Check}
                 disabled={statusBusy}
-                onClick={() => void handleStatus("visited")}
+                onClick={() => openVisitedPicker()}
                 className="w-full"
               >
-                Mark as visited
+                {t("places.markVisited")}
               </Button>
             ) : onUpdateStatus && current.status === "visited" ? (
-              <Button color="primary" icon={Check} disabled className="w-full">
-                Visited
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  color="primary"
+                  icon={Check}
+                  disabled={statusBusy}
+                  onClick={() => openVisitedPicker()}
+                  className="w-full"
+                >
+                  {t("places.visited")}
+                </Button>
+                {formatVisitedAt(current.visitedAt, locale, timeFormat) ? (
+                  <p className="text-center text-xs text-text-secondary">
+                    {t("places.visitedAtLabel")}:{" "}
+                    {formatVisitedAt(current.visitedAt, locale, timeFormat)}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
 
             {noteOpen && onSaveNote ? (

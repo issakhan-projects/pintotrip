@@ -81,6 +81,14 @@ export const addPlace = {
   searching: "Searching…",
   noMatches: "No matches yet. Try a more specific name.",
   possibleMatches: "Possible matches",
+  selectPossibleMatch: "Tap a match if it looks right",
+  confirmPossibleMatchTitle: "Use this place?",
+  confirmPossibleMatchBody:
+    "Are you sure “{title}” is the location in your photo?",
+  confirmPossibleMatch: "Yes, use this place",
+  resolveMatchFailed:
+    "Couldn't find that place on the map. Try another match or photo.",
+  selectedFromMatchesWhy: "Selected from suggested possible matches.",
   fields: {
     title: "Place title",
     city: "City",

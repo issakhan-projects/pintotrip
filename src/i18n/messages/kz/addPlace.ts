@@ -83,6 +83,14 @@ export const addPlace = {
   searching: "Іздеуде…",
   noMatches: "Әлі сәйкестік жоқ. Нақтырақ атау көріңіз.",
   possibleMatches: "Мүмкін сәйкестіктер",
+  selectPossibleMatch: "Дұрыс болса, сәйкестікті басыңыз",
+  confirmPossibleMatchTitle: "Осы орынды пайдалану керек пе?",
+  confirmPossibleMatchBody:
+    "«{title}» фотодағы орын екеніне сенімдісіз бе?",
+  confirmPossibleMatch: "Иә, осы орын",
+  resolveMatchFailed:
+    "Картадан ол орынды таба алмадық. Басқа сәйкестікті немесе фотоны көріңіз.",
+  selectedFromMatchesWhy: "Ұсынылған мүмкін сәйкестіктерден таңдалды.",
   fields: {
     title: "Орын атауы",
     city: "Қала",

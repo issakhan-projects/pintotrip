@@ -1,27 +1,40 @@
 "use client";
 
-import { CheckCircle2, Loader, XCircle, type LucideIcon } from "lucide-react";
+import {
+  CheckCircle2,
+  Loader,
+  Star,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
 import type { LocationStatus } from "@/types/location";
-import { statusLabel, cx } from "@/lib/utils";
+import { useI18n } from "@/i18n";
+import { cx } from "@/lib/utils";
 
 const STATUS_META: Record<
   LocationStatus,
-  { Icon: LucideIcon; className: string }
+  { Icon: LucideIcon; className: string; labelKey: string }
 > = {
-  visited: {
-    Icon: CheckCircle2,
+  want_to_visit: {
+    Icon: Star,
     className:
-      "border-success/45 bg-success-background text-success",
+      "border-want-to-visit/45 bg-want-to-visit-background text-want-to-visit",
+    labelKey: "status.wantToVisit",
   },
   planned: {
     Icon: Loader,
-    className:
-      "border-warning/45 bg-warning-background text-warning",
+    className: "border-warning/45 bg-warning-background text-warning",
+    labelKey: "status.planned",
+  },
+  visited: {
+    Icon: CheckCircle2,
+    className: "border-success/45 bg-success-background text-success",
+    labelKey: "status.visited",
   },
   cancelled: {
     Icon: XCircle,
-    className:
-      "border-error/45 bg-error-background text-error",
+    className: "border-error/45 bg-error-background text-error",
+    labelKey: "status.cancelled",
   },
 };
 
@@ -37,8 +50,10 @@ export function StatusBadge({
   className,
   iconOnly = false,
 }: StatusBadgeProps) {
-  const { Icon, className: tone } = STATUS_META[status];
-  const label = statusLabel(status);
+  const { t } = useI18n();
+  const meta = STATUS_META[status] ?? STATUS_META.planned;
+  const { Icon, className: tone, labelKey } = meta;
+  const label = t(labelKey);
   const alwaysIconOnly = iconOnly === true;
   const mobileIconOnly = iconOnly === "mobile";
 

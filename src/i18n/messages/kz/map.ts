@@ -1,8 +1,9 @@
 export const map = {
   legendAria: "Қала аймақтарының шартты белгілері",
   legend: {
-  visited: "Барылған",
-  planned: "Жоспарланған",
+    visited: "Барылған",
+    planned: "Жоспарланған",
+    wantToVisit: "Барғым келеді",
   },
   noPhoto: "Әзірге фото жоқ",
   status: "Мәртебесі",

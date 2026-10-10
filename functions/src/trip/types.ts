@@ -200,7 +200,7 @@ export type TripPlanningSavedLocation = {
   };
   images?: string[];
   note?: string;
-  status?: "planned" | "visited" | "cancelled";
+  status?: "want_to_visit" | "planned" | "visited" | "cancelled";
   category?: string;
   cityId?: string;
   countryId?: string;

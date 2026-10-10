@@ -12,6 +12,8 @@ import {
 import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
 import { cx } from "@/lib/utils";
+import { formatHhMmDisplay, formatHourLabel } from "@/lib/time/formatClock";
+import type { TimeFormat } from "@/types/user";
 
 export type TimePickerProps = {
   value: string;
@@ -22,6 +24,8 @@ export type TimePickerProps = {
   max?: string;
   /** Minute step (default 5). */
   stepMinutes?: number;
+  /** Display preference for the closed trigger (value storage stays 24h). */
+  timeFormat?: TimeFormat | null;
   disabled?: boolean;
   id?: string;
   placeholder?: string;
@@ -90,6 +94,7 @@ export function TimePicker({
   min,
   max,
   stepMinutes = DEFAULT_STEP,
+  timeFormat = "24h",
   disabled = false,
   id,
   placeholder = "Select time",
@@ -212,7 +217,9 @@ export function TimePicker({
     setOpen(false);
   }
 
-  const display = parsed ? formatTime(parsed.hour, parsed.minute) : "";
+  const display = parsed
+    ? formatHhMmDisplay(formatTime(parsed.hour, parsed.minute), timeFormat)
+    : "";
 
   const menu =
     open && mounted && menuStyle
@@ -263,7 +270,7 @@ export function TimePicker({
                         !anyMinuteAllowed && "cursor-not-allowed opacity-35"
                       )}
                     >
-                      {String(hour).padStart(2, "0")}
+                      {formatHourLabel(hour, timeFormat)}
                     </button>
                   );
                 })}

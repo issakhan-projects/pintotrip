@@ -454,9 +454,44 @@ export interface TripPlanner {
    */
   storyImageUrl?: string;
 
+  /**
+   * Async planTrip job state. Queued by the planTrip callable; filled by
+   * onTripAiPlanQueued. Cleared after the user saves or dismisses the result.
+   */
+  aiPlan?: TripAiPlan;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+/** Async AI itinerary job on the trip document. */
+export type TripAiPlanStatus = "queued" | "running" | "ready" | "error";
+
+export type TripAiPlan = {
+  status: TripAiPlanStatus;
+  mode: "generate" | "regenerate";
+  language?: string;
+  temperatureType?: "celsius" | "fahrenheit";
+  requestedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  error?: string;
+  /**
+   * Present when status === "ready".
+   * Shape matches TripPlannerAiResponseDay[] (kept loose to avoid type cycles).
+   */
+  itinerary?: Array<{
+    day: number;
+    date: string;
+    places: unknown[];
+    routes: unknown[];
+  }>;
+  model?: string;
+  stages?: string[];
+  warning?: string;
+  creditsCharged?: number;
+  remainingCredits?: number;
+};
 
 export type TripPlannerDoc = TripPlanner & { id: string };
 

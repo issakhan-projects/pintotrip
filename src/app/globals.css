@@ -36,6 +36,8 @@
   --color-error-background: #fef2f2;
 
   /* 6. Travel statuses */
+  --color-want-to-visit: #ca8a04;
+  --color-want-to-visit-background: #fefce8;
   --color-planned: #b45309;
   --color-visited: #15803d;
   --color-cancelled: #b91c1c;
@@ -69,6 +71,8 @@
   --color-warning-background: var(--color-warning-background);
   --color-error: var(--color-error);
   --color-error-background: var(--color-error-background);
+  --color-want-to-visit: var(--color-want-to-visit);
+  --color-want-to-visit-background: var(--color-want-to-visit-background);
   --color-planned: var(--color-planned);
   --color-visited: var(--color-visited);
   --color-cancelled: var(--color-cancelled);

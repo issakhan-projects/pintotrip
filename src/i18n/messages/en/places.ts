@@ -24,6 +24,13 @@ export const places = {
   whyWeThinkThis: "Why we think this:",
   markVisited: "Mark as visited",
   visited: "Visited",
+  visitedWhen: "When did you visit?",
+  visitedAtLabel: "Visited",
+  visitedDateTime: "Date & time",
+  confirmVisited: "Confirm",
+  skipVisitedTime: "Skip",
+  cancelVisitedTime: "Cancel",
+  statusUpdateFailed: "Couldn't update status. Please try again.",
   deleteDesc: "{title} will be removed from your map and places. This can't be undone.",
   confidence: {
     found: "Found it",

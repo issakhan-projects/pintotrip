@@ -7,7 +7,8 @@
  * purchasePlaceSearchPack, submitReview, createReferral, completeReferral.
  * Scheduled: aggregateTravelIntelligence (daily Travel Intelligence).
  * Triggers: welcomeEmailOnUserCreated (users/{userId} create → Resend),
- * onTripPlannerCreated (tripPlanner create → transport discovery + transportLocations).
+ * onTripPlannerCreated (tripPlanner create → transport discovery + transportLocations),
+ * onTripAiPlanQueued (trip.aiPlan queued → async planTrip pipeline + notification).
  * HTTP: paddleWebhook (Paddle Billing notifications).
  * Callables: createPaddlePortalSession, cancelPaddleSubscription.
  */
@@ -18,6 +19,7 @@ import { findAroundMe } from "./location/findAroundMe";
 import { purchasePlaceSearchPack } from "./location/purchasePlaceSearchPack";
 import { getCityIntelligence } from "./city/getCityIntelligence";
 import { planTrip } from "./trip/planTrip";
+import { onTripAiPlanQueued } from "./trip/onTripAiPlanQueued";
 import { fillTripPlannerAiPlaces } from "./trip/fillTripPlannerAiPlaces";
 import { shareTripStory } from "./trip/shareTripStory";
 import { resolveCityAirports } from "./trip/resolveCityAirports";
@@ -44,6 +46,7 @@ export {
   purchasePlaceSearchPack,
   getCityIntelligence,
   planTrip,
+  onTripAiPlanQueued,
   fillTripPlannerAiPlaces,
   shareTripStory,
   resolveCityAirports,

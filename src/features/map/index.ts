@@ -6,3 +6,4 @@ export {
 } from "./livingRoutes";
 export { PlacePreviewSheet } from "./PlacePreviewSheet";
 export { MapCityLegend } from "./MapCityLegend";
+export type { MapCityLegendCounts } from "./MapCityLegend";

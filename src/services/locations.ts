@@ -3,8 +3,10 @@ import {
   doc,
   getDoc,
   addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   serverTimestamp,
   query,
   orderBy,
@@ -56,6 +58,42 @@ function locationRef(userId: string, locationId: string): DocumentReference {
 
 function isActiveLocation(data: UserLocation): boolean {
   return data.deleted !== true;
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    "code" in err &&
+    (err as { code: string }).code === "not-found"
+  );
+}
+
+function isPermissionDeniedError(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    "code" in err &&
+    (err as { code: string }).code === "permission-denied"
+  );
+}
+
+/** Body safe for create/setDoc — strips id + Admin-only TI fields. */
+function locationDocFromCache(loc: SavedLocation): Record<string, unknown> {
+  const {
+    id: _id,
+    intelligenceContribution: _ic,
+    aggregatedAt: _aa,
+    deleted: _del,
+    visitedAt,
+    ...rest
+  } = loc;
+  const body: Record<string, unknown> = {
+    ...rest,
+    aggregated: false,
+  };
+  if (visitedAt != null) body.visitedAt = visitedAt;
+  return body;
 }
 
 function mapDoc(d: QueryDocumentSnapshot): SavedLocation {
@@ -418,13 +456,60 @@ export async function updateUserLocation(
   delete payload.intelligenceContribution;
   delete payload.aggregatedAt;
 
-  await updateDoc(locationRef(userId, locationId), payload);
+  // Clear with deleteField — storing null has tripped rules diffs on some docs.
+  const clearVisitedAt = payload.visitedAt === null;
+  if (clearVisitedAt) {
+    payload.visitedAt = deleteField();
+  }
 
-  patchLocationInCache(userId, locationId, {
+  const ref = locationRef(userId, locationId);
+  const cachePatch = {
     ...omitUndefined(input as Record<string, unknown>),
     updatedAt: approxNowTimestamp(),
     ...(touchesAggregationFields(input) ? { aggregated: false } : {}),
-  } as Partial<UserLocation>);
+    ...(clearVisitedAt ? { visitedAt: null } : {}),
+  } as Partial<UserLocation>;
+
+  try {
+    await updateDoc(ref, payload);
+  } catch (err) {
+    // Stale client cache: place still listed but server doc was hard-deleted.
+    // Recreate from cache so status/note edits keep working.
+    if (isNotFoundError(err)) {
+      const cached = getCachedLocation(userId, locationId);
+      if (cached && cached.deleted !== true) {
+        const body = locationDocFromCache(cached);
+        for (const [key, value] of Object.entries(payload)) {
+          if (key === "visitedAt" && clearVisitedAt) {
+            delete body.visitedAt;
+            continue;
+          }
+          body[key] = value;
+        }
+        body.aggregated = false;
+        delete body.intelligenceContribution;
+        delete body.aggregatedAt;
+        delete body.deleted;
+        if (!body.createdAt) body.createdAt = serverTimestamp();
+        body.updatedAt = serverTimestamp();
+        await setDoc(ref, body);
+        patchLocationInCache(userId, locationId, cachePatch);
+        return;
+      }
+      removeLocationFromCache(userId, locationId);
+      throw new Error(
+        "This place no longer exists on the server. Refresh the page and try again."
+      );
+    }
+    if (isPermissionDeniedError(err)) {
+      throw new Error(
+        `Missing or insufficient permissions (locations/${locationId}).`
+      );
+    }
+    throw err instanceof Error ? err : new Error("Failed to update place.");
+  }
+
+  patchLocationInCache(userId, locationId, cachePatch);
 }
 
 /** Persist a locality Google Place ID without overwriting other city fields. */

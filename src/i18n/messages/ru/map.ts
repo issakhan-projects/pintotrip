@@ -3,6 +3,7 @@ export const map = {
   legend: {
     visited: "Посещено",
     planned: "Запланировано",
+    wantToVisit: "Хочу посетить",
   },
   noPhoto: "Пока нет фото",
   status: "Статус",

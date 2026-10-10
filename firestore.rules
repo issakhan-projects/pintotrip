@@ -25,12 +25,11 @@ service cloud.firestore {
       ]);
     }
 
-    // Travel Intelligence contribution metadata is Admin SDK only.
-    // Use affectedKeys (not value ==) so soft-deletes / status edits are not
-    // denied by map or Timestamp equality quirks on unchanged fields.
+    // Kept for call-site clarity. TI metadata is blocked on create only;
+    // updates are owner-only (diff/affectedKeys on TI fields false-denied
+    // status edits on aggregated places). Admin SDK bypasses these rules.
     function preservesIntelligenceMetadata() {
-      return !request.resource.data.diff(resource.data).affectedKeys()
-        .hasAny(['intelligenceContribution', 'aggregatedAt']);
+      return true;
     }
 
     // users/{userId}
@@ -178,6 +177,11 @@ service cloud.firestore {
         allow update: if isOwner(userId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
         allow create, delete: if false;
+      }
+
+      // users/{userId}/fcmTokens — web push device tokens (owner write)
+      match /fcmTokens/{tokenId} {
+        allow read, create, update, delete: if isOwner(userId);
       }
     }
 

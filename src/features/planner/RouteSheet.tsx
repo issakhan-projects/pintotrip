@@ -34,6 +34,11 @@ import {
 } from "@/components/ui";
 import { Sheet } from "@/components/ui/Sheet";
 import { cx } from "@/lib/utils";
+import {
+  clockIntlOptions,
+  formatDatetimeLocalDisplay,
+} from "@/lib/time/formatClock";
+import { useTimeFormat } from "@/hooks/useTimeFormat";
 import { IMAGE_FILE_ACCEPT } from "@/lib/images";
 import {
   deleteStorageObject,
@@ -133,28 +138,6 @@ async function resolveRouteCityTimezone(
   return browserTimezone();
 }
 
-function formatDatetimeLocalDisplay(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (!match) return trimmed;
-  const date = new Date(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5])
-  );
-  if (Number.isNaN(date.getTime())) return trimmed;
-  return new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
-}
 
 function parseDatetimeParts(value: string): { date: string; time: string } {
   const match = value
@@ -217,6 +200,7 @@ function RouteDateTimeInputs({
   min?: string;
   max?: string;
 }) {
+  const timeFormat = useTimeFormat();
   const { date, time } = parseDatetimeParts(value);
   const minDate = min ? parseDatetimeParts(min).date || undefined : undefined;
   const maxDate = max ? parseDatetimeParts(max).date || undefined : undefined;
@@ -253,6 +237,7 @@ function RouteDateTimeInputs({
           max={timeBounds.max}
           disabled={!date}
           stepMinutes={1}
+          timeFormat={timeFormat}
           onChange={(nextTime) => commit(date, nextTime)}
         />
       </div>
@@ -440,6 +425,7 @@ export function RouteSheet({
   editing: TripRoute | null;
   onSave: (payload: RouteSheetSavePayload) => Promise<void>;
 }) {
+  const timeFormat = useTimeFormat();
   const cities = useMemo(() => listRouteCities(trip), [trip]);
   const [transport, setTransport] = useState<TripRouteTransport>("flight");
   const [fromKey, setFromKey] = useState("");
@@ -919,11 +905,9 @@ export function RouteSheet({
     return new Intl.DateTimeFormat(undefined, {
       day: "numeric",
       month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
+      ...clockIntlOptions(timeFormat),
     }).format(new Date(arrivalMs));
-  }, [exact, fromCity, departureLocal, approxMinutes]);
+  }, [exact, fromCity, departureLocal, approxMinutes, timeFormat]);
 
   const outboundLegValid = (() => {
     if (!fromCity || !toCity || !departureLocal) return false;
@@ -1429,12 +1413,12 @@ export function RouteSheet({
                 <p className="truncate text-sm font-medium text-text">
                   {fromCity.cityName}
                   {departureLocal
-                    ? ` · ${formatDatetimeLocalDisplay(departureLocal)}`
+                    ? ` · ${formatDatetimeLocalDisplay(departureLocal, timeFormat)}`
                     : ""}
                   {" → "}
                   {toCity.cityName}
                   {arrivalLocal
-                    ? ` · ${formatDatetimeLocalDisplay(arrivalLocal)}`
+                    ? ` · ${formatDatetimeLocalDisplay(arrivalLocal, timeFormat)}`
                     : ""}
                 </p>
               </div>

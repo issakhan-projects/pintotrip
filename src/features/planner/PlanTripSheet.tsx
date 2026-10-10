@@ -44,9 +44,11 @@ import {
 } from "@/services/trip-routes";
 import {
   addUtcDays,
+  clearTripAiPlan,
   startOfUtcDay,
   tripDayCount,
 } from "@/services/trip-planner";
+import { enableWebPush } from "@/services/fcmTokens";
 import { fetchSuggestedPlacePhoto, pexelsPhotoUrlExcludeId } from "@/features/add-place/placeSearch";
 import { assignSharedItineraryOrders } from "@/lib/planner/assign-shared-orders";
 import { assignPlaceVisitTimes } from "@/lib/planner/assign-place-visit-times";
@@ -58,6 +60,10 @@ import {
   formatInsufficientCreditsMessage,
   isInsufficientAICreditsError,
 } from "@/types/credits";
+import {
+  formatPlanTripBlockedMessage,
+  isPlanTripBlockedError,
+} from "@/types/plan-trip-errors";
 import type {
   PlanTripAiResult,
   TripPlannerAiResponseDay,
@@ -65,6 +71,7 @@ import type {
   TripPlannerAiResponseNestedPlace,
   TripPlannerAiResponseRoute,
 } from "@/types/trip-planner-ai-request";
+import { isPlanTripAiAsyncAccepted } from "@/types/trip-planner-ai-request";
 import type { SavedLocation } from "@/hooks/useLocations";
 import type { UserLocationCreateInput } from "@/types/location";
 import type {
@@ -539,7 +546,12 @@ async function createLocationFromAiPlace(
     lon,
     country: { id: countryId, name: countryName },
     city: { id: cityId, name: cityName },
-    status: place.status === "visited" ? "visited" : "planned",
+    status:
+      place.status === "visited"
+        ? "visited"
+        : place.status === "want_to_visit"
+          ? "want_to_visit"
+          : "planned",
     ...(place.category ? { category: place.category } : {}),
     ...(place.note?.trim() ? { note: place.note.trim() } : {}),
     ...(place.price
@@ -641,6 +653,13 @@ interface PlanTripSheetProps {
   language?: string;
   /** generate = fill empty days (free). regenerate = recreate full plan (credits). */
   intent?: "generate" | "regenerate";
+  /**
+   * When set (async plan ready on trip.aiPlan), open directly in results —
+   * no PlacePreviewSheet; review/save stays in this sheet from PlacesStep.
+   */
+  initialAiResult?: PlanTripAiResult | null;
+  /** Fired when the callable accepts an async job (PlacesStep shows status). */
+  onAsyncQueued?: () => void;
   onSaved: (payload: {
     savedPlaceIds: string[];
     itinerary: TripItinerary;
@@ -656,6 +675,8 @@ export function PlanTripSheet({
   aiCreditsBalance,
   language,
   intent = "generate",
+  initialAiResult = null,
+  onAsyncQueued,
   onSaved,
 }: PlanTripSheetProps) {
   const [phase, setPhase] = useState<Phase>("setup");
@@ -733,6 +754,10 @@ export function PlanTripSheet({
   const recreateCost = planTripRegenerateCost(trip.createMode);
   const generateCost = planTripCost(trip.createMode);
   const actionCost = intent === "regenerate" ? recreateCost : generateCost;
+  const planJobBusy =
+    trip.aiPlan?.status === "queued" || trip.aiPlan?.status === "running";
+  const planReadyPending =
+    trip.aiPlan?.status === "ready" && !initialAiResult;
 
   useEffect(() => {
     if (!open) {
@@ -746,7 +771,19 @@ export function PlanTripSheet({
       setBusy(false);
       return;
     }
-  }, [open]);
+
+    if (initialAiResult?.itinerary?.length) {
+      setAiResult({
+        ...initialAiResult,
+        itinerary: assignPlaceVisitTimes(
+          assignSharedItineraryOrders(initialAiResult.itinerary)
+        ),
+      });
+      setResult(null);
+      setPhase("results");
+      setError(initialAiResult.warning ?? null);
+    }
+  }, [open, initialAiResult]);
 
   function removePlace(dayNumber: number, place: PlannedPlaceSuggestion) {
     setResult((prev) => {
@@ -799,6 +836,22 @@ export function PlanTripSheet({
   async function runPlan(mode: "generate" | "regenerate") {
     const planMode = intent === "regenerate" ? "regenerate" : mode;
 
+    const aiPlanStatus = trip.aiPlan?.status;
+    if (aiPlanStatus === "queued" || aiPlanStatus === "running") {
+      setError(
+        "A trip plan is already being generated. Please wait until it finishes, then try again."
+      );
+      setPhase("setup");
+      return;
+    }
+    if (aiPlanStatus === "ready" && !initialAiResult) {
+      setError(
+        "An AI itinerary is ready for review. Review or dismiss it before generating again."
+      );
+      setPhase("setup");
+      return;
+    }
+
     if (aiCreditsBalance < actionCost) {
       setError(
         `Not enough AI credits. Need ${actionCost}, you have ${aiCreditsBalance}.`
@@ -815,12 +868,29 @@ export function PlanTripSheet({
       const temperatureType =
         profile?.preferences?.temperatureUnit ?? "celsius";
 
+      // Recreate from a ready review: clear pending result so the callable can queue.
+      if (initialAiResult && trip.aiPlan?.status === "ready") {
+        await clearTripAiPlan(userId, trip.id);
+      }
+
       const data = await planTrip({
         tripId: trip.id,
         language,
         temperatureType,
         mode: planMode,
       });
+
+      if (isPlanTripAiAsyncAccepted(data)) {
+        devLog.log("[Trip Planner AI] Queued async", data.status);
+        // Ask for OS notification permission so plan-ready can show as a
+        // real system notification (lock screen / notification center).
+        void enableWebPush(userId);
+        setBusy(false);
+        setPhase("setup");
+        onAsyncQueued?.();
+        onClose();
+        return;
+      }
 
       const jsonReplacer = (_key: string, value: unknown) => {
         if (
@@ -871,6 +941,8 @@ export function PlanTripSheet({
       setAiResult(null);
       if (isInsufficientAICreditsError(err)) {
         setError(formatInsufficientCreditsMessage(err));
+      } else if (isPlanTripBlockedError(err)) {
+        setError(formatPlanTripBlockedMessage(err));
       } else {
         setError(
           err instanceof Error
@@ -2151,10 +2223,18 @@ export function PlanTripSheet({
                 </span>
               </span>
             </div>
+            {planJobBusy || planReadyPending ? (
+              <p className="mb-3 rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-sm text-text">
+                {planJobBusy
+                  ? "A trip plan is already being generated. Please wait until it finishes."
+                  : "An AI itinerary is ready for review. Close this and review it before generating again."}
+              </p>
+            ) : null}
             {intent === "regenerate" ? (
               <Button
                 icon={RefreshCw}
                 loading={busy}
+                disabled={planJobBusy || planReadyPending}
                 onClick={() => void runPlan("regenerate")}
                 className="w-full !h-11 !border-primary !bg-primary !text-white hover:!bg-primary-hover"
               >
@@ -2167,6 +2247,7 @@ export function PlanTripSheet({
               <Button
                 icon={Sparkles}
                 loading={busy}
+                disabled={planJobBusy || planReadyPending}
                 onClick={() => void runPlan("generate")}
                 className="w-full !h-11 !border-primary !bg-primary !text-white hover:!bg-primary-hover"
               >
@@ -2186,7 +2267,7 @@ export function PlanTripSheet({
                 icon={RefreshCw}
                 variant="secondary"
                 loading={busy}
-                disabled={saving}
+                disabled={saving || planJobBusy}
                 onClick={() => void runPlan("regenerate")}
                 className="w-full !h-11 !border-border !bg-surface-elevated !text-text"
               >

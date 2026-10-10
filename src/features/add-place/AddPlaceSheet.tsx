@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Button, TextInput } from "@/components/ui";
+import { Button, ConfirmModal, TextInput } from "@/components/ui";
 import { useI18n, type TranslateFn } from "@/i18n";
 import {
   Check,
@@ -31,11 +31,22 @@ import {
   AI_CREDIT_COSTS,
   isInsufficientAICreditsError,
 } from "@/types/credits";
-import type { AnalyzeLocationResult } from "@/types/ai";
+import {
+  getConfidenceLevel,
+  type AnalyzeLocationResult,
+  type LocationAlternative,
+} from "@/types/ai";
 import { PLACE_CATEGORY_LABELS } from "@/types/trip-plan";
 import { slugifyId, countryIdFromParts, isAsciiId, confidencePercent, cx } from "@/lib/utils";
 import { resolveCountryCode } from "@/lib/countries";
-import { withCityGooglePlaceId, resolveEnglishPlaceIds, englishPlaceIdsFromNames } from "@/lib/maps";
+import {
+  withCityGooglePlaceId,
+  resolveEnglishPlaceIds,
+  englishPlaceIdsFromNames,
+  geocodeByAddress,
+  hasUsableMapCoords,
+  cityCountryFromAddressComponents,
+} from "@/lib/maps";
 import {
   IMAGE_FILE_ACCEPT,
   ImageUploadError,
@@ -255,6 +266,63 @@ export function AddPlaceSheet({
     await runAnalyze({ type: "link", link: trimmed });
   }
 
+  async function acceptAlternative(alt: LocationAlternative) {
+    if (!result) return;
+    const address = [alt.title, alt.city, alt.country]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join(", ");
+    if (!address) {
+      throw new Error(t("addPlace.resolveMatchFailed"));
+    }
+    const countryCode =
+      resolveCountryCode(alt.countryId) ||
+      resolveCountryCode(alt.country) ||
+      undefined;
+    const results = await geocodeByAddress(address, {
+      language: "en",
+      ...(countryCode ? { country: countryCode } : {}),
+    });
+    const location = results[0]?.geometry?.location;
+    if (!location) {
+      throw new Error(t("addPlace.resolveMatchFailed"));
+    }
+    const lat =
+      typeof location.lat === "function" ? location.lat() : Number(location.lat);
+    const lon =
+      typeof location.lng === "function" ? location.lng() : Number(location.lng);
+    if (!hasUsableMapCoords(lat, lon)) {
+      throw new Error(t("addPlace.resolveMatchFailed"));
+    }
+    const fromGeocode = cityCountryFromAddressComponents(
+      results[0]?.address_components
+    );
+    const cityName = alt.city?.trim() || fromGeocode.city || "";
+    const countryName =
+      alt.country.trim() || fromGeocode.country || countryCode || "";
+    const resolvedCountryCode =
+      fromGeocode.countryCode || countryCode || undefined;
+    setResult({
+      identified: true,
+      title: alt.title,
+      ...(alt.placeId ? { placeId: alt.placeId } : {}),
+      description:
+        [cityName, countryName].filter(Boolean).join(", ") || alt.title,
+      lat,
+      lon,
+      why: result.why?.trim() || t("addPlace.selectedFromMatchesWhy"),
+      city: cityName,
+      ...(alt.cityId ? { cityId: alt.cityId } : {}),
+      country: countryName,
+      ...(alt.countryId ? { countryId: alt.countryId } : {}),
+      ...(resolvedCountryCode ? { countryCode: resolvedCountryCode } : {}),
+      confidence: alt.confidence,
+      confidenceLevel: getConfidenceLevel(alt.confidence),
+      locationConfidence: alt.confidence,
+      verificationPerformed: result.verificationPerformed,
+    });
+  }
+
   async function savePlace() {
     if (!result?.identified) return;
     setSaving(true);
@@ -319,7 +387,7 @@ export function AddPlaceSheet({
         lon: result.lon,
         country,
         city,
-        status: "planned",
+        status: "want_to_visit",
         ...(result.category ? { category: result.category } : {}),
         images: storedImageUrl
           ? [{ url: storedImageUrl, source: "user" }]
@@ -444,7 +512,7 @@ export function AddPlaceSheet({
         lon: selectedPlace.lon,
         country: countryData,
         city: cityData,
-        status: "planned",
+        status: "want_to_visit",
         images: photoUrl
           ? [{ url: photoUrl, source: "external" }]
           : [],
@@ -720,6 +788,7 @@ export function AddPlaceSheet({
           imageUrl={imageUrl ?? previewUrl}
           saving={saving}
           onSave={() => void savePlace()}
+          onAcceptAlternative={(alt) => acceptAlternative(alt)}
           onReject={() => {
             setResult(null);
             setStep("photo");
@@ -1045,15 +1114,24 @@ function AiResultView({
   imageUrl,
   saving,
   onSave,
+  onAcceptAlternative,
   onReject,
 }: {
   result: AnalyzeLocationResult;
   imageUrl: string | null;
   saving: boolean;
   onSave: () => void;
+  onAcceptAlternative: (alt: LocationAlternative) => Promise<void>;
   onReject: () => void;
 }) {
   const { t } = useI18n();
+  const [pendingAlt, setPendingAlt] = useState<LocationAlternative | null>(
+    null
+  );
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [resolvingAlt, setResolvingAlt] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
   if (!result.identified) {
     const alternatives = (result.alternatives ?? []).slice(0, 3);
     return (
@@ -1083,32 +1161,101 @@ function AiResultView({
             <p className="text-sm font-medium text-text">
               {t("addPlace.possibleMatches")}
             </p>
+            <p className="mt-1 text-xs text-text-muted">
+              {t("addPlace.selectPossibleMatch")}
+            </p>
             <ul className="mt-2 space-y-2">
               {alternatives.map((alt) => (
-                <li
-                  key={`${alt.title}-${alt.country}`}
-                  className="text-sm text-text-secondary"
-                >
-                  <span className="font-medium text-text">{alt.title}</span>
-                  {alt.city || alt.country ? (
-                    <span>
-                      {" "}
-                      — {[alt.city, alt.country].filter(Boolean).join(", ")}
+                <li key={`${alt.title}-${alt.country}`}>
+                  <button
+                    type="button"
+                    disabled={resolvingAlt}
+                    onClick={() => {
+                      setResolveError(null);
+                      setPendingAlt(alt);
+                      setConfirmOpen(true);
+                    }}
+                    className={cx(
+                      "flex w-full items-center gap-3 rounded-xl border border-border bg-surface-elevated px-3 py-2.5 text-left transition-colors",
+                      "hover:border-primary/40 hover:bg-primary-tint/40",
+                      "disabled:pointer-events-none disabled:opacity-60"
+                    )}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-text">
+                        {alt.title}
+                      </span>
+                      {alt.city || alt.country ? (
+                        <span className="mt-0.5 block text-xs text-text-secondary">
+                          {[alt.city, alt.country].filter(Boolean).join(", ")}
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
+                    {alt.confidence > 0 ? (
+                      <span className="shrink-0 text-[11px] tabular-nums text-text-muted">
+                        {t("addPlace.confidencePercent", {
+                          n: confidencePercent(alt.confidence),
+                        })}
+                      </span>
+                    ) : null}
+                    <ChevronRight
+                      className="h-4 w-4 shrink-0 text-text-muted"
+                      aria-hidden
+                    />
+                  </button>
                 </li>
               ))}
             </ul>
+            {resolveError ? (
+              <p className="mt-2 text-sm text-error">{resolveError}</p>
+            ) : null}
           </div>
         ) : null}
 
         <Button
           variant="secondary"
           onClick={onReject}
+          disabled={resolvingAlt}
           className="btn-secondary w-full"
         >
           {t("addPlace.tryAnotherPhoto")}
         </Button>
+
+        <ConfirmModal
+          open={confirmOpen && Boolean(pendingAlt)}
+          title={t("addPlace.confirmPossibleMatchTitle")}
+          description={t("addPlace.confirmPossibleMatchBody", {
+            title: pendingAlt?.title ?? "",
+          })}
+          confirmLabel={t("addPlace.confirmPossibleMatch")}
+          cancelLabel={t("common.cancel")}
+          loading={resolvingAlt}
+          onCancel={() => {
+            if (resolvingAlt) return;
+            setConfirmOpen(false);
+            setPendingAlt(null);
+          }}
+          onConfirm={async () => {
+            if (!pendingAlt) return;
+            setResolvingAlt(true);
+            setResolveError(null);
+            try {
+              await onAcceptAlternative(pendingAlt);
+              setConfirmOpen(false);
+              setPendingAlt(null);
+            } catch (err) {
+              setConfirmOpen(false);
+              setPendingAlt(null);
+              setResolveError(
+                err instanceof Error && err.message.trim()
+                  ? err.message
+                  : t("addPlace.resolveMatchFailed")
+              );
+            } finally {
+              setResolvingAlt(false);
+            }
+          }}
+        />
       </div>
     );
   }
@@ -1139,7 +1286,7 @@ function AiResultView({
           {[result.city, result.country].filter(Boolean).join(", ")}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <StatusBadge status="planned" />
+          <StatusBadge status="want_to_visit" />
           {result.category ? (
             <span className="rounded-full bg-primary-tint px-2.5 py-0.5 text-[11px] font-medium text-primary">
               {PLACE_CATEGORY_LABELS[result.category] ?? result.category}

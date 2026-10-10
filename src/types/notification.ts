@@ -5,10 +5,14 @@ import type { Timestamp } from "firebase/firestore";
  * Written by Cloud Functions; readable by the owner.
  */
 export interface AppNotification {
-  type: "referral_reward" | string;
+  type:
+    | "referral_reward"
+    | "plan_trip_ready"
+    | "plan_trip_error"
+    | string;
   title: string;
   body: string;
-  /** In-app deep link path, e.g. `/map?tab=profile`. */
+  /** In-app deep link path, e.g. `/map?tab=profile` or `/trip-planner/{id}`. */
   link: string | null;
   read: boolean;
   createdAt: Timestamp | number;

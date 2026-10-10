@@ -1,66 +1,33 @@
 /**
- * planTrip — build TripPlannerAiRequest server-side, AI-fill missing routes +
- * places/activities, return TripPlannerAiResponse itinerary to the client.
+ * planTrip — enqueue async AI itinerary generation.
  *
- * Place fill (fillPlacesAi) recommends sights AND bookable tourist activities
- * (tours, experiences, shows, outdoor/wellness/local entertainment) weighted
- * by leisureType and freeTime — not landmarks only.
- *
- * Client sends only: tripId, language?, temperatureType?
+ * Client sends only: tripId, language?, temperatureType?, mode?
+ * Callable returns immediately after queueing; the heavy pipeline runs in
+ * onTripAiPlanQueued and writes results to trip.aiPlan + an inbox notification.
  */
 
 import { onCall, HttpsError } from "firebase-functions/https";
+import { FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
 import { requireAuth, assertNonEmptyString } from "../shared/auth";
-import {
-  DEFAULT_FUNCTIONS_REGION,
-  googlePrivateApiKey,
-  openaiApiKey,
-  openWeatherMapApiKey,
-} from "../shared/config";
-import {
-  completeTripPlannerAiJson,
-} from "../shared/openai";
-import { recordAIUsage } from "../shared/aiUsage";
+import { DEFAULT_FUNCTIONS_REGION } from "../shared/config";
 import {
   assertSufficientCredits,
-  deductCredits,
 } from "../shared/creditService";
 import {
-  getRequiredCredits,
   planTripOperation,
   planTripRegenerateOperation,
   type InsufficientAICreditsError,
 } from "../shared/credits";
-import { initAdmin } from "../shared/admin";
-import { loadAndBuildTripPlannerAiRequest } from "./buildTripPlannerAiRequest";
-import {
-  applyFreeTimePlacesFromRoutes,
-  seedTripPlannerAiItineraryExistingOnly,
-} from "./ai/seedAndFreeTime";
-import {
-  buildFillRoutesPayload,
-  mergeAiRoutesIntoItinerary,
-  stripHomeLocalTransfers,
-} from "./ai/fillRoutesAi";
-import {
-  buildFillPlacesPayload,
-  extractJsonObject,
-  mergeAiPlacesIntoItinerary,
-} from "./ai/fillPlacesAi";
-import { enrichItineraryPlaceCoordinates } from "./ai/enrichPlaceCoordinates";
-import { enrichItineraryPlacePrices } from "./ai/enrichPlacePrices";
-import { assignSharedItineraryOrders } from "./ai/assignSharedOrders";
-import { assignPlaceVisitTimes } from "./ai/assignPlaceVisitTimes";
+import { initAdmin, adminDb } from "../shared/admin";
 import type {
   PlanTripAiCallableRequest,
-  PlanTripAiCallableResult,
   TemperatureType,
-  TripPlannerAiResponseDay,
 } from "./ai/tripPlannerAiTypes";
-
-const ROUTES_MAX_TOKENS = 8_000;
-const PLACES_MAX_TOKENS = 12_000;
+import type {
+  PlanTripBlockedError,
+  TripAiPlanQueued,
+} from "./aiPlanTypes";
 
 function parseRequest(data: unknown): PlanTripAiCallableRequest {
   if (!data || typeof data !== "object") {
@@ -98,49 +65,32 @@ function parseRequest(data: unknown): PlanTripAiCallableRequest {
   };
 }
 
-function mapOpenAIError(err: unknown): HttpsError {
-  const message =
-    err instanceof Error ? err.message : "Trip planning failed.";
-
-  if (/OPENAI_API_KEY/i.test(message)) {
-    return new HttpsError(
-      "failed-precondition",
-      "OPENAI_API_KEY is not configured for Cloud Functions."
-    );
-  }
-
-  return new HttpsError("internal", message);
-}
+export type PlanTripAsyncAccepted = {
+  success: true;
+  async: true;
+  status: "queued" | "running";
+};
 
 export type PlanTripResponse =
-  | PlanTripAiCallableResult
+  | PlanTripAsyncAccepted
+  | PlanTripBlockedError
   | InsufficientAICreditsError;
 
 /**
  * planTrip
  *
- * Pipeline:
  * 1. Auth; accept tripId + language + temperatureType + mode
- * 2. Load trip/routes/places/weather → TripPlannerAiRequest
- * 3. Charge AI credits from users/{uid}.aiCreditsBalance BEFORE OpenAI:
- *    generate: ordinary 50 / advanced 100
- *    regenerate: ordinary 25 / advanced 50
- * 4. Seed existing routes only
- * 5. AI fill missing routes
- * 6. Deterministic freeTime + saved locationId refs
- * 7. AI fill places + whereToEat (mealType-aware) + non-flight fares (soft-fail → return routes)
- * 8. Resolve place/dining coords: placesLocation cache → Google Places → save cache
- * 9. Resolve ticket prices: placesLocation cache → one cheap GPT web_search → save cache
- * 10. Deduct credits on success; return itinerary
+ * 2. Load trip createMode; assert AI credits
+ * 3. Write trip.aiPlan = { status: "queued", ... }
+ * 4. Return immediately — onTripAiPlanQueued runs the pipeline
  */
 export const planTrip = onCall(
   {
     region: DEFAULT_FUNCTIONS_REGION,
-    secrets: [openaiApiKey, openWeatherMapApiKey, googlePrivateApiKey],
     invoker: "public",
     cors: true,
-    timeoutSeconds: 180,
-    memory: "512MiB",
+    timeoutSeconds: 60,
+    memory: "256MiB",
   },
   async (request): Promise<PlanTripResponse> => {
     initAdmin();
@@ -150,7 +100,7 @@ export const planTrip = onCall(
     const temperatureType = input.temperatureType ?? "celsius";
     const mode = input.mode ?? "generate";
 
-    logger.info("planTrip request", {
+    logger.info("planTrip enqueue request", {
       uid,
       tripId: input.tripId,
       language,
@@ -158,17 +108,55 @@ export const planTrip = onCall(
       mode,
     });
 
-    const loaded = await loadAndBuildTripPlannerAiRequest({
-      uid,
-      tripId: input.tripId,
-      temperatureType,
-    });
-    const aiRequest = loaded.request;
+    const tripRef = adminDb().doc(
+      `users/${uid}/tripPlanner/${input.tripId}`
+    );
+    const tripSnap = await tripRef.get();
+    if (!tripSnap.exists) {
+      throw new HttpsError("not-found", "Trip not found.");
+    }
+
+    const tripData = tripSnap.data() ?? {};
+    const createMode =
+      tripData.createMode === "advanced" ? "advanced" : "ordinary";
+
+    const existing = tripData.aiPlan as
+      | { status?: string }
+      | undefined;
+    if (
+      existing?.status === "queued" ||
+      existing?.status === "running"
+    ) {
+      logger.info("planTrip blocked: already in progress", {
+        uid,
+        tripId: input.tripId,
+        status: existing.status,
+      });
+      return {
+        success: false,
+        error: "PLAN_TRIP_IN_PROGRESS",
+        message:
+          "A trip plan is already being generated. Please wait until it finishes, then try again.",
+        status: existing.status as "queued" | "running",
+      };
+    }
+    if (existing?.status === "ready") {
+      logger.info("planTrip blocked: ready plan pending review", {
+        uid,
+        tripId: input.tripId,
+      });
+      return {
+        success: false,
+        error: "PLAN_TRIP_READY_PENDING",
+        message:
+          "An AI itinerary is ready for review. Review or dismiss it before generating again.",
+      };
+    }
 
     const chargeOperation =
       mode === "regenerate"
-        ? planTripRegenerateOperation(loaded.createMode)
-        : planTripOperation(loaded.createMode);
+        ? planTripRegenerateOperation(createMode)
+        : planTripOperation(createMode);
 
     const creditCheck = await assertSufficientCredits(uid, chargeOperation);
     if (!creditCheck.ok) {
@@ -178,221 +166,37 @@ export const planTrip = onCall(
         operation: chargeOperation,
         requiredCredits: creditCheck.response.requiredCredits,
         availableCredits: creditCheck.response.availableCredits,
-        createMode: loaded.createMode,
+        createMode,
         mode,
       });
       return creditCheck.response;
     }
 
-    logger.info("planTrip TripPlannerAiRequest", {
-      uid,
-      tripId: input.tripId,
-      createMode: loaded.createMode,
-      spendMoney: aiRequest.trip.spendMoney,
-      chargeOperation,
-      requiredCredits: creditCheck.requiredCredits,
-      availableCredits: creditCheck.availableCredits,
-      requestJson: JSON.stringify(aiRequest),
-    });
-
-    const skeleton = seedTripPlannerAiItineraryExistingOnly(
-      aiRequest,
-      loaded.routes
-    );
-
-    const stages: string[] = [];
-    let model = "unknown";
-    let totalCost = 0;
-    let withRoutes: TripPlannerAiResponseDay[] = skeleton.itinerary;
-    let warning: string | undefined;
-
-    // --- Pass 1: AI missing routes ---
-    try {
-      const { system, user } = buildFillRoutesPayload(
-        aiRequest,
-        skeleton.itinerary,
-        language
-      );
-      const routesResult = await completeTripPlannerAiJson({
-        system,
-        user,
-        maxCompletionTokens: ROUTES_MAX_TOKENS,
-        reasoningEffort: "low",
-      });
-      model = routesResult.metrics.model;
-      totalCost += routesResult.metrics.cost;
-      const parsed = extractJsonObject(routesResult.text);
-      withRoutes = stripHomeLocalTransfers(
-        mergeAiRoutesIntoItinerary(skeleton.itinerary, parsed),
-        aiRequest.destinations
-      );
-      stages.push("routes");
-    } catch (err) {
-      logger.error("planTrip route fill failed", {
-        uid,
-        tripId: input.tripId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw mapOpenAIError(err);
-    }
-
-    const withFreeTime = applyFreeTimePlacesFromRoutes(aiRequest, withRoutes);
-
-    const hasSlots = withFreeTime.some(
-      (day) => Array.isArray(day.places) && day.places.length > 0
-    );
-    const hasNonFlight = withFreeTime.some((day) =>
-      (day.routes ?? []).some((r) => r.transport !== "flight")
-    );
-
-    let itinerary = withFreeTime;
-
-    // --- Pass 2: AI places + whereToEat (mealType) + non-flight fares ---
-    if (hasSlots || hasNonFlight) {
-      try {
-        const { system, user } = buildFillPlacesPayload(
-          aiRequest,
-          withFreeTime,
-          language
-        );
-        const placesResult = await completeTripPlannerAiJson({
-          system,
-          user,
-          maxCompletionTokens: PLACES_MAX_TOKENS,
-          reasoningEffort: "low",
-        });
-        model = placesResult.metrics.model;
-        totalCost += placesResult.metrics.cost;
-        const parsed = extractJsonObject(placesResult.text);
-        itinerary = mergeAiPlacesIntoItinerary(
-          withFreeTime,
-          parsed,
-          aiRequest.destinations
-        );
-        stages.push("places");
-        if (
-          itinerary.some((day) =>
-            (day.places ?? []).some((s) => (s.whereToEat?.length ?? 0) > 0)
-          )
-        ) {
-          stages.push("whereToEat");
-        }
-
-        // Cache → Google Places → save (AI lat/lon are approximate).
-        try {
-          itinerary = await enrichItineraryPlaceCoordinates(
-            itinerary,
-            aiRequest.destinations
-          );
-          stages.push("placeCoords");
-        } catch (enrichErr) {
-          logger.warn("planTrip place coordinate enrichment skipped", {
-            uid,
-            tripId: input.tripId,
-            error:
-              enrichErr instanceof Error
-                ? enrichErr.message
-                : String(enrichErr),
-          });
-        }
-
-        // Cache → one cheap GPT web_search → save (AI ticket prices are approximate).
-        try {
-          const priced = await enrichItineraryPlacePrices(
-            itinerary,
-            aiRequest.destinations,
-            aiRequest.trip.currency
-          );
-          itinerary = priced.itinerary;
-          if (priced.metrics) {
-            totalCost += priced.metrics.cost;
-            model = priced.metrics.model;
-          }
-          if (
-            priced.stats.cacheHits > 0 ||
-            priced.stats.webLookups > 0
-          ) {
-            stages.push("placePrices");
-          }
-        } catch (priceErr) {
-          logger.warn("planTrip place price enrichment skipped", {
-            uid,
-            tripId: input.tripId,
-            error:
-              priceErr instanceof Error
-                ? priceErr.message
-                : String(priceErr),
-          });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.warn("planTrip place fill skipped", {
-          uid,
-          tripId: input.tripId,
-          error: message,
-        });
-        warning = `Place fill skipped: ${message}`;
-        itinerary = withFreeTime;
-      }
-    }
-
-    // Shared 1,2,3… order across routes + places on each day (one timeline).
-    itinerary = assignSharedItineraryOrders(itinerary);
-    stages.push("orders");
-
-    // Ensure every place / whereToEat has a suited bestVisitTime { from, to }.
-    itinerary = assignPlaceVisitTimes(itinerary);
-    stages.push("visitTimes");
-
-    // Deduct user AI credits only after a successful plan response.
-    const remainingCredits = await deductCredits(uid, chargeOperation);
-    const creditsCharged = getRequiredCredits(chargeOperation);
-
-    if (totalCost > 0) {
-      await recordAIUsage({
-        operation: chargeOperation,
-        cost: totalCost,
-        userId: uid,
-      });
-    }
-
-    const response: PlanTripAiCallableResult = {
-      success: true,
-      itinerary,
-      model,
-      creditsCharged,
-      remainingCredits,
-      stages,
-      ...(warning ? { warning } : {}),
-      request: aiRequest,
+    const aiPlan: TripAiPlanQueued = {
+      status: "queued",
+      mode,
+      language,
+      temperatureType,
+      requestedAt: Date.now(),
     };
 
-    logger.info("planTrip Trip Planner AI Response", {
-      uid,
-      tripId: input.tripId,
-      model,
-      stages,
-      mode,
-      createMode: loaded.createMode,
-      chargeOperation,
-      creditsCharged,
-      remainingCredits,
-      warning: warning ?? null,
-      routeCount: itinerary.reduce((n, d) => n + d.routes.length, 0),
-      placeCount: itinerary.reduce(
-        (n, d) =>
-          n + d.places.reduce((m, s) => m + (s.places?.length ?? 0), 0),
-        0
-      ),
-      whereToEatCount: itinerary.reduce(
-        (n, d) =>
-          n + d.places.reduce((m, s) => m + (s.whereToEat?.length ?? 0), 0),
-        0
-      ),
-      mealType: aiRequest.trip.mealType ?? "default",
-      responseJson: JSON.stringify(response),
+    await tripRef.update({
+      aiPlan,
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
-    return response;
+    logger.info("planTrip queued", {
+      uid,
+      tripId: input.tripId,
+      mode,
+      chargeOperation,
+      requiredCredits: creditCheck.requiredCredits,
+    });
+
+    return {
+      success: true,
+      async: true,
+      status: "queued",
+    };
   }
 );

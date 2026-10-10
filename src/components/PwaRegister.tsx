@@ -3,13 +3,14 @@
 import { useEffect } from "react";
 
 /**
- * Registers the root service worker once on the client (production only).
- * Required for Chromium install prompts; iOS Add to Home Screen uses the
- * web manifest + apple-web-app meta instead.
+ * Registers the root service worker once on the client.
+ * Required for Chromium install prompts + FCM web push.
+ * iOS Add to Home Screen uses the web manifest + apple-web-app meta instead.
+ *
+ * Dev: also register so local push testing works (HTTPS / localhost).
  */
 export function PwaRegister() {
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
     if (!("serviceWorker" in navigator)) return;
 
     const register = async () => {
@@ -19,7 +20,7 @@ export function PwaRegister() {
           updateViaCache: "none",
         });
       } catch {
-        // Installability is best-effort — never block the app.
+        // Installability / push is best-effort — never block the app.
       }
     };
 

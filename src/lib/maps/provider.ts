@@ -83,6 +83,7 @@ function markerVisualKey(m: MapMarkerInput): string {
 }
 
 const STATUS_HEX: Record<LocationStatus, string> = {
+  want_to_visit: "#CA8A04",
   planned: "#2563EB",
   visited: "#16A34A",
   cancelled: "#DC2626",

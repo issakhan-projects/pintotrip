@@ -5,6 +5,7 @@ import {
 } from "./cityPlaceId";
 import {
   getCityStatuses,
+  pickHighlightStatusByRatio,
   type CityHighlightStatus,
   type CityStatusEntry,
   type CityStatusLocation,
@@ -36,7 +37,9 @@ type CountryHighlightAcc = {
   key: string;
   countryId: string;
   countryName: string;
-  status: CityHighlightStatus;
+  visitedCount: number;
+  plannedCount: number;
+  wantToVisitCount: number;
   lat?: number;
   lon?: number;
   cityNames: string[];
@@ -107,6 +110,15 @@ export class CityStatusOverlayController {
       admin2Available: this.report.admin2LayerAvailable,
     };
 
+    const bumpCountryStatus = (
+      acc: CountryHighlightAcc,
+      status: CityHighlightStatus
+    ) => {
+      if (status === "visited") acc.visitedCount += 1;
+      else if (status === "planned") acc.plannedCount += 1;
+      else acc.wantToVisitCount += 1;
+    };
+
     const queueCountry = (entry: CityStatusEntry) => {
       const code =
         normalizeCountryCode(entry.countryId, entry.countryName) ||
@@ -116,20 +128,24 @@ export class CityStatusOverlayController {
 
       const existing = countryHighlights.get(code);
       if (!existing) {
-        countryHighlights.set(code, {
+        const next: CountryHighlightAcc = {
           key: `country:${code}`,
           countryId: entry.countryId,
           countryName: entry.countryName,
-          status: entry.status,
+          visitedCount: 0,
+          plannedCount: 0,
+          wantToVisitCount: 0,
           lat: entry.lat,
           lon: entry.lon,
           cityNames: [entry.cityName],
-        });
+        };
+        bumpCountryStatus(next, entry.status);
+        countryHighlights.set(code, next);
         return;
       }
 
       existing.cityNames.push(entry.cityName);
-      if (entry.status === "visited") existing.status = "visited";
+      bumpCountryStatus(existing, entry.status);
       if (existing.lat == null && entry.lat != null) {
         existing.lat = entry.lat;
         existing.lon = entry.lon;
@@ -222,11 +238,26 @@ export class CityStatusOverlayController {
           return;
         }
 
+        const countryStatus = pickHighlightStatusByRatio({
+          visited: country.visitedCount,
+          planned: country.plannedCount,
+          want_to_visit: country.wantToVisitCount,
+        });
+        if (!countryStatus) return;
+
         const prev = nextStyles.get(placeId);
         const status =
-          prev?.status === "visited" || country.status === "visited"
-            ? "visited"
-            : country.status;
+          pickHighlightStatusByRatio({
+            visited:
+              (prev?.status === "visited" ? 1 : 0) +
+              (countryStatus === "visited" ? 1 : 0),
+            planned:
+              (prev?.status === "planned" ? 1 : 0) +
+              (countryStatus === "planned" ? 1 : 0),
+            want_to_visit:
+              (prev?.status === "want_to_visit" ? 1 : 0) +
+              (countryStatus === "want_to_visit" ? 1 : 0),
+          }) ?? countryStatus;
 
         nextStyles.set(placeId, { status, featureType: "COUNTRY" });
         devLog.info(

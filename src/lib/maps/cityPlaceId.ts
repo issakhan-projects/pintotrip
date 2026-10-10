@@ -1,15 +1,10 @@
-import { loadPlacesLibrary } from "./loader";
 import { geocodeByAddress, geocodeByLocation, hasUsableMapCoords } from "./geocode";
 import type { CityStatusEntry } from "./cityStatus";
 import type { DdsFeatureType } from "./ddsCapabilities";
 import {
-  PLACES_SEARCH_TTL_MS,
-  cachedRequest,
   clearMapsRequestCache,
   normalizeQuery,
-  roundCoord,
 } from "./requestCache";
-import { trackPlacesApiCacheHit, trackPlacesApiNetwork } from "./placesApiUsage";
 import { devLog } from "@/lib/devLog";
 
 export interface CityPlaceIdQuery {
@@ -54,17 +49,6 @@ function isoCountryCode(countryId?: string): string | undefined {
   return undefined;
 }
 
-function placesIncludedType(featureType?: DdsFeatureType): string {
-  if (featureType === "COUNTRY") return "country";
-  if (featureType === "ADMINISTRATIVE_AREA_LEVEL_1") {
-    return "administrative_area_level_1";
-  }
-  if (featureType === "ADMINISTRATIVE_AREA_LEVEL_2") {
-    return "administrative_area_level_2";
-  }
-  return "locality";
-}
-
 /**
  * Types that match a DDS Feature Layer Place ID.
  * Never fall back across incompatible layers (locality ≠ country, etc.).
@@ -106,10 +90,6 @@ function pickPlaceIdByTypes(
   return null;
 }
 
-function resultsHavePlaceId(results: GeocodeResultLike[]): boolean {
-  return results.some((r) => Boolean(r.place_id?.trim()));
-}
-
 /** Admin / country type string used in Geocoder address_components. */
 function geocodeComponentType(
   featureType?: DdsFeatureType
@@ -145,7 +125,13 @@ function componentLongName(
 function logMissingPlaceId(city: CityPlaceIdQuery, reason: string): void {
   if (missingLogged.has(city.key)) return;
   missingLogged.add(city.key);
-  devLog.error(
+  // Expected for island communes that aren't Admin1 units (e.g. Moorea) —
+  // overlays fall back to COUNTRY. Warn instead of error to avoid console noise.
+  const expectedFallback =
+    city.featureType === "ADMINISTRATIVE_AREA_LEVEL_1" ||
+    city.featureType === "ADMINISTRATIVE_AREA_LEVEL_2";
+  const log = expectedFallback ? devLog.warn : devLog.error;
+  log(
     `[PinToTrip DDS] City Google Place ID is missing for "${city.cityName}" (${city.countryName}). ${reason}`,
     {
       key: city.key,
@@ -164,11 +150,10 @@ async function resolveViaReverseGeocode(
   city: CityPlaceIdQuery
 ): Promise<{
   placeId: string | null;
-  hadPlaceIds: boolean;
   results: GeocodeResultLike[];
 }> {
   if (!hasUsableMapCoords(city.lat, city.lon)) {
-    return { placeId: null, hadPlaceIds: false, results: [] };
+    return { placeId: null, results: [] };
   }
   const lat = city.lat as number;
   const lon = city.lon as number;
@@ -176,83 +161,18 @@ async function resolveViaReverseGeocode(
   const results = await geocodeByLocation(lat, lon, {
     language: "en",
   });
-  const hadPlaceIds = resultsHavePlaceId(results);
   const placeId = pickPlaceIdByTypes(
     results,
     matchingGeocodeTypes(city.featureType)
   );
 
-  return { placeId, hadPlaceIds, results };
-}
-
-async function resolveViaPlaces(
-  city: CityPlaceIdQuery
-): Promise<string | null> {
-  const isCountry = city.featureType === "COUNTRY";
-  const primaryName = isCountry
-    ? city.countryName.trim()
-    : city.cityName.trim();
-  if (!primaryName) return null;
-
-  const textQuery = isCountry
-    ? primaryName
-    : [primaryName, city.countryName.trim()].filter(Boolean).join(", ");
-  const includedType = placesIncludedType(city.featureType);
-  const bias =
-    city.lat != null && city.lon != null
-      ? `${roundCoord(city.lat)},${roundCoord(city.lon)}`
-      : "";
-  const searchKey = `places:text:${normalizeQuery(textQuery)}:${includedType}:${bias}`;
-
-  return cachedRequest(
-    searchKey,
-    PLACES_SEARCH_TTL_MS,
-    async () => {
-      const { Place } = await loadPlacesLibrary();
-      const request = {
-        textQuery,
-        fields: ["id", "location", "displayName"],
-        includedType,
-        maxResultCount: 1,
-        ...(city.lat != null && city.lon != null
-          ? { locationBias: { lat: city.lat, lng: city.lon } }
-          : {}),
-      };
-
-      const { places } = await Place.searchByText(request);
-      const id = places[0]?.id?.trim();
-      return id || null;
-    },
-    {
-      onNetworkFetch: () =>
-        trackPlacesApiNetwork({
-          kind: "textSearch",
-          source: "maps/cityPlaceId",
-          detail: {
-            query: textQuery,
-            includedType,
-            cityKey: city.key,
-          },
-        }),
-      onCacheHit: () =>
-        trackPlacesApiCacheHit({
-          kind: "textSearch",
-          source: "maps/cityPlaceId",
-          detail: {
-            query: textQuery,
-            includedType,
-            cityKey: city.key,
-          },
-        }),
-    }
-  );
+  return { placeId, results };
 }
 
 async function resolveViaGeocoder(
   city: CityPlaceIdQuery
 ): Promise<{
   placeId: string | null;
-  hadPlaceIds: boolean;
   results: GeocodeResultLike[];
 }> {
   const isCountry = city.featureType === "COUNTRY";
@@ -260,7 +180,7 @@ async function resolveViaGeocoder(
     ? city.countryName.trim()
     : city.cityName.trim();
   if (!primaryName) {
-    return { placeId: null, hadPlaceIds: false, results: [] };
+    return { placeId: null, results: [] };
   }
 
   const address = isCountry
@@ -275,14 +195,14 @@ async function resolveViaGeocoder(
 
   return {
     placeId: pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType)),
-    hadPlaceIds: resultsHavePlaceId(results),
     results,
   };
 }
 
 /**
- * When DDS needs Admin1/Admin2 but geocode returned a locality (e.g. Ella, LK),
- * re-geocode the containing region named in address_components.
+ * When DDS needs Admin1/Admin2 but geocode returned a locality (e.g. Ella, LK)
+ * or island natural_feature (e.g. Moorea, PF), resolve the containing region
+ * named in address_components via forward geocode only (no client Places API).
  */
 async function resolveViaContainingAdmin(
   city: CityPlaceIdQuery,
@@ -315,17 +235,18 @@ async function resolveViaContainingAdmin(
     language: "en",
     country: isoCountryCode(city.countryId),
   });
-  return pickPlaceIdByTypes(results, matchingGeocodeTypes(city.featureType));
+  return pickPlaceIdByTypes(
+    results,
+    matchingGeocodeTypes(city.featureType)
+  );
 }
 
 /**
  * Resolve a Google Place ID for a city or country boundary.
- * When lat/lon exist, reverse-geocode first so the DDS polygon matches the pin
- * cluster (stored locality ids can be wrong after merges / bad backfills).
- * Never treats `location.city.id` (slug) as a Google Place ID.
+ * Client-side: Geocoding API + stored locality id only — never Places Text Search
+ * (Places runs server-side where needed; browser keys often block SearchText).
  *
- * Order: reverse geocode → stored locality id → forward geocode → Places Text Search
- * (Places only when geocoding returned no place_id at all).
+ * Order: reverse geocode → stored locality id → forward geocode → containing admin geocode.
  */
 export async function resolveCityGooglePlaceId(
   city: CityPlaceIdQuery
@@ -345,13 +266,13 @@ export async function resolveCityGooglePlaceId(
       ? city.googlePlaceId!.trim()
       : null;
 
-  // No coords to verify against — reuse stored locality id (create / backfill).
-  if (storedLocalityId && !hasUsableMapCoords(city.lat, city.lon)) {
+  // Prefer stored locality id when present — avoids re-geocoding on status-only syncs.
+  if (storedLocalityId) {
+    placeIdCache.set(key, storedLocalityId);
     return storedLocalityId;
   }
 
   const request = (async (): Promise<string | null> => {
-    let geocodeHadPlaceIds = false;
     let lastResults: GeocodeResultLike[] = [];
 
     // Reverse geocode first when coords exist — matches DDS Feature Layer IDs
@@ -359,7 +280,6 @@ export async function resolveCityGooglePlaceId(
     if (hasUsableMapCoords(city.lat, city.lon)) {
       try {
         const fromReverse = await resolveViaReverseGeocode(city);
-        if (fromReverse.hadPlaceIds) geocodeHadPlaceIds = true;
         if (fromReverse.results.length) lastResults = fromReverse.results;
         if (fromReverse.placeId) {
           placeIdCache.set(key, fromReverse.placeId);
@@ -367,20 +287,14 @@ export async function resolveCityGooglePlaceId(
         }
       } catch (err) {
         devLog.warn(
-          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying stored id / forward geocode.`,
+          `[PinToTrip DDS] Reverse geocode failed for "${label}". Trying forward geocode.`,
           err
         );
       }
     }
 
-    if (storedLocalityId) {
-      placeIdCache.set(key, storedLocalityId);
-      return storedLocalityId;
-    }
-
     try {
       const fromGeocoder = await resolveViaGeocoder(city);
-      if (fromGeocoder.hadPlaceIds) geocodeHadPlaceIds = true;
       if (fromGeocoder.results.length) lastResults = fromGeocoder.results;
       if (fromGeocoder.placeId) {
         placeIdCache.set(key, fromGeocoder.placeId);
@@ -409,32 +323,9 @@ export async function resolveCityGooglePlaceId(
       }
     }
 
-    // Geocoding already returned place_id(s) — type just didn't match the DDS
-    // layer. Skip Places Text Search; callers fall back to country highlight.
-    if (geocodeHadPlaceIds) {
-      logMissingPlaceId(
-        city,
-        "Geocode returned place_id(s) but none matched the requested feature type; skipped Places Text Search."
-      );
-      return null;
-    }
-
-    try {
-      const fromPlaces = await resolveViaPlaces(city);
-      if (fromPlaces) {
-        placeIdCache.set(key, fromPlaces);
-        return fromPlaces;
-      }
-    } catch (err) {
-      devLog.warn(
-        `[PinToTrip DDS] Places Text Search failed for "${label}".`,
-        err
-      );
-    }
-
     logMissingPlaceId(
       city,
-      "Reverse geocode, forward geocode, and Places Text Search returned no matching place_id for the requested feature type."
+      "Reverse/forward geocode returned no matching place_id for the requested feature type (Places Text Search is disabled on the client)."
     );
     return null;
   })();
