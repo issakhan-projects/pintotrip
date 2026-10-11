@@ -24,7 +24,7 @@ export function TextInput({
         type={type}
         className={cx(
           "block w-full rounded-xl border border-border bg-surface-elevated",
-          "px-3 py-2.5 text-sm text-text placeholder:text-text-muted",
+          "px-3 py-2.5 text-base text-text placeholder:text-text-muted",
           "shadow-sm outline-none transition-colors",
           "focus:border-primary focus:ring-2 focus:ring-primary/20",
           "disabled:cursor-not-allowed disabled:bg-surface disabled:opacity-60",
@@ -45,7 +45,7 @@ export function TextInput({
         type={type}
         className={cx(
           "block w-full rounded-xl border border-border bg-surface-elevated",
-          "py-2.5 pl-9 pr-3 text-sm text-text placeholder:text-text-muted",
+          "py-2.5 pl-9 pr-3 text-base text-text placeholder:text-text-muted",
           "shadow-sm outline-none transition-colors",
           "focus:border-primary focus:ring-2 focus:ring-primary/20",
           "disabled:cursor-not-allowed disabled:bg-surface disabled:opacity-60",

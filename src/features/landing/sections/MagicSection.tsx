@@ -34,7 +34,7 @@ export function MagicSection() {
             <div className="relative aspect-[4/3]">
               <Image
                 src={LANDING_IMAGES.petra}
-                alt="Travel photo to identify"
+                alt="Al-Khazneh (The Treasury), Petra"
                 fill
                 sizes="(max-width: 768px) 100vw, 33vw"
                 className="object-cover"

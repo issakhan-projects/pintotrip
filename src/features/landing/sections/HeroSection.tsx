@@ -73,7 +73,7 @@ export function HeroSection() {
           <div className="relative aspect-[4/5] overflow-hidden rounded-3xl sm:aspect-[5/6]">
             <Image
               src={LANDING_IMAGES.heroPetra}
-              alt="Travel photo of Petra, Jordan"
+              alt="Al-Khazneh (The Treasury), Petra, Jordan"
               fill
               priority
               sizes="(max-width: 1024px) 100vw, 50vw"

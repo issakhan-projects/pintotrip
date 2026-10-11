@@ -228,7 +228,7 @@ refund: "Қайтару саясаты",
 cookies: "Cookie баптаулары",
 },
 demo: {
-placeName: "Ad Deir — The Monastery",
+placeName: "Әл-Хазне — Қазынахана",
 city: "Petra",
 country: "Jordan",
 },

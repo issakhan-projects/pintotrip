@@ -3,9 +3,9 @@ import type { LocationStatus } from "@/types/location";
 /** High-quality travel photography (Unsplash). */
 export const LANDING_IMAGES = {
   heroPetra:
-    "https://images.unsplash.com/photo-1691783639104-806ca12a9a8f?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+    "https://images.unsplash.com/photo-1666689464611-ab58097a06cf?auto=format&fit=crop&w=1200&q=80",
   petra:
-    "https://images.unsplash.com/photo-1691783639104-806ca12a9a8f?q=80&w=774&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+    "https://images.unsplash.com/photo-1666689464611-ab58097a06cf?auto=format&fit=crop&w=1200&q=80",
   tokyo:
     "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=1600&q=80",
   tokyoStreet:
@@ -39,10 +39,10 @@ export const LANDING_IMAGES = {
     "https://images.unsplash.com/photo-1536198899635-446f211a8485?q=80&w=1740&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
 } as const;
 
-/** Demo place coords (display copy via `landing.demo.*`). */
+/** Demo place coords — Al-Khazneh (display copy via `landing.demo.*`). */
 export const DEMO_PLACE = {
-  lat: 30.3381,
-  lon: 35.4419,
+  lat: 30.3285,
+  lon: 35.4444,
 } as const;
 
 export interface LandingMapPin {

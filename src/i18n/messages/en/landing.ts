@@ -228,7 +228,7 @@ export const landing = {
     cookies: "Cookie Settings",
   },
   demo: {
-    placeName: "Ad Deir — The Monastery",
+    placeName: "Al-Khazneh — The Treasury",
     city: "Petra",
     country: "Jordan",
   },

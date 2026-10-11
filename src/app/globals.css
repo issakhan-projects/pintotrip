@@ -88,6 +88,20 @@ body {
   font-family: var(--font-montserrat), Arial, Helvetica, sans-serif;
 }
 
+/* iOS Safari zooms the viewport when a focused form control’s computed
+   font-size is under 16px. Keep editable fields at least 16px on touch. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+      [type="button"]
+    ):not([type="submit"]):not([type="reset"]):not([type="file"]):not(
+      [type="image"]
+    ):not([type="hidden"]):not([type="color"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* Native date/time controls ship with a large intrinsic min-width and will
    overflow flex/grid cells on mobile unless explicitly constrained. */
 input[type="date"],

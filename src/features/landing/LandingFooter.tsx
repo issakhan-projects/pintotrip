@@ -18,7 +18,8 @@ export function LandingFooter() {
     { href: "#trip-planner", label: t("landing.nav.tripPlanner") },
     { href: "#how-it-works", label: t("landing.nav.howItWorks") },
     { href: "#explore", label: t("landing.nav.explore") },
-    { href: "/journal", label: t("landing.nav.journal") },
+    // TODO: re-enable when journal section is improved
+    // { href: "/journal", label: t("landing.nav.journal") },
     { href: "/login", label: t("landing.nav.startForFree") },
   ] as const;
 

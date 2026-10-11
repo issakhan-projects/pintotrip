@@ -18,7 +18,8 @@ export function LandingNav() {
     { href: "#trip-planner", label: t("landing.nav.tripPlanner") },
     { href: "#how-it-works", label: t("landing.nav.howItWorks") },
     { href: "#pricing", label: t("landing.nav.pricing") },
-    { href: "/journal", label: t("landing.nav.journal") },
+    // TODO: re-enable when journal section is improved
+    // { href: "/journal", label: t("landing.nav.journal") },
   ] as const;
 
   useEffect(() => {

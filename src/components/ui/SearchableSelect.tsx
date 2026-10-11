@@ -300,7 +300,7 @@ export function SearchableSelect({
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={searchPlaceholder}
                     aria-label={searchPlaceholder}
-                    className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-[13px] text-text outline-none placeholder:text-text-muted focus:border-primary"
+                    className="w-full rounded-lg border border-border bg-surface py-2 pr-2.5 pl-8 text-base text-text outline-none placeholder:text-text-muted focus:border-primary"
                   />
                 </div>
               </div>

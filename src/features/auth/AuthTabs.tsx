@@ -104,7 +104,7 @@ const TRUST_ITEMS = [
 ] as const;
 
 const inputClassName =
-  "w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-sm text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20";
+  "w-full rounded-xl border border-border bg-background py-2.5 pl-10 pr-3 text-base text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20";
 
 function initialTabFromParams(params: {
   get(name: string): string | null;
@@ -312,7 +312,7 @@ export function AuthTabs() {
               autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-base text-text outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
               placeholder="Your name"
             />
           </label>
