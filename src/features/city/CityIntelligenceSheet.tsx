@@ -29,7 +29,9 @@ import {
   isInsufficientAICreditsError,
 } from "@/types/credits";
 import { CityIntelligenceResultsView } from "@/features/city/CityIntelligenceResultsView";
+import { travelInfoFromCityIntelligence } from "@/features/city/favoriteCityTravelInfo";
 import { buildTravelInfoDescription } from "@/features/city/travelInfoDescription";
+import type { FavoriteCityTravelInfo } from "@/types/favorite-city";
 
 interface CityIntelligenceSheetProps {
   open: boolean;
@@ -46,7 +48,9 @@ interface CityIntelligenceSheetProps {
   /** Whether this city is already in the user's favorites. */
   isFavorite?: boolean;
   /** Toggle favorite; parent owns persistence so the map can refresh pins. */
-  onToggleFavorite?: () => Promise<void> | void;
+  onToggleFavorite?: (
+    travelInfo?: FavoriteCityTravelInfo
+  ) => Promise<void> | void;
   /** Called after a city is written to users/{uid}/locations. */
   onPlaceSaved?: () => void;
   /** Current AI credit balance for the cost button affordance. */
@@ -318,7 +322,11 @@ export function CityIntelligenceSheet({
     setFavoriteError(null);
     const saving = !isFavorite;
     try {
-      await onToggleFavorite();
+      await onToggleFavorite(
+        saving
+          ? travelInfoFromCityIntelligence(data, language)
+          : undefined
+      );
 
       if (saving) {
         await saveCityAsPlace(userId, city, data, photoUrl);

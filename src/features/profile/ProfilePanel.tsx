@@ -206,7 +206,9 @@ export function ProfilePanel({
             onSaved={() => undefined}
           />
         ) : null}
-        {view === "help" ? <SupportView userEmail={email} /> : null}
+        {view === "help" ? (
+          <SupportView userId={user.uid} userEmail={email} />
+        ) : null}
         {view === "privacy" || view === "terms" || view === "about" ? (
           <LegalContent page={view} />
         ) : null}

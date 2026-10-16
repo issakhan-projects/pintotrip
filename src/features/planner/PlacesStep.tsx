@@ -1885,11 +1885,13 @@ function ItineraryList({
 
   useEffect(() => {
     let cancelled = false;
-    void getBrowserCoords({ timeoutMs: 10_000, maximumAge: 60_000 }).then(
-      (coords) => {
-        if (!cancelled && coords) setUserCoords(coords);
-      }
-    );
+    void getBrowserCoords({
+      timeoutMs: 10_000,
+      maximumAge: 60_000,
+      requestPermission: false,
+    }).then((coords) => {
+      if (!cancelled && coords) setUserCoords(coords);
+    });
     return () => {
       cancelled = true;
     };

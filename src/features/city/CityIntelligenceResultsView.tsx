@@ -15,9 +15,11 @@ import {
   Landmark,
   Languages,
   Map,
+  ShieldAlert,
   ShieldCheck,
   Smartphone,
   Sun,
+  Syringe,
   Thermometer,
   Ticket,
   TrendingUp,
@@ -31,6 +33,9 @@ import {
   type CityIntelligenceDetails,
   type CityIntelligenceResult,
   type InterestingPlace,
+  type TravelAdvisory,
+  type TravelAdvisoryLevel,
+  type TravelHealth,
   type UsefulApp,
   type UsefulAppCategory,
 } from "@/types/city-intelligence";
@@ -123,8 +128,21 @@ export function CityIntelligenceResultsView({
           </div>
         ) : null}
 
+        {/* Travel advisory — show first when elevated risk */}
+        {data.travelAdvisory &&
+        data.travelAdvisory.level !== "normal" ? (
+          <TravelAdvisoryCard advisory={data.travelAdvisory} />
+        ) : null}
+
         {/* Safety */}
         {data.safeRate ? <SafeRateCard data={data} details={details} /> : null}
+
+        {data.travelAdvisory?.level === "normal" ? (
+          <TravelAdvisoryCard advisory={data.travelAdvisory} />
+        ) : null}
+
+        {/* Health / vaccines */}
+        {data.health ? <HealthCard health={data.health} /> : null}
 
         {/* Best time / Budget / Visa / Climate — each full width */}
         {bestTimePrimary ? (
@@ -544,11 +562,157 @@ function safeRateTone(normalized: number): {
     };
   }
   return {
-    label: "Higher risk",
+    label: "Not recommended",
     soft: "bg-error-background",
     text: "text-error",
     badge: "bg-red-100 text-red-800",
   };
+}
+
+function advisoryTone(level: TravelAdvisoryLevel): {
+  soft: string;
+  text: string;
+  badge: string;
+  icon: LucideIcon;
+} {
+  switch (level) {
+    case "do_not_travel":
+      return {
+        soft: "bg-error-background",
+        text: "text-error",
+        badge: "bg-red-100 text-red-800",
+        icon: ShieldAlert,
+      };
+    case "reconsider":
+      return {
+        soft: "bg-orange-50",
+        text: "text-orange-800",
+        badge: "bg-orange-100 text-orange-800",
+        icon: ShieldAlert,
+      };
+    case "exercise_caution":
+      return {
+        soft: "bg-warning-background",
+        text: "text-warning",
+        badge: "bg-amber-100 text-amber-800",
+        icon: AlertTriangle,
+      };
+    default:
+      return {
+        soft: "bg-success-background",
+        text: "text-success",
+        badge: "bg-emerald-100 text-emerald-800",
+        icon: ShieldCheck,
+      };
+  }
+}
+
+function TravelAdvisoryCard({ advisory }: { advisory: TravelAdvisory }) {
+  const tone = advisoryTone(advisory.level);
+  const Icon = tone.icon;
+
+  return (
+    <div className={`rounded-2xl ${tone.soft} px-4 py-3.5`}>
+      <div className="flex items-start gap-3">
+        <span
+          className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 ${tone.text}`}
+        >
+          <Icon className="h-4 w-4" strokeWidth={1.75} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
+              Travel advisory
+            </p>
+            <span
+              className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${tone.badge}`}
+            >
+              {advisory.headline}
+            </span>
+          </div>
+          <p className={`mt-1.5 text-sm font-semibold leading-snug ${tone.text}`}>
+            {advisory.level === "do_not_travel"
+              ? "Not recommended"
+              : advisory.level === "reconsider"
+                ? "Travel strongly discouraged"
+                : advisory.headline}
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+            {advisory.summary}
+          </p>
+          {advisory.reasons?.length ? (
+            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-text-secondary">
+              {advisory.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function vaccineBadge(status: string): string {
+  if (status === "required") return "bg-red-100 text-red-800";
+  if (status === "recommended") return "bg-amber-100 text-amber-800";
+  return "bg-sky-50 text-sky-800";
+}
+
+function HealthCard({ health }: { health: TravelHealth }) {
+  const hasCritical = health.vaccines?.some((v) => v.status === "required");
+
+  return (
+    <div
+      className={`rounded-2xl px-4 py-3.5 ${
+        hasCritical ? "bg-error-background" : "bg-surface"
+      }`}
+    >
+      <SectionHeader icon={Syringe} label="Health & vaccines" />
+      <p className="mt-2.5 text-sm leading-relaxed text-text">{health.summary}</p>
+      {health.malariaRisk && health.malariaRisk !== "none" ? (
+        <p className="mt-2 text-xs font-medium text-text-secondary">
+          Malaria risk:{" "}
+          <span className="capitalize text-text">{health.malariaRisk}</span>
+        </p>
+      ) : null}
+      {health.vaccines?.length ? (
+        <ul className="mt-3 space-y-2">
+          {health.vaccines.map((vaccine) => (
+            <li
+              key={`${vaccine.name}-${vaccine.status}`}
+              className="flex flex-col gap-1 rounded-xl bg-white/70 px-3 py-2 ring-1 ring-border/60"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-text">
+                  {vaccine.name}
+                </span>
+                <span
+                  className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${vaccineBadge(
+                    vaccine.status
+                  )}`}
+                >
+                  {vaccine.status}
+                </span>
+              </div>
+              {vaccine.note ? (
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  {vaccine.note}
+                </p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {health.otherRisks?.length ? (
+        <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-text-secondary">
+          {health.otherRisks.map((risk) => (
+            <li key={risk}>{risk}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function SafeRateCard({

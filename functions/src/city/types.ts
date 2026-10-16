@@ -30,6 +30,40 @@ export interface InterestingPlace {
   highlight?: string;
 }
 
+/** Government-style travel advisory level for the destination. */
+export type TravelAdvisoryLevel =
+  | "normal"
+  | "exercise_caution"
+  | "reconsider"
+  | "do_not_travel";
+
+export interface TravelAdvisory {
+  level: TravelAdvisoryLevel;
+  /** Short label, e.g. "Do not travel", "Not recommended". */
+  headline: string;
+  summary: string;
+  reasons?: string[];
+  source?: string;
+}
+
+export type VaccineStatus = "required" | "recommended" | "routine";
+
+export interface TravelVaccine {
+  name: string;
+  status: VaccineStatus;
+  note?: string;
+}
+
+export type MalariaRisk = "none" | "low" | "moderate" | "high";
+
+export interface TravelHealth {
+  summary: string;
+  vaccines?: TravelVaccine[];
+  malariaRisk?: MalariaRisk | null;
+  otherRisks?: string[];
+  source?: string;
+}
+
 export type CityIntelligenceCityInput = {
   city: string;
   country: string;
@@ -100,6 +134,10 @@ export interface CityIntelligenceResult {
     summary: string;
     source: string;
   };
+  /** Current travel advisory (war, conflict, insecurity, etc.). */
+  travelAdvisory?: TravelAdvisory;
+  /** Vaccines and health risks for travelers. */
+  health?: TravelHealth;
   bestTimeToVisit?: {
     summary: string;
     months?: string[];

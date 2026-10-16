@@ -286,6 +286,37 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Support tickets — signed-in users create their own; Admin updates status.
+    match /support/{ticketId} {
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.keys().hasAll([
+          'userId',
+          'type',
+          'question',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.status == 'open'
+        && request.resource.data.type in [
+          'bug',
+          'account',
+          'billing',
+          'places',
+          'planner',
+          'other'
+        ]
+        && request.resource.data.question is string
+        && request.resource.data.question.size() >= 20
+        && request.resource.data.question.size() <= 2000
+        && (!('email' in request.resource.data)
+          || request.resource.data.email is string);
+      allow read: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     // Deny everything else by default (no allow read, write: if true).
   }
 }

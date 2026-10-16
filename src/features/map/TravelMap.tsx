@@ -74,10 +74,13 @@ function livingRoutesSignature(legs: LivingRouteLeg[]): string {
 
 function markersSignature(markers: MapMarkerInput[]): string {
   return markers
-    .map(
-      (m) =>
-        `${m.id}:${m.lat}:${m.lon}:${m.googlePlaceId ?? ""}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}:${m.order ?? ""}`
-    )
+    .map((m) => {
+      const safe =
+        m.safeRate && Number.isFinite(m.safeRate.score)
+          ? `${m.safeRate.score}/${m.safeRate.outOf ?? 10}`
+          : "";
+      return `${m.id}:${m.lat}:${m.lon}:${m.googlePlaceId ?? ""}:${m.kind ?? "place"}:${m.status ?? ""}:${m.title ?? ""}:${m.order ?? ""}:${safe}:${m.currency ?? ""}`;
+    })
     .sort()
     .join("|");
 }
@@ -299,8 +302,11 @@ export function TravelMap({
     let cancelled = false;
 
     void (async () => {
-      // Snap GPS to city center so the blue dot / initial view stay city-level.
-      const coords = await getBrowserCityCoords({ timeoutMs: 10_000 });
+      // Only use GPS when already granted — never prompt on map boot.
+      const coords = await getBrowserCityCoords({
+        timeoutMs: 10_000,
+        requestPermission: false,
+      });
       if (cancelled || !coords || !mapRef.current) return;
 
       if (showCurrentLocation) {

@@ -14,7 +14,12 @@ import { logger } from "firebase-functions";
 import { adminDb } from "../shared/admin";
 import type { ModelCityIntelligence } from "./parseModelResponse";
 import { toSlowCityIntelligence } from "./parseModelResponse";
-import type { InterestingPlace, UsefulApp } from "./types";
+import type {
+  InterestingPlace,
+  TravelAdvisory,
+  TravelHealth,
+  UsefulApp,
+} from "./types";
 
 const ROOT = "readyCityIntelligence";
 
@@ -35,6 +40,8 @@ export type ReadyCityIntelligenceInfo = {
     outOf: number;
     summary: string;
   };
+  travelAdvisory?: TravelAdvisory;
+  health?: TravelHealth;
   usefulApps?: UsefulApp[];
   interestingPlaces?: InterestingPlace[];
   dailyBudget?: {
@@ -73,6 +80,8 @@ export type ReadyCompleteness = {
     | "currency"
     | "bestTimeToVisit"
     | "safeRate"
+    | "travelAdvisory"
+    | "health"
     | "usefulApps"
     | "interestingPlaces"
     | "dailyBudget"
@@ -116,20 +125,38 @@ export function toReadyCityIntelligenceInfo(
   const slow = toSlowCityIntelligence(full);
   const rawSafe = slow.practicalInfo?.safeRate;
   let safeRate: ReadyCityIntelligenceInfo["safeRate"];
-  if (
-    rawSafe?.score != null &&
-    Number.isFinite(rawSafe.score) &&
-    rawSafe.outOf != null &&
-    Number.isFinite(rawSafe.outOf) &&
-    rawSafe.outOf > 0
-  ) {
-    const outOf = rawSafe.outOf;
-    const score = Math.min(outOf, Math.max(0, rawSafe.score));
+  const outOf =
+    rawSafe?.outOf != null && Number.isFinite(rawSafe.outOf) && rawSafe.outOf > 0
+      ? rawSafe.outOf
+      : 10;
+  let score =
+    rawSafe?.score != null && Number.isFinite(rawSafe.score)
+      ? rawSafe.score
+      : undefined;
+  // Fallback when model omitted score but flagged a hard advisory.
+  if (score == null) {
+    switch (slow.travelAdvisory?.level) {
+      case "do_not_travel":
+        score = 1;
+        break;
+      case "reconsider":
+        score = 2.5;
+        break;
+      case "exercise_caution":
+        score = 5;
+        break;
+      default:
+        break;
+    }
+  }
+  if (score != null) {
+    const clamped = Math.min(outOf, Math.max(0, score));
     safeRate = {
-      score: Math.round(score * 10) / 10,
+      score: Math.round(clamped * 10) / 10,
       outOf,
       summary:
-        rawSafe.summary?.trim() ||
+        rawSafe?.summary?.trim() ||
+        slow.travelAdvisory?.headline ||
         slow.practicalInfo?.safety?.trim() ||
         "Approximate tourist safety guidance for typical visitors.",
     };
@@ -145,6 +172,8 @@ export function toReadyCityIntelligenceInfo(
       ? { bestTimeToVisit: slow.bestTimeToVisit }
       : {}),
     ...(safeRate ? { safeRate } : {}),
+    ...(slow.travelAdvisory ? { travelAdvisory: slow.travelAdvisory } : {}),
+    ...(slow.health ? { health: slow.health } : {}),
     ...(slow.usefulApps?.length ? { usefulApps: slow.usefulApps } : {}),
     ...(slow.interestingPlaces?.length
       ? { interestingPlaces: slow.interestingPlaces }
@@ -191,6 +220,27 @@ export function readyInfoToModelCityIntelligence(
       safeRate,
       safety: practicalInfo?.safety ?? info.safeRate.summary,
     };
+  } else if (info.travelAdvisory) {
+    // Reconstruct a score for older docs that stored advisory but no safeRate.
+    const inferred =
+      info.travelAdvisory.level === "do_not_travel"
+        ? 1
+        : info.travelAdvisory.level === "reconsider"
+          ? 2.5
+          : info.travelAdvisory.level === "exercise_caution"
+            ? 5
+            : undefined;
+    if (inferred != null) {
+      practicalInfo = {
+        ...(practicalInfo ?? {}),
+        safeRate: {
+          score: inferred,
+          outOf: 10,
+          summary: info.travelAdvisory.headline,
+        },
+        safety: practicalInfo?.safety ?? info.travelAdvisory.summary,
+      };
+    }
   }
 
   return {
@@ -221,6 +271,8 @@ export function readyInfoToModelCityIntelligence(
       : undefined,
     climate: info.climate,
     practicalInfo,
+    travelAdvisory: info.travelAdvisory,
+    health: info.health,
     usefulApps: info.usefulApps,
     interestingPlaces: info.interestingPlaces,
     lastCheckedAt: info.lastCheckedAt,
@@ -253,6 +305,8 @@ function extractReadyInfo(
       ? { bestTimeToVisit: data.bestTimeToVisit }
       : {}),
     ...(data.safeRate ? { safeRate: data.safeRate } : {}),
+    ...(data.travelAdvisory ? { travelAdvisory: data.travelAdvisory } : {}),
+    ...(data.health ? { health: data.health } : {}),
     ...(data.usefulApps?.length ? { usefulApps: data.usefulApps } : {}),
     ...(data.interestingPlaces?.length
       ? { interestingPlaces: data.interestingPlaces }
@@ -284,6 +338,8 @@ export function assessReadyCompleteness(
         "currency",
         "bestTimeToVisit",
         "safeRate",
+        "travelAdvisory",
+        "health",
         "usefulApps",
         "interestingPlaces",
         "dailyBudget",
@@ -297,8 +353,19 @@ export function assessReadyCompleteness(
   if (!info.currency?.code) missing.push("currency");
   if (!info.bestTimeToVisit) missing.push("bestTimeToVisit");
   if (!info.safeRate && !info.practicalInfo?.safeRate) missing.push("safeRate");
-  if (!info.usefulApps?.length) missing.push("usefulApps");
-  if (!info.interestingPlaces || info.interestingPlaces.length < 3) {
+  if (!info.travelAdvisory?.level || !info.travelAdvisory.summary) {
+    missing.push("travelAdvisory");
+  }
+  if (!info.health?.summary) missing.push("health");
+  // Conflict destinations may honestly have few/no apps or places.
+  const hardAdvisory =
+    info.travelAdvisory?.level === "do_not_travel" ||
+    info.travelAdvisory?.level === "reconsider";
+  if (!hardAdvisory && !info.usefulApps?.length) missing.push("usefulApps");
+  if (
+    !hardAdvisory &&
+    (!info.interestingPlaces || info.interestingPlaces.length < 3)
+  ) {
     missing.push("interestingPlaces");
   }
   if (!info.dailyBudget?.currency) missing.push("dailyBudget");
@@ -410,6 +477,8 @@ export async function setReadyCityIntelligence(params: {
         ? { bestTimeToVisit: info.bestTimeToVisit }
         : {}),
       ...(info.safeRate ? { safeRate: info.safeRate } : {}),
+      ...(info.travelAdvisory ? { travelAdvisory: info.travelAdvisory } : {}),
+      ...(info.health ? { health: info.health } : {}),
       ...(info.usefulApps?.length ? { usefulApps: info.usefulApps } : {}),
       ...(info.interestingPlaces?.length
         ? { interestingPlaces: info.interestingPlaces }
@@ -435,6 +504,8 @@ export async function setReadyCityIntelligence(params: {
       hasUsefulApps: Boolean(info.usefulApps?.length),
       interestingPlaceCount: info.interestingPlaces?.length ?? 0,
       hasSafeRate: Boolean(info.safeRate),
+      travelAdvisoryLevel: info.travelAdvisory?.level,
+      hasHealth: Boolean(info.health),
       currency: info.currency.code,
     });
   } catch (err) {

@@ -22,6 +22,7 @@ export {
   detectUserLocation,
   getBrowserCoords,
   getBrowserCityCoords,
+  queryGeolocationPermission,
   reverseGeocode,
   resolveEnglishPlaceIds,
   resolveEnglishPlaceIdsFromAddress,
@@ -29,10 +30,12 @@ export {
   cityCountryFromGeocodeResults,
   cityCountryFromAddressComponents,
   resolveCitySelectionFromCoords,
+  type BrowserCoordsOptions,
   type DetectedUserLocation,
   type EnglishPlaceIds,
   type AddressComponentLike,
   type CityCountryParts,
+  type GeolocationPermissionState,
   type ResolvedCitySelection,
 } from "./detectLocation";
 export { resolveTimezoneFromCoords } from "./timezone";

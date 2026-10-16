@@ -146,4 +146,7 @@ export const FirestorePaths = {
   /** Public travel journal / blog: journals/{journalId} */
   journals: "journals",
   journal: (journalId: string) => `journals/${journalId}`,
+  /** User support tickets: support/{ticketId} */
+  support: "support",
+  supportTicket: (ticketId: string) => `support/${ticketId}`,
 } as const;

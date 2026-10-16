@@ -304,6 +304,42 @@ function englishIdsFromGeocodeResults(
   return toEnglishPlaceIds(city, country, countryCode);
 }
 
+export type GeolocationPermissionState =
+  | "granted"
+  | "denied"
+  | "prompt"
+  | "unknown";
+
+/**
+ * Read the Permissions API geolocation state when available.
+ * Safari and some WebViews may return "unknown" — treat that as
+ * "do not auto-prompt" for background callers.
+ */
+export async function queryGeolocationPermission(): Promise<GeolocationPermissionState> {
+  if (typeof navigator === "undefined" || !navigator.geolocation) {
+    return "denied";
+  }
+
+  try {
+    const permissions = navigator.permissions;
+    if (!permissions?.query) return "unknown";
+    const status = await permissions.query({
+      name: "geolocation" as PermissionName,
+    });
+    if (
+      status.state === "granted" ||
+      status.state === "denied" ||
+      status.state === "prompt"
+    ) {
+      return status.state;
+    }
+  } catch {
+    // Permissions API missing or geolocation name unsupported.
+  }
+
+  return "unknown";
+}
+
 function getBrowserPosition(
   timeoutMs: number,
   maximumAge = 0,
@@ -323,12 +359,29 @@ function getBrowserPosition(
   });
 }
 
-/** Browser lat/lng only — no reverse geocode. Returns null on deny/timeout. */
-export async function getBrowserCoords(options?: {
+export type BrowserCoordsOptions = {
   timeoutMs?: number;
   maximumAge?: number;
   enableHighAccuracy?: boolean;
-}): Promise<{ lat: number; lon: number } | null> {
+  /**
+   * When false, never trigger the browser permission dialog — only read GPS
+   * if permission is already granted. Use for map boot / login backfill.
+   * Default true for explicit user actions (Around Me, etc.).
+   */
+  requestPermission?: boolean;
+};
+
+/** Browser lat/lng only — no reverse geocode. Returns null on deny/timeout. */
+export async function getBrowserCoords(
+  options?: BrowserCoordsOptions
+): Promise<{ lat: number; lon: number } | null> {
+  const requestPermission = options?.requestPermission ?? true;
+
+  if (!requestPermission) {
+    const state = await queryGeolocationPermission();
+    if (state !== "granted") return null;
+  }
+
   try {
     const position = await getBrowserPosition(
       options?.timeoutMs ?? 8_000,
@@ -402,6 +455,7 @@ function cityCenterFromResults(
 export async function getBrowserCityCoords(options?: {
   timeoutMs?: number;
   maximumAge?: number;
+  requestPermission?: boolean;
 }): Promise<{ lat: number; lon: number } | null> {
   const coords = await getBrowserCoords(options);
   if (!coords) return null;
@@ -482,16 +536,13 @@ export async function resolveEnglishPlaceIdsFromAddress(
  */
 export async function detectUserLocation(options?: {
   timeoutMs?: number;
+  /** See {@link BrowserCoordsOptions.requestPermission}. Default true. */
+  requestPermission?: boolean;
 }): Promise<DetectedUserLocation | null> {
-  const timeoutMs = options?.timeoutMs ?? 8_000;
-
-  try {
-    const position = await getBrowserPosition(timeoutMs);
-    return reverseGeocode(
-      position.coords.latitude,
-      position.coords.longitude
-    );
-  } catch {
-    return null;
-  }
+  const coords = await getBrowserCoords({
+    timeoutMs: options?.timeoutMs ?? 8_000,
+    requestPermission: options?.requestPermission ?? true,
+  });
+  if (!coords) return null;
+  return reverseGeocode(coords.lat, coords.lon);
 }

@@ -14,7 +14,10 @@ import {
   favoriteCitiesKey,
   type SavedFavoriteCity,
 } from "@/lib/firebase/data-cache";
-import type { FavoriteCityCreateInput } from "@/types/favorite-city";
+import type {
+  FavoriteCityCreateInput,
+  FavoriteCityTravelInfo,
+} from "@/types/favorite-city";
 import type { LocationStatus } from "@/types/location";
 
 export type { SavedFavoriteCity };
@@ -125,6 +128,8 @@ export function useFavoriteCities(userId: string | undefined) {
       status?: LocationStatus;
       /** English/ASCII city slug (not the favorite doc id). */
       cityId?: string;
+      /** Optional City Intelligence snapshot. */
+      travelInfo?: FavoriteCityTravelInfo;
     }) => {
       if (!userId) throw new Error("Not signed in.");
       // Doc id is always `{countryId}_{cityId}` from coords/names — never the bare slug.
@@ -141,6 +146,7 @@ export function useFavoriteCities(userId: string | undefined) {
         lat: input.lat,
         lon: input.lon,
         status: input.status ?? "planned",
+        ...(input.travelInfo ?? {}),
       };
       // upsert patches shared cache — no collection refetch.
       await upsertFavoriteCity(userId, payload);
@@ -188,6 +194,7 @@ export function useFavoriteCities(userId: string | undefined) {
       lon: number;
       status?: LocationStatus;
       cityId?: string;
+      travelInfo?: FavoriteCityTravelInfo;
     }) => {
       if (
         isFavorite(input.cityName, input.country, {

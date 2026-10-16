@@ -47,7 +47,7 @@ export const TIERS: Tier[] = [
     label: "Plus",
     description: "More AI credits for frequent travelers.",
     features: [
-      "200 AI credits / month",
+      "300 AI credits / month",
       "AI-powered place identification",
       "City intelligence",
       "Save up to 100 locations",

@@ -218,6 +218,17 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       lon: city.lon,
       title: city.cityName,
       kind: "city" as const,
+      ...(city.safeRate && Number.isFinite(city.safeRate.score)
+        ? {
+            safeRate: {
+              score: city.safeRate.score,
+              outOf: city.safeRate.outOf,
+            },
+          }
+        : {}),
+      ...(city.currency?.trim()
+        ? { currency: city.currency.trim().toUpperCase() }
+        : {}),
     }));
 
     return [...cityMarkers, ...placeMarkers];
@@ -378,8 +389,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
       <div
         className={
           showMapSurface
-            ? "absolute inset-0 max-sm:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
-            : "pointer-events-none absolute inset-0 opacity-0 max-sm:bottom-[calc(4rem+env(safe-area-inset-bottom))]"
+            ? "absolute inset-0 max-sm:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]"
+            : "pointer-events-none absolute inset-0 opacity-0 max-sm:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]"
         }
         aria-hidden={!showMapSurface}
       >
@@ -919,13 +930,14 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
         }
         onToggleFavorite={
           cityInfo
-            ? async () => {
+            ? async (travelInfo) => {
                 await toggleFavorite({
                   cityName: cityInfo.cityName,
                   country: cityInfo.countryName,
                   lat: cityInfo.lat,
                   lon: cityInfo.lon,
                   ...(cityInfo.cityId ? { cityId: cityInfo.cityId } : {}),
+                  ...(travelInfo ? { travelInfo } : {}),
                 });
               }
             : undefined

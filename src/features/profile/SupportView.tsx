@@ -15,86 +15,91 @@ import { Button } from "@/components/ui";
 import { SUPPORT_EMAIL } from "@/features/legal/constants";
 import { useI18n } from "@/i18n";
 import { cx } from "@/lib/utils";
+import { createSupportTicket } from "@/services/support";
+import type { SupportTypeId } from "@/types/support";
 
-const SUPPORT_TYPES = [
-  { id: "bug", icon: Bug },
-  { id: "account", icon: UserRound },
-  { id: "billing", icon: CreditCard },
-  { id: "places", icon: MapPin },
-  { id: "planner", icon: Route },
-  { id: "other", icon: HelpCircle },
-] as const;
-
-type SupportTypeId = (typeof SUPPORT_TYPES)[number]["id"];
+const SUPPORT_TYPE_OPTIONS = [
+  { id: "bug" as const, icon: Bug },
+  { id: "account" as const, icon: UserRound },
+  { id: "billing" as const, icon: CreditCard },
+  { id: "places" as const, icon: MapPin },
+  { id: "planner" as const, icon: Route },
+  { id: "other" as const, icon: HelpCircle },
+];
 
 const MIN_QUESTION_LENGTH = 20;
 const MAX_QUESTION_LENGTH = 2000;
 
 interface SupportViewProps {
-  /** Prefills the user’s email in the outbound message when available. */
+  userId: string;
+  /** Prefills / stores the user’s email when available. */
   userEmail?: string;
 }
 
-export function SupportView({ userEmail }: SupportViewProps) {
-  const { t } = useI18n();
+export function SupportView({ userId, userEmail }: SupportViewProps) {
+  const { t, locale } = useI18n();
   const [type, setType] = useState<SupportTypeId | null>(null);
   const [question, setQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const trimmed = question.trim();
   const canSubmit =
     type !== null &&
     trimmed.length >= MIN_QUESTION_LENGTH &&
-    trimmed.length <= MAX_QUESTION_LENGTH;
+    trimmed.length <= MAX_QUESTION_LENGTH &&
+    !submitting;
 
   function topicLabel(id: SupportTypeId): string {
     return t(`profile.support.topics.${id}`);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!type) {
       setError(t("profile.support.selectTopic"));
       return;
     }
     if (trimmed.length < MIN_QUESTION_LENGTH) {
-      setError(
-        t("profile.support.minChars", { n: MIN_QUESTION_LENGTH })
-      );
+      setError(t("profile.support.minChars", { n: MIN_QUESTION_LENGTH }));
       return;
     }
     if (trimmed.length > MAX_QUESTION_LENGTH) {
-      setError(
-        t("profile.support.maxChars", { n: MAX_QUESTION_LENGTH })
-      );
+      setError(t("profile.support.maxChars", { n: MAX_QUESTION_LENGTH }));
       return;
     }
 
-    const typeLabel = topicLabel(type) || t("profile.support.fallbackTitle");
-    const subject = encodeURIComponent(`[PinToTrip] ${typeLabel}`);
-    const bodyLines = [
-      t("profile.support.emailTopic", { topic: typeLabel }),
-      userEmail
-        ? t("profile.support.emailFrom", { email: userEmail })
-        : null,
-      "",
-      trimmed,
-    ].filter((line): line is string => line !== null);
-    const body = encodeURIComponent(bodyLines.join("\n"));
-
     setError(null);
-    setSent(true);
-    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
+    setSubmitting(true);
+    try {
+      await createSupportTicket({
+        userId,
+        email: userEmail,
+        type,
+        topicLabel: topicLabel(type),
+        question: trimmed,
+        language: locale,
+      });
+      setSent(true);
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : t("profile.support.sendFailed")
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (sent) {
     return (
       <div className="space-y-4">
         <h3 className="text-base font-semibold text-text">
-          {t("profile.support.messageReady")}
+          {t("profile.support.messageSent")}
         </h3>
         <p className="text-sm leading-relaxed text-text-secondary">
-          {t("profile.support.messageReadyBody", { email: SUPPORT_EMAIL })}
+          {t("profile.support.messageSentBody", { email: SUPPORT_EMAIL })}
         </p>
         <Button
           variant="secondary"
@@ -119,7 +124,7 @@ export function SupportView({ userEmail }: SupportViewProps) {
 
       <Field label={t("profile.support.topic")}>
         <div className="grid grid-cols-2 gap-2">
-          {SUPPORT_TYPES.map((item) => (
+          {SUPPORT_TYPE_OPTIONS.map((item) => (
             <TypeChip
               key={item.id}
               label={topicLabel(item.id)}
@@ -142,12 +147,13 @@ export function SupportView({ userEmail }: SupportViewProps) {
           rows={6}
           maxLength={MAX_QUESTION_LENGTH}
           placeholder={t("profile.support.placeholder")}
+          disabled={submitting}
           className={cx(
             "block w-full rounded-xl border border-border bg-surface-elevated",
             "px-3 py-2.5 text-sm text-text placeholder:text-text-muted",
             "shadow-sm outline-none transition-colors",
             "focus:border-primary focus:ring-2 focus:ring-primary/20",
-            "resize-y"
+            "resize-y disabled:opacity-60"
           )}
         />
         <p className="mt-1.5 text-xs text-text-muted">
@@ -164,10 +170,13 @@ export function SupportView({ userEmail }: SupportViewProps) {
         color="primary"
         icon={Send}
         disabled={!canSubmit}
-        onClick={handleSubmit}
+        loading={submitting}
+        onClick={() => {
+          void handleSubmit();
+        }}
         className="w-full"
       >
-        {t("profile.support.continueEmail")}
+        {t("profile.support.send")}
       </Button>
     </div>
   );

@@ -223,6 +223,21 @@ export type TripPlanningCityIntelligence = {
     outOf: number;
     summary: string;
   };
+  travelAdvisory?: {
+    level: "normal" | "exercise_caution" | "reconsider" | "do_not_travel";
+    headline: string;
+    summary: string;
+    reasons?: string[];
+  };
+  health?: {
+    summary: string;
+    vaccines?: Array<{
+      name: string;
+      status: "required" | "recommended" | "routine";
+      note?: string;
+    }>;
+    malariaRisk?: "none" | "low" | "moderate" | "high" | null;
+  };
   bestTimeToVisit?: {
     summary: string;
     months?: string[];

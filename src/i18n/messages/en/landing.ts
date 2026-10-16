@@ -176,7 +176,7 @@ export const landing = {
         tagline: "For active travelers",
         blurb: "More places, more insights, more travel possibilities.",
         features: {
-          credits: "200 AI credits / month",
+          credits: "300 AI credits / month",
           unlimited: "Save up to 100 places",
           insights: "Detailed city insights",
           visaBudget: "Visa, budget, best time and more",

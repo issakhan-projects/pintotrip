@@ -50,8 +50,20 @@ export function buildTravelInfoDescription(
   if (details?.practicalInfo?.transport) {
     lines.push(`Transport: ${details.practicalInfo.transport}`);
   }
+  if (data.travelAdvisory) {
+    lines.push(
+      `Advisory: ${data.travelAdvisory.headline} — ${data.travelAdvisory.summary}`
+    );
+  }
   if (data.safeRate?.summary) {
     lines.push(`Safety: ${data.safeRate.summary}`);
+  }
+  if (data.health?.summary) {
+    lines.push(`Health: ${data.health.summary}`);
+    const vaccines = data.health.vaccines
+      ?.map((v) => `${v.name} (${v.status})`)
+      .join(", ");
+    if (vaccines) lines.push(`Vaccines: ${vaccines}`);
   }
 
   lines.push(CITY_INTELLIGENCE_DISCLAIMER);

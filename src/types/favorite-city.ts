@@ -14,6 +14,49 @@ export interface FavoriteCityIntelligenceContribution {
   countedAsUniqueFavorite: boolean;
 }
 
+/** Optional City Intelligence snapshot stored on a favorite. */
+export interface FavoriteCitySafeRate {
+  score: number;
+  outOf: number;
+  summary: string;
+  source?: string;
+}
+
+export interface FavoriteCityVisa {
+  required: boolean | "unknown";
+  type?: string | null;
+  cost?: {
+    amount?: number | null;
+    currency?: string | null;
+  } | null;
+  description?: string;
+  verificationRequired?: boolean;
+}
+
+export interface FavoriteCityApproximateDailyBudget {
+  amount?: number;
+  currency?: string;
+  summary?: string;
+}
+
+export interface FavoriteCityBestTimeToVisit {
+  summary: string;
+  months?: string[];
+  source?: string;
+}
+
+/** Travel-info fields copied from City Intelligence onto a favorite. */
+export type FavoriteCityTravelInfo = {
+  safeRate?: FavoriteCitySafeRate;
+  /** Destination currency ISO code (e.g. "TRY"). */
+  currency?: string;
+  /** Language the intelligence text was generated in (e.g. "en"). */
+  language?: string;
+  approximateDailyBudget?: FavoriteCityApproximateDailyBudget;
+  bestTimeToVisit?: FavoriteCityBestTimeToVisit;
+  visa?: FavoriteCityVisa;
+};
+
 /**
  * Firestore document: users/{userId}/favoriteCities/{cityId}
  */
@@ -26,6 +69,13 @@ export interface FavoriteCity {
   lon: number;
 
   status: LocationStatus;
+
+  safeRate?: FavoriteCitySafeRate;
+  currency?: string;
+  language?: string;
+  approximateDailyBudget?: FavoriteCityApproximateDailyBudget;
+  bestTimeToVisit?: FavoriteCityBestTimeToVisit;
+  visa?: FavoriteCityVisa;
 
   /**
    * Travel Intelligence incremental flag.

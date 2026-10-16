@@ -6,13 +6,39 @@ import {
   CITY_INTELLIGENCE_DISCLAIMER,
   type CityIntelligenceResult,
   type InterestingPlace,
+  type MalariaRisk,
+  type TravelAdvisory,
+  type TravelAdvisoryLevel,
+  type TravelHealth,
+  type TravelVaccine,
   type UsefulApp,
   type UsefulAppCategory,
   type UsefulAppPlatform,
+  type VaccineStatus,
 } from "./types";
 
 export type VisaRequired = boolean | "unknown";
 export type Walkability = "easy" | "moderate" | "difficult";
+
+const TRAVEL_ADVISORY_LEVELS = new Set<TravelAdvisoryLevel>([
+  "normal",
+  "exercise_caution",
+  "reconsider",
+  "do_not_travel",
+]);
+
+const VACCINE_STATUSES = new Set<VaccineStatus>([
+  "required",
+  "recommended",
+  "routine",
+]);
+
+const MALARIA_RISKS = new Set<MalariaRisk>([
+  "none",
+  "low",
+  "moderate",
+  "high",
+]);
 
 const USEFUL_APP_CATEGORIES = new Set<UsefulAppCategory>([
   "taxi",
@@ -81,6 +107,8 @@ export interface ModelCityIntelligence {
     } | null;
     tips?: string[];
   };
+  travelAdvisory?: TravelAdvisory;
+  health?: TravelHealth;
   usefulApps?: UsefulApp[];
   interestingPlaces?: InterestingPlace[];
   lastCheckedAt?: string;
@@ -247,6 +275,176 @@ function parseVisaRequired(value: unknown): VisaRequired {
   return "unknown";
 }
 
+function parseTravelAdvisoryLevel(
+  value: unknown
+): TravelAdvisoryLevel | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const aliases: Record<string, TravelAdvisoryLevel> = {
+    normal: "normal",
+    low: "normal",
+    none: "normal",
+    exercise_caution: "exercise_caution",
+    caution: "exercise_caution",
+    heightened_caution: "exercise_caution",
+    reconsider: "reconsider",
+    reconsider_travel: "reconsider",
+    not_recommended: "reconsider",
+    do_not_travel: "do_not_travel",
+    avoid: "do_not_travel",
+    avoid_all_travel: "do_not_travel",
+    no_travel: "do_not_travel",
+  };
+  const mapped = aliases[normalized];
+  if (mapped) return mapped;
+  return TRAVEL_ADVISORY_LEVELS.has(normalized as TravelAdvisoryLevel)
+    ? (normalized as TravelAdvisoryLevel)
+    : undefined;
+}
+
+function defaultAdvisoryHeadline(level: TravelAdvisoryLevel): string {
+  switch (level) {
+    case "do_not_travel":
+      return "Do not travel";
+    case "reconsider":
+      return "Travel not recommended";
+    case "exercise_caution":
+      return "Exercise caution";
+    default:
+      return "Normal precautions";
+  }
+}
+
+function parseTravelAdvisory(value: unknown): TravelAdvisory | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const level = parseTravelAdvisoryLevel(row.level);
+  if (!level) return undefined;
+  const summary =
+    optionalString(row.summary) ||
+    optionalString(row.description) ||
+    optionalString(row.details);
+  if (!summary) return undefined;
+  const headline =
+    optionalString(row.headline) ||
+    optionalString(row.title) ||
+    defaultAdvisoryHeadline(level);
+  return {
+    level,
+    headline,
+    summary,
+    ...(asStringArray(row.reasons) ? { reasons: asStringArray(row.reasons) } : {}),
+    ...(optionalString(row.source) ? { source: optionalString(row.source) } : {}),
+  };
+}
+
+function parseVaccineStatus(value: unknown): VaccineStatus | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, VaccineStatus> = {
+    required: "required",
+    mandatory: "required",
+    necessary: "required",
+    recommended: "recommended",
+    advised: "recommended",
+    suggested: "recommended",
+    routine: "routine",
+    standard: "routine",
+  };
+  const mapped = aliases[normalized];
+  if (mapped) return mapped;
+  return VACCINE_STATUSES.has(normalized as VaccineStatus)
+    ? (normalized as VaccineStatus)
+    : undefined;
+}
+
+function parseMalariaRisk(value: unknown): MalariaRisk | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "n/a" || normalized === "na" || normalized === "unknown") {
+    return null;
+  }
+  return MALARIA_RISKS.has(normalized as MalariaRisk)
+    ? (normalized as MalariaRisk)
+    : undefined;
+}
+
+function parseHealth(value: unknown): TravelHealth | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const summary =
+    optionalString(row.summary) || optionalString(row.description);
+  if (!summary) return undefined;
+
+  const vaccines: TravelVaccine[] = [];
+  if (Array.isArray(row.vaccines)) {
+    for (const item of row.vaccines) {
+      if (!item || typeof item !== "object") continue;
+      const v = item as Record<string, unknown>;
+      const name = optionalString(v.name);
+      const status = parseVaccineStatus(v.status) ?? "recommended";
+      if (!name) continue;
+      vaccines.push({
+        name,
+        status,
+        ...(optionalString(v.note) ? { note: optionalString(v.note) } : {}),
+      });
+      if (vaccines.length >= 12) break;
+    }
+  }
+
+  const malariaRisk = parseMalariaRisk(row.malariaRisk);
+  const otherRisks = asStringArray(row.otherRisks);
+
+  return {
+    summary,
+    ...(vaccines.length ? { vaccines } : {}),
+    ...(malariaRisk !== undefined ? { malariaRisk } : {}),
+    ...(otherRisks ? { otherRisks } : {}),
+    ...(optionalString(row.source) ? { source: optionalString(row.source) } : {}),
+  };
+}
+
+/** Infer a numeric tourist safety score when the model omitted one. */
+function inferSafeScore(params: {
+  score: number | null | undefined;
+  advisory?: TravelAdvisory;
+  safetyText?: string;
+}): number | undefined {
+  if (params.score != null && Number.isFinite(params.score)) {
+    return params.score;
+  }
+
+  switch (params.advisory?.level) {
+    case "do_not_travel":
+      return 1;
+    case "reconsider":
+      return 2.5;
+    case "exercise_caution":
+      return 5;
+    default:
+      break;
+  }
+
+  const text = `${params.advisory?.summary ?? ""} ${params.safetyText ?? ""}`.toLowerCase();
+  if (
+    /\b(war|warfare|armed conflict|active conflict|civil war|do not travel|not recommended|unsafe to visit)\b/.test(
+      text
+    )
+  ) {
+    return 1.5;
+  }
+  if (/\b(reconsider|high risk|severe|kidnap|terrorism)\b/.test(text)) {
+    return 3;
+  }
+
+  return undefined;
+}
+
 /**
  * Strip optional markdown fences, then parse JSON.
  */
@@ -386,6 +584,31 @@ export function parseModelCityIntelligence(
 
   const usefulApps = parseUsefulApps(body.usefulApps);
   const interestingPlaces = parseInterestingPlaces(body.interestingPlaces);
+  const travelAdvisory = parseTravelAdvisory(body.travelAdvisory);
+  const health = parseHealth(body.health);
+
+  // Ensure practicalInfo.safeRate gets a numeric score whenever we can infer one.
+  {
+    const inferred = inferSafeScore({
+      score: practicalInfo?.safeRate?.score,
+      advisory: travelAdvisory,
+      safetyText: practicalInfo?.safety,
+    });
+    if (inferred != null) {
+      const outOf = practicalInfo?.safeRate?.outOf ?? 10;
+      practicalInfo = {
+        ...(practicalInfo ?? {}),
+        safeRate: {
+          score: inferred,
+          outOf,
+          summary:
+            practicalInfo?.safeRate?.summary ||
+            travelAdvisory?.headline ||
+            practicalInfo?.safety,
+        },
+      };
+    }
+  }
 
   return {
     city: {
@@ -402,6 +625,8 @@ export function parseModelCityIntelligence(
     dailyBudget,
     climate,
     practicalInfo,
+    travelAdvisory,
+    health,
     usefulApps,
     interestingPlaces,
     lastCheckedAt: optionalString(body.lastCheckedAt),
@@ -449,6 +674,12 @@ function buildVisaSummary(
 export interface ModelCityTimeSensitive {
   visa?: ModelCityIntelligence["visa"];
   dailyBudget?: ModelCityIntelligence["dailyBudget"];
+  travelAdvisory?: TravelAdvisory;
+  health?: TravelHealth;
+  /** Optional safety refresh when conditions changed. */
+  safeRate?: NonNullable<
+    NonNullable<ModelCityIntelligence["practicalInfo"]>["safeRate"]
+  >;
   lastCheckedAt?: string;
   warning?: string;
 }
@@ -514,9 +745,35 @@ export function parseModelCityTimeSensitive(
     }
   }
 
+  const travelAdvisory = parseTravelAdvisory(body.travelAdvisory);
+  const health = parseHealth(body.health);
+
+  let safeRate: ModelCityTimeSensitive["safeRate"];
+  const practicalRaw = body.practicalInfo;
+  const safeRateRaw =
+    body.safeRate ??
+    (practicalRaw && typeof practicalRaw === "object"
+      ? (practicalRaw as Record<string, unknown>).safeRate
+      : undefined);
+  if (safeRateRaw && typeof safeRateRaw === "object") {
+    const sr = safeRateRaw as Record<string, unknown>;
+    const score = optionalNumber(sr.score);
+    const outOf = optionalNumber(sr.outOf);
+    safeRate = {
+      score: score === undefined ? null : score,
+      outOf: outOf != null && Number.isFinite(outOf) && outOf > 0 ? outOf : 10,
+      summary: optionalString(sr.summary),
+    };
+  } else if (typeof safeRateRaw === "number" && Number.isFinite(safeRateRaw)) {
+    safeRate = { score: safeRateRaw, outOf: 10 };
+  }
+
   return {
     visa,
     dailyBudget,
+    travelAdvisory,
+    health,
+    safeRate,
     lastCheckedAt: optionalString(body.lastCheckedAt),
     warning: optionalString(body.warning),
   };
@@ -529,6 +786,55 @@ export function mergeSlowWithTimeSensitive(
   slow: ModelCityIntelligence,
   patch: ModelCityTimeSensitive
 ): ModelCityIntelligence {
+  const travelAdvisory = patch.travelAdvisory ?? slow.travelAdvisory;
+  let practicalInfo = slow.practicalInfo
+    ? { ...slow.practicalInfo }
+    : undefined;
+
+  if (patch.safeRate) {
+    const inferred = inferSafeScore({
+      score: patch.safeRate.score,
+      advisory: travelAdvisory,
+      safetyText: practicalInfo?.safety,
+    });
+    if (inferred != null) {
+      practicalInfo = {
+        ...(practicalInfo ?? {}),
+        safeRate: {
+          score: inferred,
+          outOf: patch.safeRate.outOf ?? 10,
+          summary:
+            patch.safeRate.summary ||
+            travelAdvisory?.headline ||
+            practicalInfo?.safety,
+        },
+      };
+    }
+  } else if (
+    travelAdvisory &&
+    (practicalInfo?.safeRate?.score == null ||
+      !Number.isFinite(practicalInfo.safeRate.score))
+  ) {
+    const inferred = inferSafeScore({
+      score: null,
+      advisory: travelAdvisory,
+      safetyText: practicalInfo?.safety,
+    });
+    if (inferred != null) {
+      practicalInfo = {
+        ...(practicalInfo ?? {}),
+        safeRate: {
+          score: inferred,
+          outOf: practicalInfo?.safeRate?.outOf ?? 10,
+          summary:
+            practicalInfo?.safeRate?.summary ||
+            travelAdvisory.headline ||
+            practicalInfo?.safety,
+        },
+      };
+    }
+  }
+
   return {
     ...slow,
     currency: {
@@ -536,6 +842,9 @@ export function mergeSlowWithTimeSensitive(
     },
     visa: patch.visa ?? slow.visa,
     dailyBudget: patch.dailyBudget ?? slow.dailyBudget,
+    travelAdvisory,
+    health: patch.health ?? slow.health,
+    practicalInfo,
     lastCheckedAt: patch.lastCheckedAt ?? slow.lastCheckedAt,
     warning: patch.warning ?? slow.warning,
   };
@@ -574,6 +883,8 @@ export function toSlowCityIntelligence(
       : undefined,
     climate: full.climate,
     practicalInfo: full.practicalInfo,
+    travelAdvisory: full.travelAdvisory,
+    health: full.health,
     usefulApps: full.usefulApps,
     interestingPlaces: full.interestingPlaces,
     lastCheckedAt: full.lastCheckedAt,
@@ -628,15 +939,19 @@ export function toCityIntelligenceResult(
       }
     : undefined;
 
+  const travelAdvisory = analysis.travelAdvisory;
+  const health = analysis.health;
+
   const rawSafe = analysis.practicalInfo?.safeRate;
-  let safeScore =
-    rawSafe?.score != null && Number.isFinite(rawSafe.score)
-      ? rawSafe.score
-      : undefined;
   const outOf =
     rawSafe?.outOf != null && Number.isFinite(rawSafe.outOf) && rawSafe.outOf > 0
       ? rawSafe.outOf
       : 10;
+  let safeScore = inferSafeScore({
+    score: rawSafe?.score,
+    advisory: travelAdvisory,
+    safetyText: analysis.practicalInfo?.safety,
+  });
   if (safeScore != null) {
     safeScore = Math.min(outOf, Math.max(0, safeScore));
     safeScore = Math.round(safeScore * 10) / 10;
@@ -648,6 +963,7 @@ export function toCityIntelligenceResult(
           outOf,
           summary:
             rawSafe?.summary?.trim() ||
+            travelAdvisory?.headline ||
             analysis.practicalInfo?.safety?.trim() ||
             "Approximate tourist safety guidance for typical visitors.",
           source:
@@ -676,6 +992,26 @@ export function toCityIntelligenceResult(
     },
     visa,
     safeRate,
+    ...(travelAdvisory
+      ? {
+          travelAdvisory: {
+            ...travelAdvisory,
+            source:
+              travelAdvisory.source ||
+              "Synthesized travel advisory — verify with official government sources",
+          },
+        }
+      : {}),
+    ...(health
+      ? {
+          health: {
+            ...health,
+            source:
+              health.source ||
+              "General traveler health guidance — verify with a travel clinic / official health authority",
+          },
+        }
+      : {}),
     bestTimeToVisit,
     usefulApps: analysis.usefulApps,
     interestingPlaces: analysis.interestingPlaces,

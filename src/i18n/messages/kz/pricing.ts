@@ -98,7 +98,7 @@ export const pricing = {
   label: "Plus",
   description: "Жиі саяхаттайтындарға көбірек AI-кредит.",
   features: {
-  credits: "Айына 200 AI-кредит",
+  credits: "Айына 300 AI-кредит",
   savePlaces: "100 сақталған орынға дейін",
   aiIdentify: "AI арқылы орынды анықтау",
   cityIntel: "Қала туралы ақпарат",

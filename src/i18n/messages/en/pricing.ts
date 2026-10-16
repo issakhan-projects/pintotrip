@@ -98,7 +98,7 @@ export const pricing = {
       label: "Plus",
       description: "More AI credits for frequent travelers.",
       features: {
-        credits: "200 AI credits / month",
+        credits: "300 AI credits / month",
         savePlaces: "Save up to 100 places",
         aiIdentify: "AI-powered place identification",
         cityIntel: "City intelligence",

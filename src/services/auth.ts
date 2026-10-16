@@ -51,14 +51,16 @@ googleProvider.addScope("profile");
 googleProvider.addScope("email");
 
 /**
- * Start geolocation during the click turn (before any await) so browsers
- * show the permission prompt. Never block profile creation on it — waiting
- * lets auth-state redirects unmount the login UI before users/{uid} exists.
+ * Optional location for profile create/backfill.
+ * Signup may prompt (user gesture). Sign-in never prompts — only reads GPS
+ * when permission is already granted.
  */
-function startLocationDetection(): Promise<
-  Awaited<ReturnType<typeof detectUserLocation>>
-> {
-  return detectUserLocation();
+function startLocationDetection(options?: {
+  requestPermission?: boolean;
+}): Promise<Awaited<ReturnType<typeof detectUserLocation>>> {
+  return detectUserLocation({
+    requestPermission: options?.requestPermission ?? false,
+  });
 }
 
 async function createProfileNow(
@@ -101,7 +103,8 @@ export async function signUpWithEmail({
   password,
   displayName,
 }: SignUpWithEmailParams): Promise<UserCredential> {
-  const locationPromise = startLocationDetection();
+  // Signup is a user gesture — ok to show the geolocation prompt once.
+  const locationPromise = startLocationDetection({ requestPermission: true });
   const auth = getFirebaseAuth();
   const credential = await createUserWithEmailAndPassword(
     auth,

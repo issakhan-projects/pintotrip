@@ -30,6 +30,12 @@ export interface MapMarkerInput {
    * TravelMap resolves geometry before placing the pin.
    */
   googlePlaceId?: string;
+  /**
+   * Favorite-city travel chips (shown above city pins when present).
+   * Sourced from `users/{uid}/favoriteCities`.
+   */
+  safeRate?: { score: number; outOf?: number };
+  currency?: string;
 }
 
 export interface CreateMapOptions {
@@ -79,7 +85,11 @@ export interface MapProvider {
 }
 
 function markerVisualKey(m: MapMarkerInput): string {
-  return `${m.kind ?? "place"}:${m.status ?? "planned"}:${m.title ?? ""}:${m.order ?? ""}:${m.selected ? "1" : "0"}`;
+  const safe =
+    m.safeRate && Number.isFinite(m.safeRate.score)
+      ? `${m.safeRate.score}/${m.safeRate.outOf ?? 10}`
+      : "";
+  return `${m.kind ?? "place"}:${m.status ?? "planned"}:${m.title ?? ""}:${m.order ?? ""}:${m.selected ? "1" : "0"}:${safe}:${m.currency ?? ""}`;
 }
 
 const STATUS_HEX: Record<LocationStatus, string> = {
@@ -193,12 +203,166 @@ function pinColorFor(
   return STATUS_HEX[status ?? "planned"];
 }
 
+function formatSafeRateScore(score: number): string {
+  if (!Number.isFinite(score)) return "";
+  const rounded = Math.round(score * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/** Same bands as CityIntelligenceResultsView `safeRateTone`. */
+function safeRateChipTone(normalized: number): {
+  color: string;
+  soft: string;
+  accent: string;
+} {
+  if (normalized >= 0.8) {
+    return { color: "#15803d", soft: "#d1fae5", accent: "#22c55e" };
+  }
+  if (normalized >= 0.6) {
+    return { color: "#047857", soft: "#a7f3d0", accent: "#10b981" };
+  }
+  if (normalized >= 0.4) {
+    return { color: "#b45309", soft: "#fde68a", accent: "#f59e0b" };
+  }
+  if (normalized >= 0.2) {
+    return { color: "#c2410c", soft: "#fed7aa", accent: "#f97316" };
+  }
+  return { color: "#b91c1c", soft: "#fecaca", accent: "#ef4444" };
+}
+
+function shieldIconSvg(color: string): string {
+  return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 3 5 6v5c0 5 3.2 8.6 7 10 3.8-1.4 7-5 7-10V6l-7-3z" fill="${color}" fill-opacity="0.22" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function createCityTravelChip(parts: {
+  safeRate?: { score: number; outOf?: number };
+  currency?: string;
+}): HTMLElement | null {
+  const currency = parts.currency?.trim().toUpperCase();
+  const hasSafe =
+    Boolean(parts.safeRate) && Number.isFinite(parts.safeRate!.score);
+  if (!hasSafe && !currency) return null;
+
+  const wrap = document.createElement("div");
+  wrap.setAttribute("aria-hidden", "true");
+  wrap.style.cssText = [
+    "display:flex",
+    "flex-direction:column",
+    "align-items:center",
+    "gap:0",
+    "pointer-events:none",
+    "filter:drop-shadow(0 2px 6px rgba(17,24,39,0.18))",
+  ].join(";");
+
+  const chip = document.createElement("div");
+  chip.style.cssText = [
+    "display:flex",
+    "align-items:center",
+    "gap:6px",
+    "padding:4px 5px 4px 4px",
+    "border-radius:14px",
+    "background:rgba(255,255,255,0.96)",
+    "border:1px solid rgba(232,228,236,0.95)",
+    "backdrop-filter:blur(8px)",
+    "-webkit-backdrop-filter:blur(8px)",
+    "font-family:var(--font-montserrat),system-ui,-apple-system,sans-serif",
+    "white-space:nowrap",
+  ].join(";");
+
+  if (hasSafe && parts.safeRate) {
+    const outOf =
+      parts.safeRate.outOf && Number.isFinite(parts.safeRate.outOf)
+        ? parts.safeRate.outOf
+        : 10;
+    const normalized =
+      outOf > 0
+        ? Math.min(1, Math.max(0, parts.safeRate.score / outOf))
+        : 0;
+    const tone = safeRateChipTone(normalized);
+
+    const safeBadge = document.createElement("span");
+    safeBadge.style.cssText = [
+      "display:inline-flex",
+      "align-items:center",
+      "gap:4px",
+      "padding:3px 7px 3px 5px",
+      "border-radius:10px",
+      `background:${tone.soft}`,
+      `color:${tone.color}`,
+      "box-shadow:inset 0 0 0 1px rgba(255,255,255,0.55)",
+    ].join(";");
+
+    const icon = document.createElement("span");
+    icon.style.cssText =
+      "display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;";
+    icon.innerHTML = shieldIconSvg(tone.color);
+    safeBadge.appendChild(icon);
+
+    const scoreWrap = document.createElement("span");
+    scoreWrap.style.cssText =
+      "display:inline-flex;align-items:baseline;gap:1px;line-height:1;";
+
+    const scoreEl = document.createElement("span");
+    scoreEl.style.cssText =
+      "font-size:12px;font-weight:700;letter-spacing:-0.02em;";
+    scoreEl.textContent = formatSafeRateScore(parts.safeRate.score);
+
+    const outEl = document.createElement("span");
+    outEl.style.cssText =
+      "font-size:9px;font-weight:600;opacity:0.7;letter-spacing:0;";
+    outEl.textContent = `/${outOf}`;
+
+    scoreWrap.appendChild(scoreEl);
+    scoreWrap.appendChild(outEl);
+    safeBadge.appendChild(scoreWrap);
+    chip.appendChild(safeBadge);
+
+    if (currency) {
+      const curEl = document.createElement("span");
+      curEl.style.cssText = [
+        "padding-right:4px",
+        "font-size:10px",
+        "font-weight:700",
+        "letter-spacing:0.04em",
+        "color:#6b7280",
+      ].join(";");
+      curEl.textContent = currency;
+      chip.appendChild(curEl);
+    }
+  } else if (currency) {
+    chip.style.padding = "5px 10px";
+    const curEl = document.createElement("span");
+    curEl.style.cssText =
+      "font-size:11px;font-weight:700;letter-spacing:0.04em;color:#374151;";
+    curEl.textContent = currency;
+    chip.appendChild(curEl);
+  }
+
+  const caret = document.createElement("div");
+  caret.style.cssText = [
+    "width:0",
+    "height:0",
+    "margin-top:-1px",
+    "border-left:5px solid transparent",
+    "border-right:5px solid transparent",
+    "border-top:6px solid rgba(255,255,255,0.96)",
+    "filter:drop-shadow(0 1px 0 rgba(232,228,236,0.95))",
+  ].join(";");
+
+  wrap.appendChild(chip);
+  wrap.appendChild(caret);
+  return wrap;
+}
+
 function createPinContent(
   color: string,
   title?: string,
   kind: MarkerKind = "place",
   order?: number,
-  selected = false
+  selected = false,
+  travel?: { safeRate?: MapMarkerInput["safeRate"]; currency?: string }
 ): HTMLElement {
   const img = document.createElement("img");
   img.src =
@@ -219,6 +383,15 @@ function createPinContent(
     order > 0
       ? ` (${Math.floor(order)})`
       : "";
+  const travelBits: string[] = [];
+  if (kind === "city" && travel?.safeRate && Number.isFinite(travel.safeRate.score)) {
+    travelBits.push(
+      `safety ${formatSafeRateScore(travel.safeRate.score)}/${travel.safeRate.outOf ?? 10}`
+    );
+  }
+  if (kind === "city" && travel?.currency?.trim()) {
+    travelBits.push(travel.currency.trim().toUpperCase());
+  }
   img.alt =
     (title ??
       (kind === "city"
@@ -227,9 +400,28 @@ function createPinContent(
           ? "Accommodation"
           : kind === "airport"
             ? "Airport"
-            : "Place")) + orderSuffix;
+            : "Place")) +
+    orderSuffix +
+    (travelBits.length ? ` — ${travelBits.join(", ")}` : "");
   img.draggable = false;
   img.style.display = "block";
+
+  if (kind === "city") {
+    const chip = createCityTravelChip({
+      safeRate: travel?.safeRate,
+      currency: travel?.currency,
+    });
+    if (chip) {
+      const wrap = document.createElement("div");
+      wrap.style.cssText =
+        "display:flex;flex-direction:column;align-items:center;gap:1px;pointer-events:none;";
+      wrap.appendChild(chip);
+      wrap.appendChild(img);
+      // AdvancedMarkerElement anchors custom HTML at the bottom center (pin tip).
+      return wrap;
+    }
+  }
+
   // AdvancedMarkerElement anchors custom HTML at the bottom center (pin tip).
   return img;
 }
@@ -316,7 +508,8 @@ export const googleMapsProvider: MapProvider = {
             m.title,
             kind,
             m.order,
-            m.selected
+            m.selected,
+            { safeRate: m.safeRate, currency: m.currency }
           );
           prev.visualKey = visualKey;
         }
@@ -331,7 +524,10 @@ export const googleMapsProvider: MapProvider = {
         map,
         position: { lat: m.lat, lng: m.lon },
         title: m.title,
-        content: createPinContent(color, m.title, kind, m.order, m.selected),
+        content: createPinContent(color, m.title, kind, m.order, m.selected, {
+          safeRate: m.safeRate,
+          currency: m.currency,
+        }),
         zIndex: m.selected ? 1000 : undefined,
         gmpClickable: Boolean(onSelect),
       });

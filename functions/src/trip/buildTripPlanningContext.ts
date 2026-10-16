@@ -294,6 +294,23 @@ function slimCityIntelligence(raw: unknown): TripPlanningCityIntelligence | null
           summary?: string;
         })
       : undefined;
+  const travelAdvisory =
+    body.travelAdvisory && typeof body.travelAdvisory === "object"
+      ? (body.travelAdvisory as {
+          level?: string;
+          headline?: string;
+          summary?: string;
+          reasons?: unknown;
+        })
+      : undefined;
+  const health =
+    body.health && typeof body.health === "object"
+      ? (body.health as {
+          summary?: string;
+          vaccines?: unknown;
+          malariaRisk?: string | null;
+        })
+      : undefined;
   const bestTime =
     body.bestTimeToVisit && typeof body.bestTimeToVisit === "object"
       ? (body.bestTimeToVisit as { summary?: string; months?: string[] })
@@ -356,6 +373,75 @@ function slimCityIntelligence(raw: unknown): TripPlanningCityIntelligence | null
             score: safeRate.score,
             outOf: safeRate.outOf,
             summary: safeRate.summary,
+          },
+        }
+      : {}),
+    ...(travelAdvisory &&
+    (travelAdvisory.level === "normal" ||
+      travelAdvisory.level === "exercise_caution" ||
+      travelAdvisory.level === "reconsider" ||
+      travelAdvisory.level === "do_not_travel") &&
+    typeof travelAdvisory.headline === "string" &&
+    travelAdvisory.headline.trim() &&
+    typeof travelAdvisory.summary === "string" &&
+    travelAdvisory.summary.trim()
+      ? {
+          travelAdvisory: {
+            level: travelAdvisory.level,
+            headline: travelAdvisory.headline.trim(),
+            summary: travelAdvisory.summary.trim(),
+            ...(Array.isArray(travelAdvisory.reasons)
+              ? {
+                  reasons: travelAdvisory.reasons.filter(
+                    (r): r is string =>
+                      typeof r === "string" && r.trim().length > 0
+                  ),
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(health &&
+    typeof health.summary === "string" &&
+    health.summary.trim()
+      ? {
+          health: {
+            summary: health.summary.trim(),
+            ...(Array.isArray(health.vaccines)
+              ? {
+                  vaccines: health.vaccines
+                    .filter(
+                      (v): v is Record<string, unknown> =>
+                        !!v && typeof v === "object"
+                    )
+                    .map((v) => {
+                      const status =
+                        v.status === "required" ||
+                        v.status === "recommended" ||
+                        v.status === "routine"
+                          ? v.status
+                          : ("recommended" as const);
+                      return {
+                        name: typeof v.name === "string" ? v.name.trim() : "",
+                        status: status as
+                          | "required"
+                          | "recommended"
+                          | "routine",
+                        ...(typeof v.note === "string" && v.note.trim()
+                          ? { note: v.note.trim() }
+                          : {}),
+                      };
+                    })
+                    .filter((v) => v.name),
+                }
+              : {}),
+            ...(health.malariaRisk === "none" ||
+            health.malariaRisk === "low" ||
+            health.malariaRisk === "moderate" ||
+            health.malariaRisk === "high" ||
+            health.malariaRisk === null
+              ? { malariaRisk: health.malariaRisk }
+              : {}),
           },
         }
       : {}),

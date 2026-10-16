@@ -40,7 +40,7 @@ const CATALOG_FALLBACK = {
  */
 export const PLAN_AI_CREDITS_MONTHLY: Record<AppPlan, number> = {
   free: 0,
-  plus: 200,
+  plus: 300,
   pro: 500,
 };
 

@@ -37,10 +37,10 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
     name: "Plus",
     priceMonthly: 9.99,
     priceYearly: 99.9,
-    aiCreditsMonthly: 200,
+    aiCreditsMonthly: 300,
     description: "More AI credits for frequent travelers.",
     features: [
-      "200 AI credits / month",
+      "300 AI credits / month",
       "Save up to 100 places",
       "AI-powered place identification",
       "City intelligence",
@@ -130,7 +130,7 @@ export const PLAN_COMPARISON_ROWS: PlanComparisonRow[] = [
   {
     feature: "AI Credits / month",
     free: 30,
-    plus: 200,
+    plus: 300,
     pro: 500,
   },
   {
