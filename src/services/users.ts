@@ -395,6 +395,32 @@ export async function updateUserProfile(
 }
 
 /**
+ * Bump the locations collection watermark on the user profile.
+ * Fire-and-forget from location writes so other sessions can detect changes
+ * without re-reading the whole collection every soft load.
+ */
+export async function bumpLocationsSyncAt(userId: string): Promise<number> {
+  const now = approxNowTimestamp();
+  await updateDoc(userRef(userId), { locationsSyncAt: serverTimestamp() });
+  patchUserProfileInCache(userId, { locationsSyncAt: now });
+  return now.toMillis();
+}
+
+/**
+ * Bump the favoriteCities collection watermark on the user profile.
+ */
+export async function bumpFavoriteCitiesSyncAt(
+  userId: string
+): Promise<number> {
+  const now = approxNowTimestamp();
+  await updateDoc(userRef(userId), {
+    favoriteCitiesSyncAt: serverTimestamp(),
+  });
+  patchUserProfileInCache(userId, { favoriteCitiesSyncAt: now });
+  return now.toMillis();
+}
+
+/**
  * Save (or replace) users/{userId}.travelProfile after onboarding or edits.
  */
 export async function saveTravelProfile(

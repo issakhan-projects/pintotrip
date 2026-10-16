@@ -9,8 +9,11 @@ import {
   orderBy,
   limit,
   startAfter,
+  getDocsFromCache,
+  Timestamp,
   type CollectionReference,
   type QueryDocumentSnapshot,
+  type QuerySnapshot,
 } from "firebase/firestore";
 import { getFirestoreDb, FirestorePaths } from "@/lib/firebase/firestore";
 import { getDocsCacheFirst, getDocCacheFirst } from "@/lib/firebase/cache-read";
@@ -28,6 +31,12 @@ import {
   type FavoriteCitiesCacheState,
   type SavedFavoriteCity,
 } from "@/lib/firebase/data-cache";
+import {
+  readPersistedCollectionSync,
+  timestampMillis,
+  writePersistedCollectionSync,
+} from "@/lib/firebase/collection-sync";
+import { bumpFavoriteCitiesSyncAt, getUserProfile } from "@/services/users";
 import type { FavoriteCity, FavoriteCityCreateInput } from "@/types/favorite-city";
 
 export const FAVORITE_CITIES_PAGE_SIZE = 50;
@@ -155,6 +164,188 @@ function mapDoc(d: QueryDocumentSnapshot): SavedFavoriteCity {
   };
 }
 
+function createdAtMillis(city: SavedFavoriteCity): number {
+  const ts = city.createdAt;
+  if (ts && typeof (ts as Timestamp).toMillis === "function") {
+    return (ts as Timestamp).toMillis();
+  }
+  return 0;
+}
+
+function favoriteCitiesOrderedQuery(userId: string) {
+  return query(
+    favoriteCitiesCollection(userId),
+    orderBy("createdAt", "desc"),
+    limit(FAVORITE_CITIES_PAGE_SIZE)
+  );
+}
+
+function favoriteCitiesFallbackQuery(userId: string) {
+  return query(
+    favoriteCitiesCollection(userId),
+    limit(FAVORITE_CITIES_PAGE_SIZE)
+  );
+}
+
+/**
+ * Ordered query omits legacy docs without `createdAt` without throwing.
+ * If the ordered page is empty, try an unordered read before concluding empty.
+ */
+async function fetchFavoriteCitiesPage(
+  userId: string,
+  options?: { forceServer?: boolean }
+): Promise<QuerySnapshot> {
+  const forceServer = options?.forceServer === true;
+  try {
+    const snap = await getDocsCacheFirst(favoriteCitiesOrderedQuery(userId), {
+      forceServer,
+    });
+    if (!snap.empty) return snap;
+  } catch {
+    // Missing index / legacy shape — fall through to unordered.
+  }
+
+  return getDocsCacheFirst(favoriteCitiesFallbackQuery(userId), {
+    forceServer,
+  });
+}
+
+/**
+ * Merge a query snapshot into the shared cache.
+ * Keeps recently upserted in-memory favorites over a stale IndexedDB page.
+ */
+function applyFavoriteCitiesSnapshot(
+  userId: string,
+  pageItems: SavedFavoriteCity[],
+  last: QueryDocumentSnapshot | undefined,
+  syncedAtMillis?: number | null
+): FavoriteCitiesCacheState {
+  const key = favoriteCitiesKey(userId);
+  const prev = favoriteCitiesStore.get(key);
+
+  const byId = new Map<string, SavedFavoriteCity>();
+  for (const city of pageItems) {
+    if (!isActiveFavorite(city)) continue;
+    // Query/server wins for matching ids so IndexedDB revalidate can refresh.
+    byId.set(city.id, city);
+  }
+
+  // Keep favorites just upserted locally that are missing from this page
+  // (pending serverTimestamp + orderBy gap, or in-flight soft overwrite).
+  if (prev) {
+    const now = Date.now();
+    for (const city of prev.items) {
+      if (byId.has(city.id)) continue;
+      if (
+        [...byId.values()].some(
+          (c) => c.cityId === city.cityId || c.id === city.cityId
+        )
+      ) {
+        continue;
+      }
+      if (!isActiveFavorite(city)) continue;
+      if (now - createdAtMillis(city) < 60_000) {
+        byId.set(city.id, city);
+      }
+    }
+  }
+
+  const items = [...byId.values()];
+  const hasMore = pageItems.length >= FAVORITE_CITIES_PAGE_SIZE;
+  const nextSynced =
+    syncedAtMillis !== undefined
+      ? syncedAtMillis
+      : (prev?.syncedAtMillis ??
+        readPersistedCollectionSync("favoriteCities", userId));
+  const state: FavoriteCitiesCacheState = {
+    items,
+    complete: !hasMore,
+    hasMore,
+    cursor: last ? { id: last.id } : null,
+    syncedAtMillis: nextSynced,
+  };
+  favoriteCitiesStore.set(key, state);
+  if (typeof nextSynced === "number" && nextSynced > 0) {
+    writePersistedCollectionSync("favoriteCities", userId, nextSynced);
+  }
+  return state;
+}
+
+function markFavoriteCitiesSynced(userId: string, millis: number): void {
+  const key = favoriteCitiesKey(userId);
+  const prev = favoriteCitiesStore.get(key);
+  writePersistedCollectionSync("favoriteCities", userId, millis);
+  if (!prev) return;
+  if (prev.syncedAtMillis != null && prev.syncedAtMillis >= millis) return;
+  favoriteCitiesStore.set(key, { ...prev, syncedAtMillis: millis });
+}
+
+function noteFavoriteCitiesLocalWrite(userId: string): void {
+  void bumpFavoriteCitiesSyncAt(userId)
+    .then((millis) => markFavoriteCitiesSynced(userId, millis))
+    .catch(() => {
+      markFavoriteCitiesSynced(userId, Date.now());
+    });
+}
+
+function queryFavoriteCitiesFromServer(
+  userId: string,
+  syncedAtMillis?: number | null
+): Promise<FavoriteCitiesCacheState> {
+  const key = favoriteCitiesKey(userId);
+  return favoriteCitiesInFlight.run(`${key}:hard`, async () => {
+    const snap = await fetchFavoriteCitiesPage(userId, { forceServer: true });
+    const state = applyFavoriteCitiesSnapshot(
+      userId,
+      snap.docs.map(mapDoc),
+      snap.docs[snap.docs.length - 1],
+      syncedAtMillis ?? Date.now()
+    );
+    if (state.hasMore) {
+      void loadRemainingFavoritePages(userId);
+    }
+    return state;
+  });
+}
+
+/**
+ * Refresh favorites from the server only when the profile watermark moved
+ * (or on first bootstrap when no watermark exists yet).
+ */
+function revalidateFavoriteCitiesIfChanged(userId: string): void {
+  void (async () => {
+    try {
+      const profile = await getUserProfile(userId);
+      const remote = timestampMillis(profile?.favoriteCitiesSyncAt);
+      const state = favoriteCitiesStore.get(favoriteCitiesKey(userId));
+      const local =
+        state?.syncedAtMillis ??
+        readPersistedCollectionSync("favoriteCities", userId);
+
+      if (remote != null && local != null && remote <= local) {
+        if (state && state.syncedAtMillis == null) {
+          markFavoriteCitiesSynced(userId, local);
+        }
+        return;
+      }
+
+      if (remote != null && (local == null || remote > local)) {
+        await queryFavoriteCitiesFromServer(userId, remote);
+        return;
+      }
+
+      if (local == null) {
+        await queryFavoriteCitiesFromServer(userId, Date.now());
+        void bumpFavoriteCitiesSyncAt(userId)
+          .then((millis) => markFavoriteCitiesSynced(userId, millis))
+          .catch(() => undefined);
+      }
+    } catch {
+      // Offline / profile error — keep painted cache.
+    }
+  })();
+}
+
 export async function ensureFavoriteCities(
   userId: string,
   options?: { hard?: boolean }
@@ -162,65 +353,66 @@ export async function ensureFavoriteCities(
   const key = favoriteCitiesKey(userId);
   const hard = options?.hard === true;
 
-  if (!hard) {
-    const mem = favoriteCitiesStore.get(key);
-    if (mem) {
-      recordCacheHit();
-      return mem;
-    }
+  if (hard) {
+    return queryFavoriteCitiesFromServer(userId);
   }
 
-  return favoriteCitiesInFlight.run(
-    `${key}:${hard ? "hard" : "soft"}`,
-    async () => {
-      if (!hard) {
-        const mem = favoriteCitiesStore.get(key);
-        if (mem) {
-          recordCacheHit();
-          return mem;
+  const mem = favoriteCitiesStore.get(key);
+  if (mem) {
+    recordCacheHit();
+    revalidateFavoriteCitiesIfChanged(userId);
+    return mem;
+  }
+
+  return favoriteCitiesInFlight.run(`${key}:soft`, async () => {
+    const current = favoriteCitiesStore.get(key);
+    if (current) {
+      recordCacheHit();
+      revalidateFavoriteCitiesIfChanged(userId);
+      return current;
+    }
+
+    try {
+      let cached: QuerySnapshot | null = null;
+      try {
+        const ordered = await getDocsFromCache(
+          favoriteCitiesOrderedQuery(userId)
+        );
+        cached = ordered.empty ? null : ordered;
+      } catch {
+        cached = null;
+      }
+      if (!cached) {
+        try {
+          const fallback = await getDocsFromCache(
+            favoriteCitiesFallbackQuery(userId)
+          );
+          if (!fallback.empty) cached = fallback;
+        } catch {
+          cached = null;
         }
       }
 
-      // Prefer ordered pagination when createdAt exists; fall back to unbounded
-      // cache-first read only for the first page-sized slice via limit.
-      const q = query(
-        favoriteCitiesCollection(userId),
-        orderBy("createdAt", "desc"),
-        limit(FAVORITE_CITIES_PAGE_SIZE)
-      );
-
-      let snap;
-      try {
-        snap = await getDocsCacheFirst(q, { forceServer: hard });
-      } catch {
-        // Legacy docs may lack createdAt — fall back to collection read with limit.
-        const fallback = query(
-          favoriteCitiesCollection(userId),
-          limit(FAVORITE_CITIES_PAGE_SIZE)
+      if (cached && !cached.empty) {
+        recordCacheHit();
+        const state = applyFavoriteCitiesSnapshot(
+          userId,
+          cached.docs.map(mapDoc),
+          cached.docs[cached.docs.length - 1],
+          readPersistedCollectionSync("favoriteCities", userId)
         );
-        snap = await getDocsCacheFirst(fallback, { forceServer: hard });
+        if (state.hasMore) {
+          void loadRemainingFavoritePages(userId);
+        }
+        revalidateFavoriteCitiesIfChanged(userId);
+        return state;
       }
-
-      const items = snap.docs
-        .map(mapDoc)
-        .filter((d) => isActiveFavorite(d));
-      const last = snap.docs[snap.docs.length - 1];
-      const hasMore = snap.docs.length >= FAVORITE_CITIES_PAGE_SIZE;
-      const state: FavoriteCitiesCacheState = {
-        items,
-        complete: !hasMore,
-        hasMore,
-        cursor: last ? { id: last.id } : null,
-      };
-      favoriteCitiesStore.set(key, state);
-
-      if (hasMore) {
-        void loadRemainingFavoritePages(userId);
-      }
-
-      return state;
+    } catch {
+      // Persistence unavailable — fall through to server.
     }
-  );
+
+    return queryFavoriteCitiesFromServer(userId);
+  });
 }
 
 export async function loadMoreFavoriteCities(
@@ -284,6 +476,7 @@ export async function loadMoreFavoriteCities(
         complete: !hasMore,
         hasMore,
         cursor: last ? { id: last.id } : null,
+        syncedAtMillis: current.syncedAtMillis ?? null,
       };
       favoriteCitiesStore.set(key, state);
       return state;
@@ -333,6 +526,7 @@ export async function upsertFavoriteCity(
     deleted: false,
     createdAt: approxNowTimestamp(),
   });
+  noteFavoriteCitiesLocalWrite(userId);
 }
 
 /**
@@ -380,6 +574,7 @@ export async function removeFavoriteCity(
   }
 
   removeFavoriteFromCache(userId, cityId);
+  noteFavoriteCitiesLocalWrite(userId);
 }
 
 export function subscribeFavoriteCitiesCache(

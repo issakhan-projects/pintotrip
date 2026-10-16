@@ -23,6 +23,11 @@ export type LocationsCacheState = {
   hasMore: boolean;
   /** Opaque cursor for startAfter — stored as last doc id + createdAt millis. */
   cursor: { id: string; createdAtMillis: number } | null;
+  /**
+   * Last applied `UserProfile.locationsSyncAt` millis (or bootstrap time).
+   * Used to skip server collection reads when the watermark is unchanged.
+   */
+  syncedAtMillis?: number | null;
 };
 
 export type FavoriteCitiesCacheState = {
@@ -30,6 +35,8 @@ export type FavoriteCitiesCacheState = {
   complete: boolean;
   hasMore: boolean;
   cursor: { id: string } | null;
+  /** Last applied `UserProfile.favoriteCitiesSyncAt` millis (or bootstrap time). */
+  syncedAtMillis?: number | null;
 };
 
 export type TripsCacheState = {
@@ -110,6 +117,7 @@ export function upsertLocationInCache(
       complete: prev?.complete ?? false,
       hasMore: prev?.hasMore ?? false,
       cursor: prev?.cursor ?? null,
+      syncedAtMillis: prev?.syncedAtMillis ?? null,
     };
   });
 }
@@ -170,6 +178,7 @@ export function upsertFavoriteInCache(
       complete: prev?.complete ?? true,
       hasMore: prev?.hasMore ?? false,
       cursor: prev?.cursor ?? null,
+      syncedAtMillis: prev?.syncedAtMillis ?? null,
     };
   });
 }

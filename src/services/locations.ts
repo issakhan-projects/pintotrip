@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocsFromCache,
   addDoc,
   setDoc,
   updateDoc,
@@ -43,7 +44,15 @@ import {
   LOCATION_LIMITS,
   locationLimitForSubscription,
 } from "@/features/profile/plans";
-import { getUserProfile } from "@/services/users";
+import {
+  bumpLocationsSyncAt,
+  getUserProfile,
+} from "@/services/users";
+import {
+  readPersistedCollectionSync,
+  timestampMillis,
+  writePersistedCollectionSync,
+} from "@/lib/firebase/collection-sync";
 
 /** Initial / page size for locations (map + list share this cache). */
 export const LOCATIONS_PAGE_SIZE = 40;
@@ -111,15 +120,176 @@ function createdAtMillis(loc: SavedLocation): number {
   return 0;
 }
 
+function updatedAtMillis(loc: SavedLocation): number {
+  const ts = loc.updatedAt;
+  if (ts && typeof (ts as Timestamp).toMillis === "function") {
+    return (ts as Timestamp).toMillis();
+  }
+  return 0;
+}
+
 function sortByCreatedAtDesc(items: SavedLocation[]): SavedLocation[] {
   return [...items].sort(
     (a, b) => createdAtMillis(b) - createdAtMillis(a)
   );
 }
 
+function locationsQuery(userId: string) {
+  return query(
+    locationsCollection(userId),
+    orderBy("createdAt", "desc"),
+    limit(LOCATIONS_PAGE_SIZE)
+  );
+}
+
+/**
+ * Merge a query snapshot into the shared cache.
+ * Keeps newer in-memory status/edits over a stale IndexedDB / server page.
+ */
+function applyLocationsSnapshot(
+  userId: string,
+  pageItems: SavedLocation[],
+  last: QueryDocumentSnapshot | undefined,
+  syncedAtMillis?: number | null
+): LocationsCacheState {
+  const key = locationsKey(userId);
+  const prev = locationsStore.get(key);
+
+  const byId = new Map<string, SavedLocation>();
+  for (const loc of pageItems) {
+    if (!isActiveLocation(loc)) continue;
+    const existing = prev?.items.find((l) => l.id === loc.id);
+    // Prefer a newer in-memory patch (status update) over a stale query doc.
+    const chosen =
+      existing && updatedAtMillis(existing) > updatedAtMillis(loc)
+        ? existing
+        : loc;
+    byId.set(chosen.id, chosen);
+  }
+
+  // Keep places just created/patched locally that are missing from this page
+  // (pending serverTimestamp + orderBy gap, or in-flight soft overwrite).
+  if (prev) {
+    const now = Date.now();
+    for (const loc of prev.items) {
+      if (byId.has(loc.id)) continue;
+      if (!isActiveLocation(loc)) continue;
+      if (now - Math.max(createdAtMillis(loc), updatedAtMillis(loc)) < 60_000) {
+        byId.set(loc.id, loc);
+      }
+    }
+  }
+
+  const items = sortByCreatedAtDesc([...byId.values()]);
+  const hasMore = pageItems.length >= LOCATIONS_PAGE_SIZE;
+  const nextSynced =
+    syncedAtMillis !== undefined
+      ? syncedAtMillis
+      : (prev?.syncedAtMillis ??
+        readPersistedCollectionSync("locations", userId));
+  const state: LocationsCacheState = {
+    items,
+    complete: !hasMore,
+    hasMore,
+    cursor: last
+      ? {
+          id: last.id,
+          createdAtMillis: createdAtMillis(mapDoc(last)),
+        }
+      : null,
+    syncedAtMillis: nextSynced,
+  };
+  locationsStore.set(key, state);
+  if (typeof nextSynced === "number" && nextSynced > 0) {
+    writePersistedCollectionSync("locations", userId, nextSynced);
+  }
+  return state;
+}
+
+function markLocationsSynced(userId: string, millis: number): void {
+  const key = locationsKey(userId);
+  const prev = locationsStore.get(key);
+  writePersistedCollectionSync("locations", userId, millis);
+  if (!prev) return;
+  if (prev.syncedAtMillis != null && prev.syncedAtMillis >= millis) return;
+  locationsStore.set(key, { ...prev, syncedAtMillis: millis });
+}
+
+/** After a local write: bump profile watermark and mark cache as current. */
+function noteLocationsLocalWrite(userId: string): void {
+  void bumpLocationsSyncAt(userId)
+    .then((millis) => markLocationsSynced(userId, millis))
+    .catch(() => {
+      markLocationsSynced(userId, Date.now());
+    });
+}
+
+function queryLocationsFromServer(
+  userId: string,
+  syncedAtMillis?: number | null
+): Promise<LocationsCacheState> {
+  const key = locationsKey(userId);
+  return locationsInFlight.run(`${key}:hard`, async () => {
+    const snap = await getDocsCacheFirst(locationsQuery(userId), {
+      forceServer: true,
+    });
+    const state = applyLocationsSnapshot(
+      userId,
+      snap.docs.map(mapDoc),
+      snap.docs[snap.docs.length - 1],
+      syncedAtMillis ?? Date.now()
+    );
+    if (state.hasMore) {
+      void loadRemainingLocationPages(userId);
+    }
+    return state;
+  });
+}
+
+/**
+ * Refresh locations from the server only when the profile watermark moved
+ * (or on first bootstrap when no watermark exists yet).
+ */
+function revalidateLocationsIfChanged(userId: string): void {
+  void (async () => {
+    try {
+      const profile = await getUserProfile(userId);
+      const remote = timestampMillis(profile?.locationsSyncAt);
+      const state = locationsStore.get(locationsKey(userId));
+      const local =
+        state?.syncedAtMillis ??
+        readPersistedCollectionSync("locations", userId);
+
+      // Watermark unchanged → keep IndexedDB / memory (0 collection reads).
+      if (remote != null && local != null && remote <= local) {
+        if (state && state.syncedAtMillis == null) {
+          markLocationsSynced(userId, local);
+        }
+        return;
+      }
+
+      if (remote != null && (local == null || remote > local)) {
+        await queryLocationsFromServer(userId, remote);
+        return;
+      }
+
+      // Legacy: no profile watermark yet — one server fetch, then bootstrap it.
+      if (local == null) {
+        await queryLocationsFromServer(userId, Date.now());
+        void bumpLocationsSyncAt(userId)
+          .then((millis) => markLocationsSynced(userId, millis))
+          .catch(() => undefined);
+      }
+    } catch {
+      // Offline / profile error — keep painted cache.
+    }
+  })();
+}
+
 /**
  * Ensure locations are loaded into the shared cache.
- * Soft (default): memory → IndexedDB cache → server first page (no server if cache warm).
+ * Soft (default): memory / IndexedDB paint, then refresh only if the
+ * profile `locationsSyncAt` watermark advanced.
  * Hard: force server re-query from the start.
  */
 export async function ensureLocations(
@@ -129,55 +299,46 @@ export async function ensureLocations(
   const key = locationsKey(userId);
   const hard = options?.hard === true;
 
-  if (!hard) {
-    const mem = locationsStore.get(key);
-    if (mem) {
-      recordCacheHit();
-      return mem;
-    }
+  if (hard) {
+    return queryLocationsFromServer(userId);
   }
 
-  return locationsInFlight.run(`${key}:${hard ? "hard" : "soft"}`, async () => {
-    if (!hard) {
-      const mem = locationsStore.get(key);
-      if (mem) {
+  const mem = locationsStore.get(key);
+  if (mem) {
+    recordCacheHit();
+    revalidateLocationsIfChanged(userId);
+    return mem;
+  }
+
+  return locationsInFlight.run(`${key}:soft`, async () => {
+    const current = locationsStore.get(key);
+    if (current) {
+      recordCacheHit();
+      revalidateLocationsIfChanged(userId);
+      return current;
+    }
+
+    try {
+      const cached = await getDocsFromCache(locationsQuery(userId));
+      if (!cached.empty) {
         recordCacheHit();
-        return mem;
+        const state = applyLocationsSnapshot(
+          userId,
+          cached.docs.map(mapDoc),
+          cached.docs[cached.docs.length - 1],
+          readPersistedCollectionSync("locations", userId)
+        );
+        if (state.hasMore) {
+          void loadRemainingLocationPages(userId);
+        }
+        revalidateLocationsIfChanged(userId);
+        return state;
       }
+    } catch {
+      // Persistence unavailable — fall through to server.
     }
 
-    const base = query(
-      locationsCollection(userId),
-      orderBy("createdAt", "desc"),
-      limit(LOCATIONS_PAGE_SIZE)
-    );
-
-    const snap = await getDocsCacheFirst(base, { forceServer: hard });
-    const items = sortByCreatedAtDesc(
-      snap.docs.map(mapDoc).filter((d) => isActiveLocation(d))
-    );
-    const last = snap.docs[snap.docs.length - 1];
-    const hasMore = snap.docs.length >= LOCATIONS_PAGE_SIZE;
-    const state: LocationsCacheState = {
-      items,
-      complete: !hasMore,
-      hasMore,
-      cursor: last
-        ? {
-            id: last.id,
-            createdAtMillis: createdAtMillis(mapDoc(last)),
-          }
-        : null,
-    };
-    locationsStore.set(key, state);
-
-    // Warm remaining pages into the shared cache without blocking callers on
-    // the full collection (map/list share progressive results).
-    if (hasMore) {
-      void loadRemainingLocationPages(userId);
-    }
-
-    return state;
+    return queryLocationsFromServer(userId);
   });
 }
 
@@ -229,7 +390,15 @@ export async function loadMoreLocations(
     const snap = await getDocsCacheFirst(q);
     const page = snap.docs.map(mapDoc).filter((d) => isActiveLocation(d));
     const byId = new Map(current.items.map((l) => [l.id, l]));
-    for (const item of page) byId.set(item.id, item);
+    for (const item of page) {
+      const existing = byId.get(item.id);
+      byId.set(
+        item.id,
+        existing && updatedAtMillis(existing) > updatedAtMillis(item)
+          ? existing
+          : item
+      );
+    }
     const items = sortByCreatedAtDesc([...byId.values()]);
     const last = snap.docs[snap.docs.length - 1];
     const hasMore = snap.docs.length >= LOCATIONS_PAGE_SIZE;
@@ -240,6 +409,7 @@ export async function loadMoreLocations(
       cursor: last
         ? { id: last.id, createdAtMillis: createdAtMillis(mapDoc(last)) }
         : null,
+      syncedAtMillis: current.syncedAtMillis ?? null,
     };
     locationsStore.set(key, state);
     return state;
@@ -435,6 +605,7 @@ async function writeUserLocation(
     createdAt: now,
     updatedAt: now,
   } as SavedLocation);
+  noteLocationsLocalWrite(userId);
 
   return ref.id;
 }
@@ -494,6 +665,7 @@ export async function updateUserLocation(
         body.updatedAt = serverTimestamp();
         await setDoc(ref, body);
         patchLocationInCache(userId, locationId, cachePatch);
+        noteLocationsLocalWrite(userId);
         return;
       }
       removeLocationFromCache(userId, locationId);
@@ -510,6 +682,7 @@ export async function updateUserLocation(
   }
 
   patchLocationInCache(userId, locationId, cachePatch);
+  noteLocationsLocalWrite(userId);
 }
 
 /** Persist a locality Google Place ID without overwriting other city fields. */
@@ -578,6 +751,7 @@ export async function deleteUserLocation(
   }
 
   removeLocationFromCache(userId, locationId);
+  noteLocationsLocalWrite(userId);
 }
 
 export function subscribeLocationsCache(

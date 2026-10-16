@@ -101,6 +101,19 @@ export interface UserProfile {
   preferences: UserPreferences;
   subscription: UserSubscription;
 
+  /**
+   * Bumped when the user's locations collection changes.
+   * Clients compare against a persisted local stamp to skip collection reads
+   * when nothing changed (avoids re-reading the full first page every soft load).
+   */
+  locationsSyncAt?: Timestamp;
+
+  /**
+   * Bumped when the user's favoriteCities collection changes.
+   * Same cheap sync contract as {@link locationsSyncAt}.
+   */
+  favoriteCitiesSyncAt?: Timestamp;
+
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
