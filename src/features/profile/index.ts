@@ -10,6 +10,7 @@ export {
   isProPlan,
   isSubscriptionEntitled,
   isProEntitled,
+  canUseMapHighlights,
   canUsePlaceNameSearch,
   placeSearchMonthlyLimit,
 } from "./plans";

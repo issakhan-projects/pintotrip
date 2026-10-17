@@ -50,6 +50,7 @@ export const TIERS: Tier[] = [
       "300 AI credits / month",
       "AI-powered place identification",
       "City intelligence",
+      "Highlighted maps",
       "Save up to 100 locations",
       "Map and list views",
       "Travel statistics",

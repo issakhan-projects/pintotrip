@@ -102,6 +102,7 @@ export const pricing = {
   savePlaces: "100 сақталған орынға дейін",
   aiIdentify: "AI арқылы орынды анықтау",
   cityIntel: "Қала туралы ақпарат",
+  highlightedMaps: "Кеңейтілген карталар",
   mapList: "Карта және тізім",
   stats: "Саяхат статистикасы",
   },

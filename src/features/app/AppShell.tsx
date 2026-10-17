@@ -24,7 +24,11 @@ import { ProfilePanel } from "@/features/profile/ProfilePanel";
 import { TripPlannerPanel } from "@/features/planner/TripPlannerPanel";
 import { ReviewSheet } from "@/features/review/ReviewSheet";
 import { TravelProfileSheet } from "@/features/onboarding";
-import { isProEntitled, canUsePlaceNameSearch } from "@/features/profile/plans";
+import {
+  isProEntitled,
+  canUseMapHighlights,
+  canUsePlaceNameSearch,
+} from "@/features/profile/plans";
 import { NotificationBanner } from "@/features/referral";
 import { PlacesApiDevBadge } from "@/features/app/PlacesApiDevBadge";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
@@ -83,6 +87,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
   const { t, setLocale } = useI18n();
   const aiCreditsBalance = profile?.aiCreditsBalance ?? null;
   const isPro = isProEntitled(profile?.subscription);
+  const canHighlightMaps = canUseMapHighlights(profile?.subscription);
   const canSearchPlaces = canUsePlaceNameSearch(profile?.subscription);
   const needsTravelProfile = Boolean(profile) && !profile?.travelProfile;
 
@@ -399,9 +404,9 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           markers={markers}
           livingRoutes={livingRoutes}
           livingRoutesActive={showMapSurface}
-          cityLocations={isPro ? locations : []}
+          cityLocations={canHighlightMaps ? locations : []}
           onCityPlaceIdResolved={
-            isPro
+            canHighlightMaps
               ? (batch) => {
                   void backfillCityGooglePlaceIds(batch);
                 }
@@ -417,7 +422,7 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             void handleMapClick(coords);
           }}
         />
-        {showMapSurface && isPro ? (
+        {showMapSurface && canHighlightMaps ? (
           <MapCityLegend counts={legendCounts} />
         ) : null}
       </div>

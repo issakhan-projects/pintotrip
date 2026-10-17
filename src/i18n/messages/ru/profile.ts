@@ -159,6 +159,7 @@ export const profile = {
         savePlaces: "До 100 сохранённых мест",
         aiIdentify: "AI-определение места",
         cityIntel: "City intelligence",
+        highlightedMaps: "Выделенные карты",
         mapList: "Карта и список",
         stats: "Статистика путешествий",
       },

@@ -44,6 +44,7 @@ export const PLAN_DEFINITIONS: Record<SubscriptionPlan, PlanDefinition> = {
       "Save up to 100 places",
       "AI-powered place identification",
       "City intelligence",
+      "Highlighted maps",
       "Map and list views",
       "Travel statistics",
     ],
@@ -166,7 +167,7 @@ export const PLAN_COMPARISON_ROWS: PlanComparisonRow[] = [
   {
     feature: "Highlighted Maps",
     free: false,
-    plus: false,
+    plus: true,
     pro: true,
   },
   {
@@ -195,11 +196,26 @@ export function getPlanDefinition(
   return PLAN_DEFINITIONS[plan ?? "free"] ?? PLAN_DEFINITIONS.free;
 }
 
-/** Trip planner, map highlights, and Google name search are Pro-only. */
+/** Trip planner and Google name search are Pro-only. */
 export function isProPlan(
   plan: SubscriptionPlan | undefined | null
 ): boolean {
   return plan === "pro";
+}
+
+/**
+ * City/country map boundary highlights (DDS).
+ * Available on entitled Plus and Pro.
+ */
+export function canUseMapHighlights(
+  subscription:
+    | { plan?: SubscriptionPlan | null; status?: string | null }
+    | null
+    | undefined
+): boolean {
+  if (!isSubscriptionEntitled(subscription)) return false;
+  const plan = subscription?.plan;
+  return plan === "plus" || plan === "pro";
 }
 
 /** Monthly Places Text Search allowance for an entitled subscription (0 if none). */

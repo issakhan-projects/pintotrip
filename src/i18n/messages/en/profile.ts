@@ -159,6 +159,7 @@ export const profile = {
         savePlaces: "Save up to 100 places",
         aiIdentify: "AI-powered place identification",
         cityIntel: "City intelligence",
+        highlightedMaps: "Highlighted maps",
         mapList: "Map and list views",
         stats: "Travel statistics",
       },

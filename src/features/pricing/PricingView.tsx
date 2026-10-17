@@ -63,7 +63,15 @@ type PriceMap = Record<string, PriceEntry>;
 
 const TIER_FEATURE_KEYS: Record<TierName, readonly string[]> = {
   free: ["credits", "savePlaces", "viewPlaces", "mapList", "basicInfo"],
-  plus: ["credits", "aiIdentify", "cityIntel", "savePlaces", "mapList", "stats"],
+  plus: [
+    "credits",
+    "aiIdentify",
+    "cityIntel",
+    "highlightedMaps",
+    "savePlaces",
+    "mapList",
+    "stats",
+  ],
   pro: [
     "credits",
     "aiIdentify",

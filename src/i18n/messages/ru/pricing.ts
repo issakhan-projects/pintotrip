@@ -102,6 +102,7 @@ export const pricing = {
         savePlaces: "До 100 сохранённых мест",
         aiIdentify: "AI-определение места",
         cityIntel: "Информация о городе",
+        highlightedMaps: "Выделенные карты",
         mapList: "Карта и список",
         stats: "Статистика путешествий",
       },
