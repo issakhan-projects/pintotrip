@@ -24,6 +24,8 @@ export const AnalyticsEvents = {
   SEARCH_USED: "search_used",
   PROFILE_OPENED: "profile_opened",
   PROFILE_STATISTICS_CLICKED: "profile_statistics_clicked",
+  BADGES_OPENED: "badges_opened",
+  BADGE_UNLOCKED: "badge_unlocked",
   AI_CREDITS_VIEWED: "ai_credits_viewed",
   UPGRADE_CLICKED: "upgrade_clicked",
   TRAVEL_PREFERENCES_OPENED: "travel_preferences_opened",

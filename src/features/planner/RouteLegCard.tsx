@@ -427,7 +427,7 @@ export function RouteLegCard({
   return (
     <article
       className={cx(
-        "overflow-hidden rounded-xl border border-border bg-white",
+        "overflow-hidden rounded-2xl border border-border bg-white shadow-sm ring-1 ring-border/70",
         done && "opacity-90",
         className
       )}

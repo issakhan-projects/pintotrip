@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import {
+  Award,
   Backpack,
   CreditCard,
   Crown,
@@ -17,9 +18,19 @@ import {
 } from "lucide-react";
 import type { User } from "firebase/auth";
 import type { SavedLocation } from "@/hooks/useLocations";
+import { useFavoriteCities } from "@/hooks/useFavoriteCities";
+import { useTrips } from "@/hooks/useTrips";
 import { useUserProfile } from "@/hooks/useUserProfile";
 import { useAnalytics } from "@/hooks/useAnalytics";
 import { AnalyticsEvents } from "@/types/analytics";
+import {
+  BadgesPreview,
+  BadgesView,
+  buildBadgeActivityStats,
+  evaluateBadges,
+  findNewlyEarnedBadgeIds,
+  syncEarnedBadges,
+} from "@/features/badges";
 import { computePlaceStats } from "@/features/places/groupLocations";
 import { AiCreditsCard } from "@/features/profile/AiCreditsCard";
 import { ProfileMenuRow } from "@/features/profile/ProfileMenuRow";
@@ -49,6 +60,7 @@ type ProfileView =
   | "visited"
   | "travel"
   | "documents"
+  | "badges"
   | "account"
   | "subscription"
   | "settings"
@@ -78,8 +90,11 @@ export function ProfilePanel({
   const { t } = useI18n();
   const { trackEvent, resetAnalytics } = useAnalytics();
   const { profile, loading: profileLoading } = useUserProfile(user);
+  const { trips } = useTrips(user.uid);
+  const { favoriteCities } = useFavoriteCities(user.uid);
   const [view, setView] = useState<ProfileView>("home");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const trackedUnlocksRef = useRef<Set<string>>(new Set());
 
   async function persistLocale(code: UiLocaleCode) {
     if (!profile) return;
@@ -107,9 +122,39 @@ export function ProfilePanel({
     [locations]
   );
 
+  const badgeProgress = useMemo(() => {
+    const activity = buildBadgeActivityStats({
+      locations,
+      trips,
+      favoriteCities,
+      profile,
+    });
+    return evaluateBadges(activity, profile?.earnedBadges);
+  }, [locations, trips, favoriteCities, profile]);
+
   useEffect(() => {
     trackEvent(AnalyticsEvents.PROFILE_OPENED);
   }, [trackEvent]);
+
+  useEffect(() => {
+    if (!profile) return;
+    const newly = findNewlyEarnedBadgeIds(
+      badgeProgress,
+      profile.earnedBadges
+    ).filter((id) => !trackedUnlocksRef.current.has(id));
+    if (newly.length === 0) return;
+    for (const badgeId of newly) {
+      trackedUnlocksRef.current.add(badgeId);
+      trackEvent(AnalyticsEvents.BADGE_UNLOCKED, { badgeId });
+    }
+    void syncEarnedBadges({
+      userId: user.uid,
+      progress: badgeProgress,
+      earnedBadges: profile.earnedBadges,
+    }).catch(() => {
+      // Unlock UI still reflects live activity; persist can retry later.
+    });
+  }, [badgeProgress, profile, trackEvent, user.uid]);
 
   const displayName = profile
     ? [profile.name, profile.lastname].filter(Boolean).join(" ").trim()
@@ -154,6 +199,7 @@ export function ProfilePanel({
       visited: t("profile.titles.visited"),
       travel: t("profile.titles.travel"),
       documents: t("profile.titles.documents"),
+      badges: t("profile.titles.badges"),
       account: t("profile.titles.account"),
       subscription: t("profile.titles.subscription"),
       settings: t("profile.titles.settings"),
@@ -189,6 +235,7 @@ export function ProfilePanel({
         {view === "documents" ? (
           <MyDocumentsView userId={user.uid} />
         ) : null}
+        {view === "badges" ? <BadgesView progress={badgeProgress} /> : null}
         {view === "account" && profile ? (
           <AccountView
             user={user}
@@ -373,6 +420,13 @@ export function ProfilePanel({
               </div>
             </section>
 
+            <BadgesPreview
+              progress={badgeProgress}
+              onOpen={() =>
+                openMenu("badges", AnalyticsEvents.BADGES_OPENED)
+              }
+            />
+
             <button
               type="button"
               onClick={() => {
@@ -416,6 +470,14 @@ export function ProfilePanel({
                 title={t("profile.menu.documents")}
                 description={t("profile.menu.documentsDesc")}
                 onClick={() => setView("documents")}
+              />
+              <ProfileMenuRow
+                icon={<Award className="h-4 w-4" />}
+                title={t("profile.menu.badges")}
+                description={t("profile.menu.badgesDesc")}
+                onClick={() =>
+                  openMenu("badges", AnalyticsEvents.BADGES_OPENED)
+                }
               />
               <ProfileMenuRow
                 icon={<CreditCard className="h-4 w-4" />}

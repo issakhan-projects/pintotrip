@@ -1,4 +1,5 @@
 import type { Timestamp } from "firebase/firestore";
+import type { EarnedBadgesMap } from "@/types/badge";
 import type { TravelProfile } from "@/types/travel-profile";
 
 export type SubscriptionPlan = "free" | "plus" | "pro";
@@ -97,6 +98,12 @@ export interface UserProfile {
    * Presence of this object means the onboarding sheet has been completed or skipped.
    */
   travelProfile?: TravelProfile;
+
+  /**
+   * Badge unlock timestamps (badgeId → epoch millis).
+   * Written by the client when activity first meets a badge threshold.
+   */
+  earnedBadges?: EarnedBadgesMap;
 
   preferences: UserPreferences;
   subscription: UserSubscription;

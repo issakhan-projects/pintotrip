@@ -411,6 +411,7 @@ export async function createTrip(
     status: "planning" as const,
     cityIntelligence: { status: "pending" as const },
     preparation: { items: [] },
+    budget: { items: [] },
     savedPlaceIds: [],
     itinerary: { status: "empty" as const, days: [] },
     ...input,

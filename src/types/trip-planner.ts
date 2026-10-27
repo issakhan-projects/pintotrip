@@ -309,6 +309,45 @@ export type TripPreparation = {
   visa?: TripVisaDetails | null;
 };
 
+/** Categories for trip budget line items (estimates + custom). */
+export const BUDGET_CATEGORIES = [
+  "accommodation",
+  "transport",
+  "food",
+  "activities",
+  "shopping",
+  "other",
+] as const;
+export type BudgetCategory = (typeof BUDGET_CATEGORIES)[number];
+
+export const BUDGET_CATEGORY_OPTIONS: Array<{
+  id: BudgetCategory;
+  label: string;
+}> = [
+  { id: "accommodation", label: "Accommodation" },
+  { id: "transport", label: "Transport" },
+  { id: "food", label: "Food" },
+  { id: "activities", label: "Activities" },
+  { id: "shopping", label: "Shopping" },
+  { id: "other", label: "Other" },
+];
+
+/** User-added budget expense on a trip. */
+export type TripBudgetItem = {
+  id: string;
+  title: string;
+  amount: number;
+  /** ISO 4217 currency code. */
+  currency: string;
+  category: BudgetCategory;
+  order: number;
+  note?: string;
+};
+
+export type TripBudget = {
+  items: TripBudgetItem[];
+};
+
 export type TripItineraryStatus = "empty" | "generated" | "edited";
 
 export type ItineraryPlaceStatus = LocationStatus;
@@ -432,6 +471,12 @@ export interface TripPlanner {
   cityIntelligence: TripCityIntelligence;
 
   preparation: TripPreparation;
+
+  /**
+   * User-added budget expenses (estimates from places/routes/stays are computed live).
+   * Missing on older trips — treat as `{ items: [] }`.
+   */
+  budget?: TripBudget;
 
   /** References to users/{uid}/locations/{id} — no duplicated place docs. */
   savedPlaceIds: string[];
@@ -626,4 +671,5 @@ export type TripPlannerStep =
   | "details"
   | "preparation"
   | "routes"
-  | "places";
+  | "places"
+  | "budget";

@@ -21,6 +21,7 @@ import { review } from "./review";
 import { ui } from "./ui";
 import { credits } from "./credits";
 import { aroundMe } from "./aroundMe";
+import { badges } from "./badges";
 
 export const kz = {
   common,
@@ -45,6 +46,7 @@ export const kz = {
   ui,
   credits,
   aroundMe,
+  badges,
   promo: {
     error: {
       not_found: "Промокод табылмады.",

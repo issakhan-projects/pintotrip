@@ -81,6 +81,7 @@ import { TripDetailsStep } from "./TripDetailsStep";
 import { BeforeYouGoStep } from "./BeforeYouGoStep";
 import { PlacesStep } from "./PlacesStep";
 import { RoutesStep } from "./RoutesStep";
+import { BudgetStep } from "./BudgetStep";
 import { EditTripSheet } from "./EditTripSheet";
 import { TripReviewModal } from "./TripReviewModal";
 import {
@@ -117,7 +118,8 @@ function parseStep(value: string | null): TripPlannerStep {
     value === "details" ||
     value === "preparation" ||
     value === "routes" ||
-    value === "places"
+    value === "places" ||
+    value === "budget"
   ) {
     return value;
   }
@@ -396,6 +398,9 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
           trip.preparation.items.every((i) => i.completed),
         routes: routes.total > 0 && routes.percent === 100,
         places: places != null && places.total > 0 && places.percent === 100,
+        budget:
+          trip != null &&
+          (trip.budget?.items.length ?? 0) > 0,
       };
     },
     [trip, locations, tripRoutes]
@@ -1079,6 +1084,21 @@ export function TripPlannerDetail({ user, tripId }: TripPlannerDetailProps) {
                 images: LocationImage[]
               ) => {
                 await patchLocation(locationId, { images });
+              }}
+            />
+          ) : null}
+
+          {step === "budget" ? (
+            <BudgetStep
+              trip={trip}
+              locations={locations}
+              routes={tripRoutes}
+              homeCurrency={
+                profile?.currency ||
+                trip.cityIntelligence.results?.[0]?.exchangeRate?.from
+              }
+              onSaveBudget={async (budget) => {
+                await patchTrip({ budget });
               }}
             />
           ) : null}

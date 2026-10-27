@@ -1,5 +1,13 @@
 export type { UserProfile, UserPreferences, UserSubscription, SubscriptionPlan, SubscriptionStatus, TemperatureUnit, DistanceUnit, TimeFormat, UserProfileCreateInput, UserProfileUpdateInput } from "./user";
 export type {
+  BadgeId,
+  BadgeMetric,
+  BadgeTier,
+  BadgeActivityStats,
+  EarnedBadgesMap,
+} from "./badge";
+export { BADGE_IDS } from "./badge";
+export type {
   TravelProfile,
   TravelProfileInput,
   TravelExperience,
@@ -174,6 +182,9 @@ export type {
   TripVisaDetails,
   TripDocumentDetails,
   TripPreparation,
+  BudgetCategory,
+  TripBudgetItem,
+  TripBudget,
   TripItineraryStatus,
   ItineraryPlaceStatus,
   ItineraryPlace,
@@ -232,6 +243,8 @@ export { isPlanTripAiAsyncAccepted } from "./trip-planner-ai-request";
 export {
   SPEND_MONEY_LEVELS,
   SPEND_MONEY_OPTIONS,
+  BUDGET_CATEGORIES,
+  BUDGET_CATEGORY_OPTIONS,
   TRIP_STOP_TYPES,
   TRIP_STOP_TYPE_OPTIONS,
   TRIP_ROUTE_TRANSPORTS,

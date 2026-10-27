@@ -19,6 +19,7 @@ const STEPS: Array<{
   },
   { id: "routes", label: "Routes", shortLabel: "Routes", number: 3 },
   { id: "places", label: "Places", shortLabel: "Places", number: 4 },
+  { id: "budget", label: "Budget", shortLabel: "Budget", number: 5 },
 ];
 
 interface TripStepNavProps {
@@ -88,7 +89,7 @@ export function TripStepNav({
   return (
     <nav
       aria-label="Trip steps"
-      className="grid grid-cols-4 gap-1.5 sm:gap-2"
+      className="grid grid-cols-5 gap-1 sm:gap-2"
     >
       {STEPS.map((step) => {
         const isActive = active === step.id;
