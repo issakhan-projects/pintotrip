@@ -3,14 +3,18 @@
  */
 
 import {
+  deleteToken,
   getMessaging,
   getToken,
   isSupported,
   onMessage,
   type Messaging,
+  type MessagePayload,
 } from "firebase/messaging";
 import { getFirebaseApp } from "./client";
 import { getFirebasePublicEnv } from "@/lib/env";
+import { emitForegroundPush } from "@/lib/push/events";
+import { getWebPushSupport } from "@/lib/push/support";
 import { devLog } from "@/lib/devLog";
 
 let messaging: Messaging | undefined;
@@ -48,11 +52,51 @@ export async function getAppServiceWorkerRegistration(): Promise<ServiceWorkerRe
   }
 }
 
+function parsePayload(payload: MessagePayload): {
+  title: string;
+  body: string;
+  link: string | null;
+  type: string;
+  tag: string | null;
+} {
+  const title =
+    payload.notification?.title ||
+    payload.data?.title ||
+    "PinToTrip";
+  const body =
+    payload.notification?.body || payload.data?.body || "";
+  const link = payload.data?.link || null;
+  const type = payload.data?.type || "general";
+  const tag = payload.data?.tag || payload.data?.notificationId || null;
+  return { title, body, link, type, tag };
+}
+
 /**
  * Request notification permission (if needed) and return an FCM token.
  * Returns null when unsupported, denied, or misconfigured.
  */
 export async function obtainFcmToken(): Promise<string | null> {
+  const support = getWebPushSupport();
+  // Allow permission prompt when status is still "default".
+  if (
+    support.blockReason &&
+    support.blockReason !== "permission_denied" &&
+    support.permission !== "default"
+  ) {
+    devLog.warn("[FCM] web push blocked", support.blockReason);
+    return null;
+  }
+  if (
+    support.blockReason === "ios_not_installed" ||
+    support.blockReason === "ios_version" ||
+    support.blockReason === "unsupported_browser" ||
+    support.blockReason === "insecure_context" ||
+    support.blockReason === "missing_vapid"
+  ) {
+    devLog.warn("[FCM] web push blocked", support.blockReason);
+    return null;
+  }
+
   const key = vapidKey();
   if (!key) {
     devLog.warn(
@@ -96,7 +140,24 @@ export async function obtainFcmToken(): Promise<string | null> {
 }
 
 /**
- * Show OS notifications while the tab is focused (FCM does not auto-show then).
+ * Revoke the current FCM registration for this browser (best-effort).
+ */
+export async function revokeFcmToken(): Promise<boolean> {
+  try {
+    const msg = await getFirebaseMessaging();
+    if (!msg) return false;
+    await deleteToken(msg);
+    return true;
+  } catch (err) {
+    devLog.warn("[FCM] deleteToken failed", err);
+    return false;
+  }
+}
+
+/**
+ * Show in-app UI while the tab is focused (FCM does not auto-show then).
+ * Uses the shared foreground event bus so banners match existing design.
+ * Skips OS Notification to avoid duplicates with the in-app banner / inbox.
  */
 export async function subscribeForegroundPush(
   onPayload?: (title: string, body: string, link: string | null) => void
@@ -105,34 +166,19 @@ export async function subscribeForegroundPush(
   if (!msg) return () => {};
 
   return onMessage(msg, (payload) => {
-    const title =
-      payload.notification?.title ||
-      payload.data?.title ||
-      "PinToTrip";
-    const body =
-      payload.notification?.body || payload.data?.body || "";
-    const link = payload.data?.link || null;
+    const parsed = parsePayload(payload);
+    onPayload?.(parsed.title, parsed.body, parsed.link);
 
-    onPayload?.(title, body, link);
+    // Inbox-backed notifies already appear via NotificationBanner — skip duplicate UI.
+    const hasInbox = payload.data?.hasInbox === "1";
+    if (hasInbox) return;
 
-    if (Notification.permission === "granted") {
-      try {
-        const n = new Notification(title, {
-          body,
-          icon: "/icon-192.png",
-          data: { link },
-        });
-        n.onclick = () => {
-          window.focus();
-          if (link) {
-            window.location.assign(link);
-          }
-          n.close();
-        };
-      } catch (err) {
-        // Safari / restricted contexts may throw.
-        devLog.warn("[FCM] foreground Notification failed", err);
-      }
-    }
+    emitForegroundPush({
+      id: parsed.tag ?? undefined,
+      title: parsed.title,
+      body: parsed.body,
+      link: parsed.link,
+      type: parsed.type,
+    });
   });
 }

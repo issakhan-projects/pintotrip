@@ -24,8 +24,10 @@ export const common = {
   share: "Бөлісу",
   dismiss: "Жабу",
   loading: "Жүктелуде…",
+  openingInvite: "Шақыру ашылуда…",
   searching: "Іздеуде…",
   pleaseWait: "Күте тұрыңыз…",
+
   free: "Free",
   monthly: "Ай сайын",
   yearly: "Жыл сайын",

@@ -98,6 +98,15 @@ export const profile = {
   saveError: "Баптауларды сақтау мүмкін болмады.",
   },
   settings: {
+  pushNotifications: "Push-хабарландырулар",
+  pushHint: "Жоспар дайын болғанда және маңызды жаңартуларда жүйелік ескертулер",
+  pushIosInstall:
+    "iPhone/iPad құрылғысында алдымен PinToTrip-ті Басты экранға қосыңыз, содан кейін хабарландыруларды қосыңыз.",
+  pushIosVersion: "Push-хабарландырулар үшін iOS 16.4 немесе жаңалау қажет.",
+  pushPermissionDenied:
+    "Хабарландырулар браузер немесе жүйе баптауларында бұғатталған.",
+  pushUnavailable: "Бұл браузерде push-хабарландырулар қолжетімсіз.",
+  pushEnableError: "Push-хабарландыруларды қосу мүмкін болмады. Қайта көріңіз.",
   emailNotifications: "Email-хабарландырулар",
   emailNotificationsHint: "Кейде — өнім жаңалықтары мен кеңестер",
   timezone: "Уақыт белдеуі",

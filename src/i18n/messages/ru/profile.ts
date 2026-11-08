@@ -98,6 +98,15 @@ export const profile = {
     saveError: "Не удалось сохранить настройки.",
   },
   settings: {
+    pushNotifications: "Push-уведомления",
+    pushHint: "Системные оповещения, когда план готов, и важные обновления",
+    pushIosInstall:
+      "На iPhone/iPad сначала добавьте PinToTrip на домашний экран, затем включите уведомления.",
+    pushIosVersion: "Для push-уведомлений нужен iOS 16.4 или новее.",
+    pushPermissionDenied:
+      "Уведомления заблокированы в настройках браузера или системы.",
+    pushUnavailable: "Push-уведомления недоступны в этом браузере.",
+    pushEnableError: "Не удалось включить push-уведомления. Попробуйте ещё раз.",
     emailNotifications: "Email-уведомления",
     emailNotificationsHint: "Иногда — новости продукта и советы",
     timezone: "Часовой пояс",

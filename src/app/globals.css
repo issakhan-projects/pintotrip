@@ -234,7 +234,78 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   animation: landing-float 5s ease-in-out infinite;
 }
 
+/* App splash (auth boot / redirects / account setup) */
+@keyframes splash-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes splash-brand-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes splash-ring {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes splash-message-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.splash-mark {
+  animation: splash-mark-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.splash-mark-icon {
+  filter: drop-shadow(0 8px 20px rgb(66 0 94 / 0.18));
+}
+
+.splash-mark-ring {
+  animation: splash-ring 2.2s ease-in-out infinite;
+}
+
+.splash-brand {
+  animation: splash-brand-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.splash-message {
+  animation: splash-message-in 0.45s ease 0.28s both;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .splash-mark,
+  .splash-brand,
+  .splash-message,
+  .splash-mark-ring {
+    animation: none;
+  }
+
   .landing-float {
     animation: none;
   }

@@ -108,6 +108,12 @@ export const addPlace = {
     notEnabled: "AI location analysis is not enabled yet on this project. Try again once the Cloud Function is deployed.",
     signInAgain: "Please sign in again and retry.",
     analyzeGeneric: "Something went wrong while analyzing. Try another photo.",
+    analyzeInternal:
+      "We couldn't analyze this place right now. Please try again in a moment.",
+    analyzeUnavailable:
+      "The analysis service is temporarily unavailable. Please try again shortly.",
+    analyzeTimeout:
+      "Analysis took too long. Try again with a clearer photo or a smaller image.",
   },
   manual: {
     title: "Save place",

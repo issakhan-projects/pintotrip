@@ -98,6 +98,15 @@ export const profile = {
     saveError: "Could not save preferences.",
   },
   settings: {
+    pushNotifications: "Push notifications",
+    pushHint: "System alerts when plans are ready and important updates",
+    pushIosInstall:
+      "On iPhone/iPad, add PinToTrip to your Home Screen first, then enable notifications.",
+    pushIosVersion: "Push notifications need iOS 16.4 or later.",
+    pushPermissionDenied:
+      "Notifications are blocked in your browser or system settings.",
+    pushUnavailable: "Push notifications aren’t available in this browser.",
+    pushEnableError: "Couldn’t enable push notifications. Try again.",
     emailNotifications: "Email notifications",
     emailNotificationsHint: "Occasional product updates and tips",
     timezone: "Timezone",

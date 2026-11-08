@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, Switch, TextInput } from "@/components/ui";
 import { LanguageMenu } from "@/components/LanguageMenu";
+import { PushNotificationsToggle } from "@/features/profile/PushNotificationsToggle";
 import { useI18n } from "@/i18n";
 import { normalizeUiLocale, type UiLocaleCode } from "@/i18n/locales";
 import { updateUserProfile } from "@/services/users";
@@ -105,6 +106,8 @@ export function SettingsView({ userId, profile, onSaved }: SettingsViewProps) {
         variant="field"
         onLocaleChange={setLanguage}
       />
+
+      <PushNotificationsToggle userId={userId} />
 
       <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3">
         <div>

@@ -22,8 +22,41 @@ export function GET() {
   const messagingScript = `https://www.gstatic.com/firebasejs/${FIREBASE_COMPAT_VERSION}/firebase-messaging-compat.js`;
 
   const body = `/* PinToTrip SW — PWA + FCM (generated) */
-const SW_VERSION = "pintototrip-sw-v2";
+const SW_VERSION = "pintototrip-sw-v3";
 const FIREBASE_CONFIG = ${JSON.stringify(firebaseConfig)};
+
+/** Dedupe window for identical pushes (ms). */
+const DEDUPE_TTL_MS = 60 * 1000;
+const recentNotificationKeys = new Map();
+
+function pruneDedupe(now) {
+  for (const [key, ts] of recentNotificationKeys.entries()) {
+    if (now - ts > DEDUPE_TTL_MS) recentNotificationKeys.delete(key);
+  }
+}
+
+function notificationDedupeKey(title, body, link, tag) {
+  if (tag) return "tag:" + tag;
+  return "tb:" + title + "|" + body + "|" + link;
+}
+
+function shouldSkipDuplicate(title, body, link, tag) {
+  const now = Date.now();
+  pruneDedupe(now);
+  const key = notificationDedupeKey(title, body, link, tag);
+  if (recentNotificationKeys.has(key)) return true;
+  recentNotificationKeys.set(key, now);
+  return false;
+}
+
+function resolveLink(payload) {
+  return (
+    (payload.data && payload.data.link) ||
+    (payload.fcmOptions && payload.fcmOptions.link) ||
+    (payload.notification && payload.notification.click_action) ||
+    "/map"
+  );
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -64,7 +97,9 @@ self.addEventListener("notificationclick", (event) => {
         includeUncontrolled: true,
       });
       for (const client of allClients) {
-        if ("focus" in client) {
+        const clientUrl = client.url || "";
+        const sameOrigin = clientUrl.startsWith(self.location.origin);
+        if (sameOrigin && "focus" in client) {
           await client.focus();
           if ("navigate" in client) {
             try {
@@ -79,6 +114,10 @@ self.addEventListener("notificationclick", (event) => {
       }
     })()
   );
+});
+
+self.addEventListener("notificationclose", () => {
+  // No-op — reserved for analytics hooks.
 });
 
 (function initFcm() {
@@ -105,16 +144,29 @@ self.addEventListener("notificationclick", (event) => {
         (payload.notification && payload.notification.body) ||
         (payload.data && payload.data.body) ||
         "";
-      const link =
-        (payload.data && payload.data.link) ||
-        (payload.fcmOptions && payload.fcmOptions.link) ||
-        "/map";
-      return self.registration.showNotification(title, {
+      const link = resolveLink(payload);
+      const tag =
+        (payload.data && (payload.data.tag || payload.data.notificationId)) ||
+        undefined;
+
+      if (shouldSkipDuplicate(title, body, link, tag)) {
+        return Promise.resolve();
+      }
+
+      const options = {
         body: body,
         icon: "/icon-192.png",
         badge: "/icon-192.png",
-        data: { link: link },
-      });
+        data: {
+          link: link,
+          type: (payload.data && payload.data.type) || "general",
+        },
+        // Same tag replaces prior notification → prevents stacking duplicates.
+        tag: tag || notificationDedupeKey(title, body, link, null),
+        renotify: false,
+      };
+
+      return self.registration.showNotification(title, options);
     });
   } catch (err) {
     console.warn("[PinToTrip SW] FCM init failed", err);

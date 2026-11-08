@@ -4,6 +4,7 @@ import { logger } from "firebase-functions";
 import { requireAuth } from "../shared/auth";
 import { DEFAULT_FUNCTIONS_REGION } from "../shared/config";
 import { adminDb, initAdmin } from "../shared/admin";
+import { notifyUser } from "../shared/userNotifications";
 import {
   REFERRALS_COLLECTION,
   normalizeReferralCode,
@@ -188,24 +189,18 @@ export const completeReferral = onCall(
       return { outcome: txResult.outcome };
     }
 
-    // Best-effort inbox notification for the referrer (outside credits tx).
-    try {
-      await db
-        .collection(`users/${txResult.referrerId}/notifications`)
-        .add({
-          type: "referral_reward",
-          title: "Friend joined — credits unlocked",
-          body: `You earned ${txResult.rewardCredits} AI credits because a friend finished signing up with your invite.`,
-          link: "/map?tab=profile",
-          read: false,
-          createdAt: Date.now(),
-        });
-    } catch (notifyErr) {
-      logger.warn("completeReferral: notification write failed", {
-        referrerId: txResult.referrerId,
-        err: notifyErr,
-      });
-    }
+    // Best-effort inbox + FCM push for the referrer (outside credits tx).
+    await notifyUser(txResult.referrerId, {
+      type: "referral_reward",
+      title: "Friend joined — credits unlocked",
+      body: `You earned ${txResult.rewardCredits} AI credits because a friend finished signing up with your invite.`,
+      link: "/map?tab=profile",
+      tag: `referral-reward-${txResult.referralId}`,
+      meta: {
+        referralId: txResult.referralId,
+        rewardCredits: txResult.rewardCredits,
+      },
+    });
 
     logger.info("Referral completed", {
       referredUserId,

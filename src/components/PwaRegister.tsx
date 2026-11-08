@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { startInstallPromptCapture } from "@/lib/pwa/installPrompt";
 
 /**
  * Registers the root service worker once on the client.
@@ -11,6 +12,10 @@ import { useEffect } from "react";
  */
 export function PwaRegister() {
   useEffect(() => {
+    // Capture beforeinstallprompt as early as possible so "Use the app"
+    // can call event.prompt() later from a user gesture.
+    startInstallPromptCapture();
+
     if (!("serviceWorker" in navigator)) return;
 
     const register = async () => {

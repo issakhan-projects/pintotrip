@@ -11,6 +11,10 @@
  * onTripAiPlanQueued (trip.aiPlan queued → async planTrip pipeline + notification).
  * HTTP: paddleWebhook (Paddle Billing notifications).
  * Callables: createPaddlePortalSession, cancelPaddleSubscription.
+ *
+ * Shared notifications (internal Admin SDK — not public callables):
+ * functions/src/shared/userNotifications.ts (inbox + FCM),
+ * functions/src/shared/pushNotifications.ts (user / multi / device / topic).
  */
 import { setGlobalOptions } from "firebase-functions";
 import { DEFAULT_FUNCTIONS_REGION } from "./shared/config";

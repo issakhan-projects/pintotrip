@@ -1365,6 +1365,29 @@ function formatIdentifiedConfidence(
   };
 }
 
+/** Firebase callable codes / raw messages that should never be shown verbatim. */
+const RAW_FIREBASE_ERROR_MESSAGE =
+  /^(functions\/)?(internal|unavailable|deadline-exceeded|resource-exhausted|unknown|cancelled|aborted|data-loss|failed-precondition|out-of-range)(\[\d+\])?$/i;
+
+function firebaseCallableCode(err: unknown): string {
+  if (!err || typeof err !== "object" || !("code" in err)) return "";
+  return String((err as { code: string }).code).toLowerCase();
+}
+
+function readableAnalyzeMessage(message: string | undefined): string | null {
+  const trimmed = message?.trim();
+  if (!trimmed) return null;
+  // Firebase often surfaces only the status name: "internal", "internal[0]", etc.
+  if (RAW_FIREBASE_ERROR_MESSAGE.test(trimmed)) return null;
+  // Drop leading "Firebase: " / "FirebaseError: " wrappers when present.
+  const cleaned = trimmed
+    .replace(/^Firebase(Error)?:\s*/i, "")
+    .replace(/\s*\((functions\/)?[a-z-]+\)\.?$/i, "")
+    .trim();
+  if (!cleaned || RAW_FIREBASE_ERROR_MESSAGE.test(cleaned)) return null;
+  return cleaned;
+}
+
 function parseAnalyzeError(t: TranslateFn, err: unknown): string {
   if (isInsufficientAICreditsError(err)) {
     return t("credits.insufficientDetail", {
@@ -1373,15 +1396,29 @@ function parseAnalyzeError(t: TranslateFn, err: unknown): string {
       available: err.availableCredits,
     });
   }
-  if (err && typeof err === "object" && "code" in err) {
-    const code = String((err as { code: string }).code);
-    if (code.includes("unimplemented")) {
-      return t("addPlace.error.notEnabled");
-    }
-    if (code.includes("unauthenticated")) {
-      return t("addPlace.error.signInAgain");
-    }
+
+  const code = firebaseCallableCode(err);
+  if (code.includes("unimplemented")) {
+    return t("addPlace.error.notEnabled");
   }
-  if (err instanceof Error && err.message) return err.message;
+  if (code.includes("unauthenticated") || code.includes("permission-denied")) {
+    return t("addPlace.error.signInAgain");
+  }
+  if (code.includes("deadline-exceeded") || code.includes("timeout")) {
+    return t("addPlace.error.analyzeTimeout");
+  }
+  if (code.includes("unavailable") || code.includes("resource-exhausted")) {
+    return t("addPlace.error.analyzeUnavailable");
+  }
+
+  const fromMessage = readableAnalyzeMessage(
+    err instanceof Error ? err.message : undefined
+  );
+  if (fromMessage) return fromMessage;
+
+  if (code.includes("internal") || code.includes("unknown")) {
+    return t("addPlace.error.analyzeInternal");
+  }
+
   return t("addPlace.error.analyzeGeneric");
 }

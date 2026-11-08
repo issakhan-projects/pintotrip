@@ -43,4 +43,28 @@ export const app = {
   setupFailed: "Couldn't finish setup",
   setupFailedAria: "Profile setup failed",
   setupProgressAria: "Setting up your account",
+  pwa: {
+    useApp: "Use the app",
+    title: "Install PinToTrip",
+    subtitle: "Add it to your home screen for a faster, fullscreen experience.",
+    install: "Install",
+    androidBody: "Install PinToTrip on this device for quicker access and offline-friendly browsing.",
+    androidFallbackBody:
+      "Open your browser menu and choose “Install app” or “Add to Home screen”.",
+    iosStep1Title: "Tap Share",
+    iosStep1Body: "Open the Share menu in Safari (the square with an arrow).",
+    iosStep2Title: "Add to Home Screen",
+    iosStep2Body: "Scroll down and choose “Add to Home Screen”, then tap Add.",
+    push: {
+      title: "Stay in the loop",
+      subtitle: "Enable notifications so you never miss trip updates.",
+      body: "PinToTrip can alert you on this device when something important happens — even if the app is closed.",
+      benefitPlan: "Get notified the moment your AI trip plan is ready",
+      benefitReferral: "Know when a friend joins and unlocks your credits",
+      benefitUpdates: "Catch planning errors and other trip updates right away",
+      enable: "Enable notifications",
+      notNow: "Not now",
+      enableError: "Couldn't enable notifications. Try again in Settings.",
+    },
+  },
 } as const;

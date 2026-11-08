@@ -14,7 +14,7 @@ import {
 } from "../shared/config";
 import { initAdmin, adminDb } from "../shared/admin";
 import { isInsufficientAICreditsError } from "../shared/credits";
-import { sendPushToUser } from "../shared/pushNotifications";
+import { notifyUser } from "../shared/userNotifications";
 import { runPlanTripPipeline } from "./runPlanTripPipeline";
 import type {
   TripAiPlan,
@@ -64,28 +64,15 @@ async function writeInboxNotification(params: {
   const type = kind === "ready" ? "plan_trip_ready" : "plan_trip_error";
   const link = `/trip-planner/${tripId}`;
 
-  try {
-    await adminDb()
-      .collection(`users/${uid}/notifications`)
-      .add({
-        type,
-        title,
-        body,
-        link,
-        read: false,
-        createdAt: Date.now(),
-      });
-  } catch (err) {
-    logger.warn("onTripAiPlanQueued: notification write failed", {
-      uid,
-      tripId,
-      kind,
-      err,
-    });
-  }
-
-  // OS / mobile-style system notification (FCM web push).
-  await sendPushToUser(uid, { title, body, link, type });
+  // Inbox + FCM web push via shared notification service.
+  await notifyUser(uid, {
+    type,
+    title,
+    body,
+    link,
+    tag: `trip-plan-${kind}-${tripId}`,
+    meta: { tripId, kind },
+  });
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { SplashScreen } from "@/components/SplashScreen";
 import { useAuth } from "@/hooks/useAuth";
 import { LandingPage } from "@/features/landing";
 
@@ -19,11 +20,7 @@ export default function Home() {
   }, [loading, user, router]);
 
   if (loading || user) {
-    return (
-      <main className="flex flex-1 items-center justify-center text-sm text-text-secondary">
-        Loading…
-      </main>
-    );
+    return <SplashScreen />;
   }
 
   return <LandingPage />;

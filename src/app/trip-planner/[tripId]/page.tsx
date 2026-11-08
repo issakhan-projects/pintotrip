@@ -2,10 +2,12 @@
 
 import { Suspense, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { SplashScreen } from "@/components/SplashScreen";
 import { Button } from "@/components/ui";
 import { Lock, WifiOff } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProfile } from "@/hooks/useUserProfile";
+import { useT } from "@/i18n";
 import { isProEntitled } from "@/features/profile/plans";
 import { TripPlannerDetail } from "@/features/planner/TripPlannerDetail";
 import {
@@ -18,6 +20,7 @@ function TripPlannerDetailGate() {
   const router = useRouter();
   const params = useParams<{ tripId: string }>();
   const tripId = params.tripId;
+  const t = useT();
   const { user, loading } = useAuth();
   const { profile, loading: profileLoading } = useUserProfile(user);
 
@@ -39,11 +42,7 @@ function TripPlannerDetailGate() {
   }, [loading, user, router]);
 
   if (loading || !user) {
-    return (
-      <main className="flex flex-1 items-center justify-center bg-background text-sm text-text-secondary">
-        Loading…
-      </main>
-    );
+    return <SplashScreen />;
   }
 
   if (!tripId) {
@@ -56,20 +55,17 @@ function TripPlannerDetailGate() {
 
   // Online: wait for profile. Offline: proceed once we have a device snapshot.
   if (profileLoading && !profile && !(offline && offlineSnapshot)) {
-    return (
-      <main className="flex flex-1 flex-col items-center justify-center gap-2 bg-background px-6 text-center text-sm text-text-secondary">
-        {offline ? (
-          <>
-            <WifiOff className="h-5 w-5 text-text-muted" aria-hidden />
-            <p>
-              You’re offline. Open this trip once online to save it for later.
-            </p>
-          </>
-        ) : (
-          <p>Loading…</p>
-        )}
-      </main>
-    );
+    if (offline) {
+      return (
+        <main className="flex flex-1 flex-col items-center justify-center gap-2 bg-background px-6 text-center text-sm text-text-secondary">
+          <WifiOff className="h-5 w-5 text-text-muted" aria-hidden />
+          <p>
+            You’re offline. Open this trip once online to save it for later.
+          </p>
+        </main>
+      );
+    }
+    return <SplashScreen message={t("app.setupAccount")} />;
   }
 
   if (!isPro) {
@@ -123,13 +119,7 @@ function TripPlannerDetailGate() {
 
 export default function TripPlannerTripPage() {
   return (
-    <Suspense
-      fallback={
-        <main className="flex flex-1 items-center justify-center bg-background text-sm text-text-secondary">
-          Loading…
-        </main>
-      }
-    >
+    <Suspense fallback={<SplashScreen />}>
       <TripPlannerDetailGate />
     </Suspense>
   );

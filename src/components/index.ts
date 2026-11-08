@@ -11,3 +11,5 @@ export {
   DateRangePicker,
 } from "./ui";
 export type { SearchableSelectOption, ButtonProps, TextInputProps, DateRangeValue } from "./ui";
+export { SplashScreen } from "./SplashScreen";
+export type { SplashScreenProps } from "./SplashScreen";

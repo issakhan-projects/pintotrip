@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { SplashScreen } from "@/components/SplashScreen";
+import { useT } from "@/i18n";
 import {
   buildRegisterCapturePath,
   normalizeReferralCode,
@@ -12,6 +14,7 @@ function InviteLandingInner() {
   const router = useRouter();
   const params = useParams<{ code: string }>();
   const searchParams = useSearchParams();
+  const t = useT();
 
   useEffect(() => {
     const rawCode =
@@ -28,11 +31,7 @@ function InviteLandingInner() {
     router.replace(buildRegisterCapturePath(code, rid));
   }, [params.code, searchParams, router]);
 
-  return (
-    <main className="flex min-h-dvh flex-1 items-center justify-center px-6 text-sm text-text-secondary">
-      Opening your invite…
-    </main>
-  );
+  return <SplashScreen message={t("common.openingInvite")} />;
 }
 
 /**
@@ -41,13 +40,7 @@ function InviteLandingInner() {
  */
 export default function InviteLandingPage() {
   return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-dvh flex-1 items-center justify-center px-6 text-sm text-text-secondary">
-          Opening your invite…
-        </main>
-      }
-    >
+    <Suspense fallback={<SplashScreen />}>
       <InviteLandingInner />
     </Suspense>
   );

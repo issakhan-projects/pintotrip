@@ -8,6 +8,7 @@ export * from "./trip-planner";
 export * from "./promo-codes";
 export * from "./travel-intelligence";
 export * from "./notifications";
+export * from "./fcmTokens";
 export * from "./transactions";
 export * from "./support";
 

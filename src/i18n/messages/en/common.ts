@@ -24,8 +24,10 @@ export const common = {
   share: "Share",
   dismiss: "Dismiss",
   loading: "Loading…",
+  openingInvite: "Opening your invite…",
   searching: "Searching…",
   pleaseWait: "Please wait…",
+
   free: "Free",
   monthly: "Monthly",
   yearly: "Yearly",

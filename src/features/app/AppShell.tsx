@@ -31,6 +31,8 @@ import {
 } from "@/features/profile/plans";
 import { NotificationBanner } from "@/features/referral";
 import { PlacesApiDevBadge } from "@/features/app/PlacesApiDevBadge";
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { PwaPushPrompt } from "@/components/PwaPushPrompt";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
 import { useFavoriteCities } from "@/hooks/useFavoriteCities";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -714,6 +716,9 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
           </div>
         </div>
       ) : null}
+
+      <PwaInstallPrompt />
+      <PwaPushPrompt userId={user.uid} />
 
       <BottomNav
         active={tab}

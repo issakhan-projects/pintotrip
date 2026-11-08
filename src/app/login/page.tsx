@@ -10,6 +10,7 @@ import {
   Camera,
   MapPin,
 } from "lucide-react";
+import { SplashScreen } from "@/components/SplashScreen";
 import { AuthTabs } from "@/features/auth/AuthTabs";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -42,11 +43,7 @@ export default function LoginPage() {
   }, [loading, user, router]);
 
   if (loading || user) {
-    return (
-      <main className="flex flex-1 items-center justify-center text-sm text-text-secondary">
-        Loading…
-      </main>
-    );
+    return <SplashScreen />;
   }
 
   return (
