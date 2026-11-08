@@ -83,15 +83,15 @@ export function PwaPushPrompt({ userId }: PwaPushPromptProps) {
           <Bell className="h-5 w-5" strokeWidth={2} aria-hidden />
         </span>
       }
-      size="sm"
+      size="md"
       showClose
     >
-      <div className="space-y-5">
+      <div className="flex min-h-0 flex-col gap-4">
         <p className="text-sm leading-relaxed text-text-secondary">
           {t("app.pwa.push.body")}
         </p>
 
-        <ul className="space-y-3">
+        <ul className="space-y-2.5">
           <li className="flex gap-3 text-sm text-text-secondary">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-tint text-primary">
               <Map className="h-3.5 w-3.5" strokeWidth={2.5} aria-hidden />
@@ -114,7 +114,7 @@ export function PwaPushPrompt({ userId }: PwaPushPromptProps) {
 
         {error ? <p className="text-sm text-error">{error}</p> : null}
 
-        <div className="flex flex-col gap-2 sm:flex-row-reverse">
+        <div className="mt-1 flex shrink-0 flex-col gap-2 pb-1 sm:flex-row-reverse">
           <Button
             type="button"
             variant="primary"

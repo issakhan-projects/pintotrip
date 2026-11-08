@@ -144,7 +144,7 @@ export function Sheet({
         )}
         <div
           className={cx(
-            "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 md:px-5",
+            "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-5 md:pb-4",
             bodyClassName
           )}
         >
