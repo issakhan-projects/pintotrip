@@ -17,13 +17,23 @@ import { cancelPaddleSubscription } from "@/services/functions";
 import {
   onCheckoutCompleted,
   openCheckout,
+  prefetchPaddle,
   previewPrices,
   readCheckoutCreditPackId,
+  resetPaddleClient,
 } from "@/lib/paddle/client";
-import { hasPaddlePublicEnvConfigured } from "@/lib/paddle/env";
+import {
+  getPaddlePublicEnv,
+  hasPaddlePublicEnvConfigured,
+} from "@/lib/paddle/env";
+import {
+  readPricePreviewCache,
+  writePricePreviewCache,
+} from "@/lib/paddle/pricePreviewCache";
+import { PLAN_DEFINITIONS, getPlanPrice } from "@/features/profile/plans";
+import { formatMoney, formatYearlyCompareAt } from "./paddleMoney";
 import { devLog } from "@/lib/devLog";
 import { cx } from "@/lib/utils";
-import { formatYearlyCompareAt } from "./paddleMoney";
 import {
   CREDIT_PACKS,
   getCreditPack,
@@ -101,6 +111,8 @@ export function PricingView({ countryCode }: PricingViewProps) {
   const [pricesById, setPricesById] = useState<PriceMap>({});
   const [pricesLoading, setPricesLoading] = useState(true);
   const [pricesError, setPricesError] = useState<string | null>(null);
+  const [priceReloadToken, setPriceReloadToken] = useState(0);
+  const [usingFallbackPrices, setUsingFallbackPrices] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [openingTier, setOpeningTier] = useState<TierName | null>(null);
   const [openingPack, setOpeningPack] = useState<CreditPackId | null>(null);
@@ -148,6 +160,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
     async function loadPrices() {
       if (!hasPaddlePublicEnvConfigured()) {
         setPricesLoading(false);
+        setUsingFallbackPrices(true);
         setPricesError(t("pricing.error.paddleNotConfigured"));
         return;
       }
@@ -155,19 +168,40 @@ export function PricingView({ countryCode }: PricingViewProps) {
       const priceIds = listConfiguredPriceIds();
       if (priceIds.length === 0) {
         setPricesLoading(false);
+        setUsingFallbackPrices(true);
         setPricesError(t("pricing.error.missingPriceIds"));
         return;
       }
 
-      setPricesLoading(true);
-      setPricesError(null);
+      let environment: ReturnType<typeof getPaddlePublicEnv>["environment"];
+      try {
+        environment = getPaddlePublicEnv().environment;
+      } catch {
+        setPricesLoading(false);
+        setUsingFallbackPrices(true);
+        setPricesError(t("pricing.error.paddleNotConfigured"));
+        return;
+      }
+
+      const cached = readPricePreviewCache({
+        environment,
+        countryCode,
+        priceIds,
+      });
+      if (cached) {
+        setPricesById(cached.byId);
+        setPricesLoading(false);
+        setUsingFallbackPrices(false);
+        setPricesError(null);
+      } else {
+        setPricesLoading(true);
+        setPricesError(null);
+      }
 
       try {
         const request = {
           items: priceIds.map((priceId) => ({ priceId, quantity: 1 })),
-          ...(countryCode
-            ? { address: { countryCode } }
-            : {}),
+          ...(countryCode ? { address: { countryCode } } : {}),
         };
 
         const result = await previewPrices(request);
@@ -183,9 +217,17 @@ export function PricingView({ countryCode }: PricingViewProps) {
           };
         }
         setPricesById(next);
+        setUsingFallbackPrices(false);
+        setPricesError(null);
+        writePricePreviewCache(
+          { environment, countryCode, priceIds },
+          { currencyCode, byId: next }
+        );
       } catch (error) {
         if (cancelled) return;
         devLog.error("Paddle PricePreview failed", error);
+        // Keep cached / catalog fallbacks visible; surface a recoverable error.
+        setUsingFallbackPrices(true);
         setPricesError(
           error instanceof Error
             ? error.message
@@ -200,7 +242,9 @@ export function PricingView({ countryCode }: PricingViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [countryCode, t]);
+    // Intentionally omit `t` — identity churn must not refetch prices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countryCode, priceReloadToken]);
 
   useEffect(() => {
     return onCheckoutCompleted((event) => {
@@ -431,12 +475,39 @@ export function PricingView({ countryCode }: PricingViewProps) {
         />
 
         {pricesError ? (
-          <p
+          <div
             role="alert"
-            className="mx-auto mt-6 max-w-xl rounded-2xl border border-error/30 bg-error-background px-4 py-3 text-center text-sm text-error"
+            className="mx-auto mt-6 flex max-w-xl flex-col items-center gap-3 rounded-2xl border border-error/30 bg-error-background px-4 py-3 text-center text-sm text-error"
           >
-            {pricesError}
-          </p>
+            <p>{pricesError}</p>
+            {usingFallbackPrices ? (
+              <p className="text-xs text-text-secondary">
+                {t("pricing.error.showingFallback")}
+              </p>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              color="neutral"
+              size="sm"
+              onClick={() => {
+                // paddle-js caches a rejected CDN load for the page lifetime —
+                // a full reload is the only reliable recovery for that case.
+                const needsReload = /Failed to load Paddle\.js|cdn\.paddle\.com/i.test(
+                  pricesError ?? ""
+                );
+                if (needsReload) {
+                  window.location.reload();
+                  return;
+                }
+                resetPaddleClient();
+                prefetchPaddle();
+                setPriceReloadToken((n) => n + 1);
+              }}
+            >
+              {t("pricing.error.retryPrices")}
+            </Button>
+          </div>
         ) : null}
 
         {checkoutError ? (
@@ -457,9 +528,14 @@ export function PricingView({ countryCode }: PricingViewProps) {
               const paid = isPaidTier(tier);
               const priceId = peekTierPriceId(tier, billingInterval);
               const priceEntry = paid && priceId ? pricesById[priceId] : null;
+              const catalogFallback = paid
+                ? catalogUsdFallback(tier.name, billingInterval)
+                : null;
               const priceLabel = paid
-                ? (priceEntry?.formatted ?? null)
+                ? (priceEntry?.formatted ?? catalogFallback)
                 : t("common.free");
+              const showingCatalogFallback =
+                paid && !priceEntry && Boolean(catalogFallback);
               const monthlyPriceId = peekTierPriceId(tier, "month");
               const monthlyEntry =
                 paid && monthlyPriceId ? pricesById[monthlyPriceId] : null;
@@ -469,7 +545,9 @@ export function PricingView({ countryCode }: PricingViewProps) {
                       monthlyEntry.total,
                       monthlyEntry.currencyCode
                     )
-                  : null;
+                  : billingInterval === "year" && paid && !monthlyEntry
+                    ? catalogYearlyCompareAt(tier.name)
+                    : null;
               const isCurrent = currentPlan === tier.name;
               // Free is the fallback after a paid cancel. Keep status="canceled" on
               // the profile for audit, but never show "Canceled" on the Free card —
@@ -496,7 +574,8 @@ export function PricingView({ countryCode }: PricingViewProps) {
                   interval={billingInterval}
                   priceLabel={priceLabel}
                   compareAtLabel={compareAtLabel}
-                  pricesLoading={paid && pricesLoading}
+                  pricesLoading={paid && pricesLoading && !priceEntry}
+                  showingFallback={showingCatalogFallback}
                   isCurrent={isCurrent}
                   isActive={isActive}
                   canCancel={canCancelCurrent}
@@ -508,8 +587,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
                         : null
                   }
                   subscribeDisabled={
-                    isActive ||
-                    (paid && (!configured || pricesLoading || !priceLabel))
+                    isActive || (paid && (!configured || !priceId))
                   }
                   opening={openingTier === tier.name}
                   signedIn={Boolean(user)}
@@ -633,6 +711,22 @@ export function PricingView({ countryCode }: PricingViewProps) {
   );
 }
 
+function catalogUsdFallback(
+  tierName: TierName,
+  interval: BillingInterval
+): string | null {
+  if (tierName === "free") return null;
+  const plan = PLAN_DEFINITIONS[tierName];
+  const amount = getPlanPrice(plan, interval);
+  return formatMoney(amount, "USD");
+}
+
+function catalogYearlyCompareAt(tierName: TierName): string | null {
+  if (tierName === "free") return null;
+  const plan = PLAN_DEFINITIONS[tierName];
+  return formatMoney(plan.priceMonthly * 12, "USD");
+}
+
 function CreditPacksSection({
   pricesById,
   pricesLoading,
@@ -676,10 +770,7 @@ function CreditPacksSection({
           const priceLabel = priceEntry?.formatted ?? pack.fallbackUsd;
           const previewReady = Boolean(priceId && priceEntry);
           const buyDisabled =
-            !configured ||
-            !priceId ||
-            pricesLoading ||
-            openingPack !== null;
+            !configured || !priceId || openingPack !== null;
 
           return (
             <article
@@ -700,11 +791,20 @@ function CreditPacksSection({
               </div>
 
               <div className="mt-3 min-h-[2.5rem]">
-                {priceId && pricesLoading ? (
-                  <span className="inline-flex items-center gap-2 text-sm text-text-secondary">
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    {t("pricing.loadingPrice")}
-                  </span>
+                {priceId && pricesLoading && !priceEntry ? (
+                  <div>
+                    <p className="text-3xl font-semibold tracking-tight text-text">
+                      {pack.fallbackUsd}
+                      <span className="text-base font-normal text-text-secondary">
+                        {" "}
+                        {t("pricing.packs.oneTime")}
+                      </span>
+                    </p>
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-text-muted">
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      {t("pricing.loadingPrice")}
+                    </p>
+                  </div>
                 ) : (
                   <p className="text-3xl font-semibold tracking-tight text-text">
                     {priceLabel}
@@ -901,6 +1001,7 @@ function TierCard({
   priceLabel,
   compareAtLabel,
   pricesLoading,
+  showingFallback = false,
   isCurrent,
   isActive,
   canCancel,
@@ -916,6 +1017,7 @@ function TierCard({
   priceLabel: string | null;
   compareAtLabel: string | null;
   pricesLoading: boolean;
+  showingFallback?: boolean;
   isCurrent: boolean;
   isActive: boolean;
   canCancel: boolean;
@@ -988,11 +1090,6 @@ function TierCard({
               {t("pricing.forever")}
             </span>
           </p>
-        ) : pricesLoading ? (
-          <span className="inline-flex items-center gap-2 text-sm text-text-secondary">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            {t("pricing.loadingPrice")}
-          </span>
         ) : priceLabel ? (
           <div>
             <p className="text-3xl font-semibold tracking-tight text-text">
@@ -1007,7 +1104,22 @@ function TierCard({
                 {compareAtLabel}
               </p>
             ) : null}
+            {pricesLoading || showingFallback ? (
+              <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-text-muted">
+                {pricesLoading ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                ) : null}
+                {pricesLoading
+                  ? t("pricing.loadingPrice")
+                  : t("pricing.packs.fallbackPrice")}
+              </p>
+            ) : null}
           </div>
+        ) : pricesLoading ? (
+          <span className="inline-flex items-center gap-2 text-sm text-text-secondary">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            {t("pricing.loadingPrice")}
+          </span>
         ) : (
           <p className="text-sm text-text-secondary">
             {t("pricing.priceUnavailable")}

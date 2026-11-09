@@ -61,6 +61,8 @@ export const pricing = {
     paddleNotConfigured: "Paddle is not configured. Set NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_SANDBOX and NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_LIVE.",
     missingPriceIds: "Add Paddle price IDs for Plus and Pro in src/features/pricing/tiers.ts.",
     loadPrices: "Could not load localized prices from Paddle.",
+    showingFallback: "Showing USD list prices until Paddle loads. Disable ad blockers for this site if the issue continues.",
+    retryPrices: "Retry loading prices",
     signIn: "Sign in to subscribe so we can link your purchase.",
     signInCredits: "Sign in to buy credits so we can add them to your account.",
     openCheckout: "Could not open Paddle Checkout.",

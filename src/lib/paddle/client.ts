@@ -12,8 +12,8 @@ import {
 import { setRealtimeSyncEnabled } from "@/lib/firebase";
 import { getUserProfile } from "@/services/users";
 import { getFirebaseAuth } from "@/lib/firebase/auth";
-import { devLog } from "@/lib/devLog";
 import { getPaddlePublicEnv } from "./env";
+import { devLog } from "@/lib/devLog";
 
 let paddlePromise: Promise<Paddle> | null = null;
 let paddlePromiseKey: string | null = null;
@@ -135,6 +135,10 @@ function cacheKey(environment: Environments, token: string): string {
  * Lazily initialize a singleton Paddle.js instance for the browser.
  * Uses NEXT_PUBLIC_PADDLE_* — never touches the server API key.
  * Re-inits if hostname flips sandbox ↔ live.
+ *
+ * Important: let `@paddle/paddle-js` own CDN injection. A custom preload that
+ * times out / removes the script tag races with initializePaddle and caused
+ * "Failed to load Paddle.js - v1" after an otherwise working setup.
  */
 export function getPaddle(): Promise<Paddle> {
   const { environment, clientToken } = getPaddlePublicEnv();
@@ -152,9 +156,27 @@ export function getPaddle(): Promise<Paddle> {
         throw new Error("Failed to initialize Paddle.js");
       }
       return paddle;
-    })();
+    })().catch((error) => {
+      // Allow a later getPaddle() / Retry to try again on our side.
+      paddlePromise = null;
+      paddlePromiseKey = null;
+      throw error;
+    });
   }
   return paddlePromise;
+}
+
+/** Warm Paddle.js in the background (idle / hover). Safe to call often. */
+export function prefetchPaddle(): void {
+  if (typeof window === "undefined") return;
+  try {
+    getPaddlePublicEnv();
+  } catch {
+    return;
+  }
+  void getPaddle().catch((err) => {
+    devLog.warn("[Paddle] prefetch failed", err);
+  });
 }
 
 export async function previewPrices(

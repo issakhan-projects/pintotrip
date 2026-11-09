@@ -8,3 +8,10 @@ export {
   isPaddleCountryCode,
   resolvePaddleCountryCode,
 } from "./country";
+export {
+  getPaddle,
+  prefetchPaddle,
+  previewPrices,
+  openCheckout,
+  resetPaddleClient,
+} from "./client";

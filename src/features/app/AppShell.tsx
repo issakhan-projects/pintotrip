@@ -33,6 +33,7 @@ import { NotificationBanner } from "@/features/referral";
 import { PlacesApiDevBadge } from "@/features/app/PlacesApiDevBadge";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { PwaPushPrompt } from "@/components/PwaPushPrompt";
+import { prefetchPaddle } from "@/lib/paddle/client";
 import { useLocations, type SavedLocation } from "@/hooks/useLocations";
 import { useFavoriteCities } from "@/hooks/useFavoriteCities";
 import { useUserProfile } from "@/hooks/useUserProfile";
@@ -526,6 +527,8 @@ export function AppShell({ user, onLogout, initialTab }: AppShellProps) {
             <button
               type="button"
               onClick={() => router.push("/pricing")}
+              onMouseEnter={() => prefetchPaddle()}
+              onFocus={() => prefetchPaddle()}
               className="flex h-10 shrink-0 items-center rounded-full border border-border bg-surface-elevated/95 shadow-sm backdrop-blur transition-colors hover:bg-surface sm:h-11"
               title={t("app.credits.title")}
             >

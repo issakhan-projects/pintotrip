@@ -61,6 +61,8 @@ export const pricing = {
   paddleNotConfigured: "Paddle бапталмаған. NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_SANDBOX және NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_LIVE мәндерін орнатыңыз.",
   missingPriceIds: "Plus және Pro үшін Paddle price ID мәндерін src/features/pricing/tiers.ts файлына қосыңыз.",
   loadPrices: "Paddle-ден жергілікті бағаларды жүктеу мүмкін болмады.",
+  showingFallback: "Paddle жүктелгенше USD бағалары көрсетіледі. Қате қайталанса, осы сайт үшін жарнама блоктағышты өшіріңіз.",
+  retryPrices: "Бағаларды қайта жүктеу",
   signIn: "Жазылымды рәсімдеу үшін кіріңіз — осылайша сатып алуды аккаунтыңызға байланыстырамыз.",
   signInCredits: "Кредит сатып алу үшін кіріңіз — осылайша оларды аккаунтыңызға қосамыз.",
   openCheckout: "Paddle Checkout ашу мүмкін болмады.",

@@ -61,6 +61,8 @@ export const pricing = {
     paddleNotConfigured: "Paddle не настроен. Задайте NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_SANDBOX и NEXT_PUBLIC_PADDLE_CLIENT_TOKEN_LIVE.",
     missingPriceIds: "Добавьте price ID Paddle для Plus и Pro в src/features/pricing/tiers.ts.",
     loadPrices: "Не удалось загрузить локальные цены из Paddle.",
+    showingFallback: "Покажем цены в USD, пока Paddle загружается. Отключите блокировщики рекламы для этого сайта, если ошибка повторяется.",
+    retryPrices: "Повторить загрузку цен",
     signIn: "Войдите, чтобы оформить подписку — так мы привяжем покупку к аккаунту.",
     signInCredits: "Войдите, чтобы купить кредиты — так мы зачислим их на аккаунт.",
     openCheckout: "Не удалось открыть Paddle Checkout.",
