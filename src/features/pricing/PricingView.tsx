@@ -471,11 +471,13 @@ export function PricingView({ countryCode }: PricingViewProps) {
                     )
                   : null;
               const isCurrent = currentPlan === tier.name;
+              // Free is the fallback after a paid cancel. Keep status="canceled" on
+              // the profile for audit, but never show "Canceled" on the Free card —
+              // that status belongs to the ended Plus/Pro subscription.
               const isActive =
                 isCurrent &&
                 (tier.name === "free"
-                  ? subscriptionStatus === "active" ||
-                    subscriptionStatus === "inactive"
+                  ? true
                   : paidEntitled &&
                     (subscriptionStatus === "active" ||
                       subscriptionStatus === "past_due"));
@@ -501,7 +503,7 @@ export function PricingView({ countryCode }: PricingViewProps) {
                   statusLabel={
                     isActive
                       ? t("pricing.active")
-                      : isCurrent
+                      : isCurrent && paid
                         ? formatStatusLabel(t, subscriptionStatus)
                         : null
                   }

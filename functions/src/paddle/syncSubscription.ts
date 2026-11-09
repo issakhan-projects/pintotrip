@@ -301,12 +301,20 @@ export async function grantPlanAiCreditsIfNeeded(input: {
     const grantPlan =
       input.plan === "pro" || input.plan === "plus" ? input.plan : null;
     const nextBalance = readBalance(data) + amount;
-    tx.update(ref, {
+    // Also re-assert paid plan + active status inside this txn. Renewal can
+    // race with a stale subscription.canceled webhook that wrote plan=free
+    // after the outer sync write but before credits landed.
+    const nested: Record<string, unknown> = {
       aiCreditsBalance: nextBalance,
       "subscription.planCreditGrantKey": grantKey,
       "subscription.planCreditGrantPlan": grantPlan,
       updatedAt: FieldValue.serverTimestamp(),
-    });
+    };
+    if (grantPlan) {
+      nested["subscription.plan"] = grantPlan;
+      nested["subscription.status"] = "active";
+    }
+    tx.update(ref, nested);
     return { granted: amount, grantKey };
   });
 
@@ -358,6 +366,47 @@ export async function syncSubscriptionFromPaddle(input: {
     priceId: input.priceId,
     productId: input.productId,
   });
+
+  // Ignore stale cancel/pause that would wipe a newer billing period already
+  // written by transaction.completed / subscription.updated (out-of-order webhooks).
+  if (plan === "free" && (status === "canceled" || status === "paused")) {
+    const existingSnap = await adminDb().doc(`users/${input.userId}`).get();
+    const existing = existingSnap.data()?.subscription as
+      | {
+          plan?: AppPlan;
+          status?: AppSubscriptionStatus;
+          paddleSubscriptionId?: string;
+          currentPeriodEnd?: unknown;
+        }
+      | undefined;
+    const existingEndMs = periodEndEpochMs(
+      storedPeriodEndIso(existing?.currentPeriodEnd)
+    );
+    const incomingEndMs = periodEndEpochMs(input.currentPeriodEnd);
+    const sameSub =
+      Boolean(existing?.paddleSubscriptionId) &&
+      existing?.paddleSubscriptionId === input.paddleSubscriptionId;
+    const existingPaidActive =
+      (existing?.plan === "plus" || existing?.plan === "pro") &&
+      (existing?.status === "active" || existing?.status === "past_due");
+
+    if (
+      sameSub &&
+      existingPaidActive &&
+      existingEndMs != null &&
+      (incomingEndMs == null || incomingEndMs < existingEndMs)
+    ) {
+      logger.warn("paddle subscription sync skipped stale downgrade", {
+        userId: input.userId,
+        incomingStatus: status,
+        incomingPeriodEnd: input.currentPeriodEnd ?? null,
+        existingPlan: existing?.plan ?? null,
+        existingPeriodEndMs: existingEndMs,
+        paddleSubscriptionId: input.paddleSubscriptionId,
+      });
+      return;
+    }
+  }
 
   const cancelAtPeriodEnd =
     status !== "canceled" &&
